@@ -1,0 +1,22 @@
+# /etc/systemd/system/<SERVICE>.service — template for a new project
+# Install:  sudo cp <SERVICE>.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now <SERVICE>
+[Unit]
+Description=<Human readable name>
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/apps/<repo>/<APP_SUBDIR>
+# Keep secrets OUT of this file — put them in an env file readable only by ec2-user (chmod 600)
+EnvironmentFile=/etc/apps/<SERVICE>.env
+Environment=NODE_ENV=production PORT=<PORT>
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+# Treat SIGTERM (exit 143) as a clean stop so scheduled shutdowns aren't logged as failures
+SuccessExitStatus=143
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

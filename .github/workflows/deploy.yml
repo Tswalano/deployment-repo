@@ -1,0 +1,81 @@
+name: Deploy
+
+on:
+  # Manual: Actions → Deploy → Run workflow
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        type: choice
+        options: [status, deploy, rollback]
+        default: status
+      project:
+        description: "Project name from projects/*.conf, or 'all' (deploy/status only)"
+        type: string
+        default: all
+      ref:
+        description: "Git ref to deploy / SHA to roll back to (optional)"
+        type: string
+        required: false
+      force:
+        description: "Discard uncommitted changes in the server checkout (FORCE=1)"
+        type: boolean
+        default: false
+
+  # Automatic: an app repo calls the GitHub API after merging to main, e.g.
+  #   gh api repos/Tswalano/deployment-repo/dispatches \
+  #     -f event_type=deploy -f client_payload[project]=liftparcel -f client_payload[ref]=main
+  repository_dispatch:
+    types: [deploy]
+
+# Never run two pipeline jobs against the same server at once
+concurrency:
+  group: ec2-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production        # add required reviewers in repo Settings → Environments if wanted
+    timeout-minutes: 30
+    env:
+      ACTION:  ${{ github.event.inputs.action  || 'deploy' }}
+      PROJECT: ${{ github.event.inputs.project || github.event.client_payload.project }}
+      REF:     ${{ github.event.inputs.ref     || github.event.client_payload.ref }}
+      FORCE:   ${{ github.event.inputs.force == 'true' && '1' || '' }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'ec2-user' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          [[ -n "$PROJECT" ]] || { echo "::error::project is required"; exit 1; }
+          if [[ "$PROJECT" != all && ! -f "projects/$PROJECT.conf" ]]; then
+            echo "::error::unknown project '$PROJECT'"; ls projects; exit 1
+          fi
+          [[ "$PROJECT" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "::error::bad project name"; exit 1; }
+          [[ -z "$REF" || "$REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::bad ref"; exit 1; }
+
+      - name: Load SSH key
+        env:
+          DEPLOY_SSH_KEY_CONTENT: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY_CONTENT" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "DEPLOY_SSH_KEY=$HOME/.ssh/deploy_key" >> "$GITHUB_ENV"
+
+      - name: Run pipeline
+        run: |
+          chmod +x deploy.sh server/pipeline.sh
+          args=("$ACTION" "$PROJECT")
+          [[ -n "$REF" ]] && args+=("$REF")
+          ./deploy.sh "${args[@]}"
+
+      - name: Final status
+        if: always() && env.ACTION != 'status'
+        run: ./deploy.sh status all
