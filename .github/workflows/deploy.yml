@@ -35,6 +35,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write      # OIDC → AWS (no long-lived AWS keys in GitHub)
 
 jobs:
   deploy:
@@ -60,6 +61,23 @@ jobs:
           [[ "$PROJECT" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "::error::bad project name"; exit 1; }
           [[ -z "$REF" || "$REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::bad ref"; exit 1; }
 
+      # Port 22 is restricted in the security group, so open it for THIS runner's IP only
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: af-south-1
+
+      - name: Allow SSH from this runner
+        env:
+          SG_ID: ${{ vars.DEPLOY_SG_ID }}
+        run: |
+          ip="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          echo "RUNNER_IP=$ip" >> "$GITHUB_ENV"
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --ip-permissions \
+            "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$ip/32,Description=github-actions-run-${{ github.run_id }}}]"
+          sleep 5
+
       - name: Load SSH key
         env:
           DEPLOY_SSH_KEY_CONTENT: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -79,3 +97,11 @@ jobs:
       - name: Final status
         if: always() && env.ACTION != 'status'
         run: ./deploy.sh status all
+
+      - name: Revoke runner SSH access
+        if: always() && env.RUNNER_IP != ''
+        env:
+          SG_ID: ${{ vars.DEPLOY_SG_ID }}
+        run: |
+          aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --ip-permissions \
+            "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$RUNNER_IP/32}]"

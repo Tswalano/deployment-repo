@@ -101,3 +101,19 @@ and *stokvel* (savings group) features.
 2. **Least privilege:** give each app its own role, owning only its own database. Stop using `postgres` from apps.
 3. **Migrations:** LiftParcel has no migration history. Switch from `db:push` to `drizzle-kit generate` + `migrate` before turning on `MIGRATE_CMD` in the pipeline.
 4. **Growth:** with ~1 GB RAM shared by three Node apps and Postgres, consider moving the DB to RDS (`db.t4g.micro`) or the instance to t3.small/t4g.small when traffic grows.
+
+---
+
+## Changes made on 2026-11-10
+
+All changes were made with explicit approval, after the audit above.
+
+| Change | Details | Verified by | Undo |
+|---|---|---|---|
+| **SSH (22) restricted** | `0.0.0.0/0` removed. Now allowed: the admin IP `/32` and the EC2 Instance Connect prefix list for af-south-1. Ports 80/443 are unchanged. | SSH from the admin IP still works | `aws ec2 authorize-security-group-ingress … --cidr 0.0.0.0/0` (not recommended) |
+| **Secrets copied to SSM** | 31 values (app1: 1, liftparcel: 14, lendify: 16) read from the running processes' environments into `/apps/<service>/<KEY>` SecureStrings. The apps are **not yet** reading from SSM; see the README cutover steps. | Every value hash-compared against the source: 0 mismatches | `aws ssm delete-parameters` |
+| **Certbot renewal** | `certbot renew --dry-run` succeeded for all 3 domains. The timer runs twice a day with a random delay of up to 12h, and the nginx installer reloads nginx after renewal. Real renewal starts once the certs are within 30 days of expiry (~2026-11-15). | dry-run output | — |
+| **Prisma shadow DBs dropped** | 4 × `prisma_migrate_shadow_db_*`. Each was re-checked immediately beforehand: 0 tables, 0 connections. | `pg_database` listing | Prisma recreates them on demand (`migrate dev`) |
+| **LiftParcel migrations baselined** | The live schema was proven **identical** to `drizzle/0000–0002` (applied to a scratch DB, `pg_dump -s` diff = 0 lines), and `drizzle-kit generate` reported no pending schema changes. Created `drizzle.__drizzle_migrations` with the 3 entries (sha256 of each file plus the journal timestamps). | `drizzle-kit migrate` is a no-op (rehearsed on a scratch DB first, then on prod); API healthy | Backup taken first: `~/db-backups/liftparcel-pre-baseline-*.sql.gz`; or `drop schema drizzle cascade` |
+
+The LiftParcel checkout was not modified. No services were restarted.

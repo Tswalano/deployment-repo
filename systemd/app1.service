@@ -1,0 +1,22 @@
+# FinanceFlow API — managed by deployment-repo (systemd/app1.service)
+# Secrets: SSM Parameter Store /apps/app1/*  →  /run/app-secrets/app1.env
+[Unit]
+Description=FinanceFlow Hono (Node)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/apps/app1/backend
+Environment=PORT=3000 NODE_ENV=production
+ExecStartPre=+/usr/local/bin/load-app-secrets app1
+EnvironmentFile=/run/app-secrets/app1.env
+ExecStart=/usr/bin/env bash -lc 'npm run dev'
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

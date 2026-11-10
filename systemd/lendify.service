@@ -1,0 +1,22 @@
+# Lendify API — managed by deployment-repo (systemd/lendify.service)
+# Secrets: SSM Parameter Store /apps/lendify/*  →  /run/app-secrets/lendify.env
+[Unit]
+Description=Lendify API (Hono/Node)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/lendify
+Environment=PORT=8088 NODE_ENV=production
+ExecStartPre=+/usr/local/bin/load-app-secrets lendify
+EnvironmentFile=/run/app-secrets/lendify.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

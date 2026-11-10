@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OpenAndCloseSshForRunnerOnThisSgOnly",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress"],
+      "Resource": "arn:aws:ec2:af-south-1:${ACCOUNT_ID}:security-group/${SG_ID}"
+    }
+  ]
+}
