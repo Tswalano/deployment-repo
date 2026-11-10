@@ -1,0 +1,12 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PushTemporarySshKeyAsEc2UserOnThisInstanceOnly",
+      "Effect": "Allow",
+      "Action": "ec2-instance-connect:SendSSHPublicKey",
+      "Resource": "arn:aws:ec2:af-south-1:${ACCOUNT_ID}:instance/${INSTANCE_ID}",
+      "Condition": { "StringEquals": { "ec2:osuser": "ec2-user" } }
+    }
+  ]
+}

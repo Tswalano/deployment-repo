@@ -35,6 +35,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write      # OIDC → AWS (no long-lived AWS keys in GitHub)
 
 jobs:
   deploy:
@@ -46,8 +47,11 @@ jobs:
       PROJECT: ${{ github.event.inputs.project || github.event.client_payload.project }}
       REF:     ${{ github.event.inputs.ref     || github.event.client_payload.ref }}
       FORCE:   ${{ github.event.inputs.force == 'true' && '1' || '' }}
-      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER || 'ec2-user' }}
+      # EC2 Instance Connect: deploy.sh pushes a throwaway key (valid 60s) via the OIDC role — no PEM
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      AWS_REGION: af-south-1
     steps:
       - uses: actions/checkout@v4
 
@@ -60,14 +64,22 @@ jobs:
           [[ "$PROJECT" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "::error::bad project name"; exit 1; }
           [[ -z "$REF" || "$REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::bad ref"; exit 1; }
 
-      - name: Load SSH key
+      # Port 22 is restricted in the security group, so open it for THIS runner's IP only
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: af-south-1
+
+      - name: Allow SSH from this runner
         env:
-          DEPLOY_SSH_KEY_CONTENT: ${{ secrets.DEPLOY_SSH_KEY }}
+          SG_ID: ${{ vars.DEPLOY_SG_ID }}
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY_CONTENT" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          echo "DEPLOY_SSH_KEY=$HOME/.ssh/deploy_key" >> "$GITHUB_ENV"
+          ip="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          echo "RUNNER_IP=$ip" >> "$GITHUB_ENV"
+          aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --ip-permissions \
+            "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$ip/32,Description=github-actions-run-${{ github.run_id }}}]"
+          sleep 5
 
       - name: Run pipeline
         run: |
@@ -79,3 +91,11 @@ jobs:
       - name: Final status
         if: always() && env.ACTION != 'status'
         run: ./deploy.sh status all
+
+      - name: Revoke runner SSH access
+        if: always() && env.RUNNER_IP != ''
+        env:
+          SG_ID: ${{ vars.DEPLOY_SG_ID }}
+        run: |
+          aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --ip-permissions \
+            "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$RUNNER_IP/32}]"

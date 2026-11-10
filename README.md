@@ -47,11 +47,63 @@ database before each deploy, but read the [recommendations](docs/server-inventor
 
 ---
 
+## Secrets (SSM Parameter Store)
+
+App secrets are **not** kept in unit files, `.env` files or this repo. They live in **AWS SSM Parameter
+Store** as KMS-encrypted `SecureString`s (standard tier, which is free):
+
+```
+/apps/<SERVICE>/<ENV_VAR_NAME>      e.g.  /apps/liftparcel/JWT_SECRET
+```
+
+At every service start, systemd runs `ExecStartPre=+/usr/local/bin/load-app-secrets <SERVICE>`
+([`server/load-app-secrets.sh`](server/load-app-secrets.sh)) as root. It uses the instance role to fetch
+`/apps/<SERVICE>/*` and writes `/run/app-secrets/<SERVICE>.env`, which is on tmpfs and `0600 root`, so
+it is never written to disk. The unit reads that file with `EnvironmentFile=`. The unit files in
+[`systemd/`](systemd/) therefore contain only `PORT` and `NODE_ENV`.
+
+| Task | Command |
+|---|---|
+| Add / change a secret | `aws ssm put-parameter --name /apps/<svc>/<KEY> --type SecureString --value '…' --overwrite` and then restart (or deploy) the service |
+| List keys (no values) | `aws ssm get-parameters-by-path --path /apps/<svc> --query 'Parameters[].Name'` |
+| Remove a secret | `aws ssm delete-parameter --name /apps/<svc>/<KEY>` and then restart |
+
+> Avoid `--value` on shared machines, because it ends up in your shell history. Use `--cli-input-json file://…` instead.
+
+The instance can only **read** `/apps/*` (policy: [`infra/iam/instance-read-app-secrets.json`](infra/iam/instance-read-app-secrets.json)).
+Why Parameter Store rather than Secrets Manager: it's free at this scale ($0.40 per secret per month
+on Secrets Manager × 31 values), and none of these secrets need automatic rotation. Secrets Manager is
+worth it for the database password once each app has its own role and rotation is wanted.
+
+**One-time cutover** (moves each app from inline/.env secrets to SSM, with verification and auto-restore):
+
+```bash
+./scripts/setup-aws-iam.sh                 # instance role + GitHub OIDC role (needs IAM admin)
+./deploy.sh secrets-cutover liftparcel     # one at a time is safest; or: all
+```
+
+[`server/secrets-cutover.sh`](server/secrets-cutover.sh) works through each project in order:
+
+1. Checks that the SSM values are **byte-identical** to the running process's environment.
+2. Backs up the old unit and `.env` to `/root/secrets-cutover-backup/`.
+3. Installs the new unit and restarts the service.
+4. Checks health **and** that the new process sees identical values.
+5. Restores the old unit if anything is off.
+
+When you're happy, delete the backup folder, since it contains the old plaintext values.
+
+---
+
 ## Repository layout
 
 ```
 deploy.sh                    # entry point (laptop or CI): syncs pipeline to the server and runs it
-server/pipeline.sh           # runs ON the server: deploy / rollback / status / history
+server/pipeline.sh           # runs ON the server: deploy / rollback / status / history / secrets-cutover
+server/load-app-secrets.sh   # installed as /usr/local/bin/load-app-secrets (SSM → /run/app-secrets/<svc>.env)
+server/secrets-cutover.sh    # one-time migration of an app's secrets to SSM, with verification + auto-restore
+systemd/<service>.service    # source of truth for the unit files (no secrets)
+infra/iam/*.json             # IAM policies: instance role + GitHub OIDC deploy role
+scripts/setup-aws-iam.sh     # creates/updates those roles and attaches the instance profile
 projects/<name>.conf         # one file per project (files starting with "_" are ignored)
 projects/_template.conf      # documented template for new projects
 templates/                   # systemd unit, nginx site and "trigger from app repo" workflow templates
@@ -115,9 +167,21 @@ Commit those deletions in the app repos (and **remove those `.pem` files from gi
 
 | Name | Type | Value |
 |---|---|---|
-| `DEPLOY_HOST` | secret | `lendifyapi.glenify.studio` (or the Elastic IP) |
-| `DEPLOY_SSH_KEY` | secret | full contents of the private key for `ec2-user` |
+| `DEPLOY_HOST` | variable | `lendifyapi.glenify.studio` (resolves to the Elastic IP) |
+| `EC2_INSTANCE_ID` | variable | the instance id (printed by `scripts/setup-aws-iam.sh`) |
 | `DEPLOY_USER` | variable (optional) | defaults to `ec2-user` |
+| `AWS_DEPLOY_ROLE_ARN` | secret | printed by `scripts/setup-aws-iam.sh`. This OIDC role is the **only** credential CI uses: no AWS keys and no SSH key/PEM are stored in GitHub |
+| `DEPLOY_SG_ID` | variable | the instance's security group id (printed by the same script) |
+
+**No PEM needed.** CI connects with **EC2 Instance Connect**: the OIDC role pushes a throwaway public key for
+`ec2-user`, valid for 60 seconds, and `deploy.sh` uses it straight away. Locally it works the same way with
+your AWS CLI credentials. Set `EC2_INSTANCE_ID` in `.deploy.env` and leave `DEPLOY_SSH_KEY` unset.
+
+**Port 22 is restricted** to the admin IP and the EC2 Instance Connect range. Each workflow run uses the
+OIDC role to allow **its own runner IP** for the length of the job, and always revokes it at the end.
+For local runs from a new IP, add it first:
+`aws ec2 authorize-security-group-ingress --group-id <sg> --protocol tcp --port 22 --cidr $(curl -s https://checkip.amazonaws.com)/32`
+(or connect through the EC2 console / SSM Session Manager).
 
 Also create an environment called `production` (**Settings → Environments**). Add required reviewers there if you want every deploy to need approval.
 
@@ -189,7 +253,7 @@ Every run records `timestamp sha ref status action` in `/opt/deploy-state/<proje
    #     IdentityFile ~/.ssh/<name>_deploy
    git clone git@<name>:Tswalano/<repo>.git /opt/apps/<name>
    ```
-2. **Create the systemd unit** from [`templates/app.service`](templates/app.service). Use a free port; 3000, 4000 and 8088 are taken. Keep secrets in a `chmod 600` env file, not in the unit.
+2. **Create the systemd unit** from [`templates/app.service`](templates/app.service). Use a free port; 3000, 4000 and 8088 are taken. Put secrets in SSM as `/apps/<SERVICE>/<KEY>` (see [Secrets](#secrets-ssm-parameter-store)), never in the unit. Commit the finished unit to `systemd/<SERVICE>.service`.
    ```bash
    sudo systemctl daemon-reload && sudo systemctl enable --now <name>
    ```
@@ -210,16 +274,21 @@ Every run records `timestamp sha ref status action` in `/opt/deploy-state/<proje
 
 ---
 
-## Recommended follow-ups (not done by this PR)
+## Recommended follow-ups
 
-These are server changes, so they were deliberately left for you to approve:
+Done on 2026-11-10 (see [inventory → changes made](docs/server-inventory.md#changes-made-on-2026-11-10)):
+- [x] Restrict port 22 in the security group
+- [x] Confirm certbot renews (`--dry-run` succeeded for all 3 certificates)
+- [x] Drop the 4 empty Prisma shadow databases
+- [x] LiftParcel moved onto Drizzle migrations (baselined, so `MIGRATE_CMD` is now enabled)
+- [x] All 31 app secrets copied to SSM Parameter Store and verified
+- [ ] **Secrets cutover**: run `scripts/setup-aws-iam.sh`, then `./deploy.sh secrets-cutover all`
 
+Still open:
+- [ ] **Rotate** the secrets that have been in plaintext (LiftParcel JWT/Paystack/Sentry/Mapbox, Lendify JWT and email password, and the Postgres password), then update them in SSM
 - [ ] Add a 1–2 GB swap file (`npm ci` can be OOM-killed during deploys)
-- [ ] Move LiftParcel's inline secrets out of the systemd unit and **rotate** them
 - [ ] One least-privilege DB role per app; stop using `postgres` from the apps
 - [ ] Enable a daily EBS snapshot policy (DLM) and an off-box `pg_dump` to S3
-- [ ] Restrict port 22 in the security group
 - [ ] Run FinanceFlow and LiftParcel from compiled builds instead of `tsx`/`ts-node` (then set `BUILD_CMD`)
-- [ ] Add `SuccessExitStatus=143` to `app1.service` to silence the daily false "failure"
-- [ ] Confirm certbot renews before 2026-12-15 (the box is only up 12 hours a day)
+- [ ] Remove stale `.env` copies in `/opt/apps/app2`, `~/app2` (unused clones that still hold credentials)
 - [ ] Consider making this repo private

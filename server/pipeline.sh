@@ -9,6 +9,7 @@
 #   pipeline.sh rollback <project>     [git-sha]      (default: previous good deploy)
 #   pipeline.sh restore-snapshot <project> <file>     (sync-mode projects only)
 #   pipeline.sh history  <project>
+#   pipeline.sh secrets-cutover <project|all>         (one-time: move secrets to SSM)
 #
 # Env flags:
 #   FORCE=1           deploy even if the source checkout has uncommitted changes
@@ -249,6 +250,7 @@ main() {
 
   case "$cmd" in
     list) list_projects; return ;;
+    secrets-cutover) exec bash "$PIPELINE_ROOT/server/secrets-cutover.sh" "$@" ;;
     -h|--help|help) usage ;;
   esac
 

@@ -2,15 +2,18 @@
 # Install:  sudo cp <SERVICE>.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now <SERVICE>
 [Unit]
 Description=<Human readable name>
-After=network.target postgresql.service
+Wants=network-online.target
+After=network-online.target postgresql.service
 
 [Service]
 Type=simple
 User=ec2-user
 WorkingDirectory=/opt/apps/<repo>/<APP_SUBDIR>
-# Keep secrets OUT of this file — put them in an env file readable only by ec2-user (chmod 600)
-EnvironmentFile=/etc/apps/<SERVICE>.env
 Environment=NODE_ENV=production PORT=<PORT>
+# Secrets: never in this file. Store them in SSM Parameter Store under /apps/<SERVICE>/<KEY>
+# (see README → Secrets); they are loaded into a root-only tmpfs file at start.
+ExecStartPre=+/usr/local/bin/load-app-secrets <SERVICE>
+EnvironmentFile=/run/app-secrets/<SERVICE>.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure
 RestartSec=5
