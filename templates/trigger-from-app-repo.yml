@@ -1,0 +1,19 @@
+# Drop into an APP repo at .github/workflows/trigger-deploy.yml to auto-deploy
+# after every push to main. Needs a secret DEPLOY_REPO_TOKEN in the app repo:
+# a fine-grained PAT with "Contents: read & write" on Tswalano/deployment-repo
+# (repository_dispatch requires write access).
+name: Trigger deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.DEPLOY_REPO_TOKEN }}
+        run: |
+          gh api repos/Tswalano/deployment-repo/dispatches \
+            -f event_type=deploy \
+            -f "client_payload[project]=<project-name-from-projects-dir>" \
+            -f "client_payload[ref]=${GITHUB_SHA}"

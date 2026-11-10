@@ -1,0 +1,4 @@
+.deploy.env
+*.pem
+*.key
+deploy_key*
