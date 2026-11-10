@@ -91,6 +91,7 @@ cutover() {
     && sudo install -m 0600 "$envfile" "$BACKUP_DIR/$SERVICE.env.$TS"
 
   log "installing new unit + restarting"
+  sudo install -m 0644 "$ROOT/systemd/app-secrets@.service" /etc/systemd/system/app-secrets@.service
   sudo install -m 0644 "$new_unit" "$live_unit"
   sudo systemctl daemon-reload
   sudo systemctl restart "$SERVICE"

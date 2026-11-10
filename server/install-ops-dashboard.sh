@@ -40,6 +40,7 @@ SQL
 
   log "service"
   sudo install -m 0755 -o root -g root "$ROOT/server/load-app-secrets.sh" /usr/local/bin/load-app-secrets
+  sudo install -m 0644 "$ROOT/systemd/app-secrets@.service" /etc/systemd/system/app-secrets@.service
   sudo install -m 0644 "$ROOT/systemd/ops-dashboard.service" /etc/systemd/system/ops-dashboard.service
   sudo systemctl daemon-reload
   sudo systemctl enable --quiet ops-dashboard

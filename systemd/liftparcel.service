@@ -1,16 +1,16 @@
 # LiftParcel API — managed by deployment-repo (systemd/liftparcel.service)
-# Secrets: SSM Parameter Store /apps/liftparcel/*  →  /run/app-secrets/liftparcel.env
+# Secrets: SSM /apps/liftparcel/* loaded by app-secrets@liftparcel.service  →  /run/app-secrets/liftparcel.env
 [Unit]
 Description=LiftParcel API (Node)
 Wants=network-online.target
-After=network-online.target postgresql.service
+Requires=app-secrets@liftparcel.service
+After=network-online.target postgresql.service app-secrets@liftparcel.service
 
 [Service]
 Type=simple
 User=ec2-user
 WorkingDirectory=/opt/apps/liftparcel/api
 Environment=PORT=4000 NODE_ENV=production
-ExecStartPre=+/usr/local/bin/load-app-secrets liftparcel
 EnvironmentFile=/run/app-secrets/liftparcel.env
 ExecStart=/usr/bin/env bash -lc 'npm run dev'
 Restart=on-failure
