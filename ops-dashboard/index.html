@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Ops Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #5f6b7a; --line: #e3e7ec;
+    --ok: #12805c; --ok-bg: #e5f5ee; --warn: #a15c00; --warn-bg: #fff3df; --bad: #b42318; --bad-bg: #fde8e7;
+    --info: #2f6fdf; --info-bg: #e7edf8; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216; --panel: #171b21; --ink: #e8ecf1; --muted: #93a0b0; --line: #262c35;
+      --ok: #4cc38a; --ok-bg: #11291f; --warn: #f0b252; --warn-bg: #2d2412; --bad: #ff7b72; --bad-bg: #331817;
+      --info: #6ea2ff; --info-bg: #1a2436;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1216; --panel: #171b21; --ink: #e8ecf1; --muted: #93a0b0; --line: #262c35;
+    --ok: #4cc38a; --ok-bg: #11291f; --warn: #f0b252; --warn-bg: #2d2412; --bad: #ff7b72; --bad-bg: #331817;
+    --info: #6ea2ff; --info-bg: #1a2436;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; justify-content: space-between;
+           padding: 18px 16px 6px; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  main { max-width: 1200px; margin: 0 auto; padding: 8px 16px 32px; display: grid; gap: 14px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  .stat { display: flex; justify-content: space-between; gap: 8px; margin: 6px 0 4px; }
+  .stat b { font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; background: var(--info-bg); border-radius: 99px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--info); border-radius: 99px; transition: width .4s; }
+  .bar.warn > i { background: var(--warn); } .bar.bad > i { background: var(--bad); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .ok { color: var(--ok); background: var(--ok-bg); } .warn { color: var(--warn); background: var(--warn-bg); }
+  .bad { color: var(--bad); background: var(--bad-bg); } .info { color: var(--info); background: var(--info-bg); }
+  .app-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .app-head h3 { margin: 0; font-size: 16px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin-top: 10px; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+  a { color: var(--info); text-decoration: none; } a:hover { text-decoration: underline; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.wrap { white-space: normal; min-width: 180px; }
+  .err { color: var(--bad); }
+  button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+
+  /* live deployment banner */
+  .live { border-radius: 10px; padding: 14px 16px; border: 1px solid var(--line); background: var(--panel);
+          display: grid; gap: 10px; }
+  .live.running { border-color: var(--info); background: linear-gradient(90deg, var(--info-bg), var(--panel)); }
+  .live.interrupted { border-color: var(--warn); background: var(--warn-bg); }
+  .live-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  .live-head strong { font-size: 16px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
+  .running .dot { background: var(--info); animation: pulse 1.2s ease-in-out infinite; }
+  .interrupted .dot { background: var(--warn); }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+  @media (prefers-reduced-motion: reduce) { .running .dot { animation: none; } }
+  .steps { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 0; list-style: none; }
+  .steps li { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+  .steps li.done { color: var(--ok); border-color: transparent; background: var(--ok-bg); }
+  .steps li.now { color: var(--info); border-color: var(--info); font-weight: 600; }
+  article.deploying { border-color: var(--info); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Ops Dashboard</h1>
+  <div class="meta"><span id="updated">loading…</span> · <button id="refresh" type="button">Refresh</button></div>
+</header>
+<main>
+  <section id="live" class="live" aria-live="polite"></section>
+  <section class="grid" id="host"></section>
+  <section>
+    <h2>Applications</h2>
+    <div class="grid" id="apps"></div>
+  </section>
+  <section class="panel">
+    <h2>Deployment history</h2>
+    <div class="table-wrap" id="timeline"></div>
+  </section>
+  <section class="grid">
+    <div class="panel"><h2>Database</h2><div id="db"></div></div>
+    <div class="panel"><h2>System services</h2><div id="services"></div>
+      <h2 style="margin-top:16px">TLS certificates</h2><div id="certs"></div></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, attrs = {}, ...kids) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null) continue;
+      if (k === "class") n.className = v; else if (k === "style") n.style.cssText = v; else n.setAttribute(k, v);
+    }
+    for (const k of kids.flat(Infinity)) if (k != null && k !== false) n.append(k instanceof Node ? k : String(k));
+    return n;
+  };
+  const bytes = (b) => {
+    if (b == null) return "—";
+    const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return (b >= 100 || i === 0 ? b.toFixed(0) : b.toFixed(1)) + " " + u[i];
+  };
+  const dur = (s) => {
+    if (s == null) return "—";
+    if (s < 60) return `${s}s`;
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+  };
+  const ago = (iso) => {
+    if (!iso) return "—";
+    const s = (Date.now() - new Date(iso).getTime()) / 1000;
+    return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+  };
+  const when = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  const pill = (cls, text) => el("span", { class: "pill " + cls }, text);
+  const sha = (s) => s ? el("code", {}, s.slice(0, 8)) : "—";
+  const link = (href, text) => href ? el("a", { href, target: "_blank", rel: "noopener" }, text) : null;
+  const STATUS = { success: ["ok", "success"], failed: ["bad", "failed"], rolled_back: ["warn", "rolled back"] };
+  const statusPill = (s) => pill(...(STATUS[s] || ["info", s || "?"]));
+  const STEPS = ["preflight", "snapshot", "backup", "checkout", "sync", "install", "build", "migrate", "restart", "health_check"];
+
+  const meter = (label, used, total, extra) => {
+    const pct = total ? Math.round(used / total * 100) : 0;
+    const level = pct >= 90 ? " bad" : pct >= 75 ? " warn" : "";
+    return el("div", {},
+      el("div", { class: "stat" }, el("span", {}, label), el("b", {}, `${bytes(used)} / ${bytes(total)} · ${pct}%`)),
+      el("div", { class: "bar" + level, role: "meter", "aria-valuenow": pct, "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": label },
+        el("i", { style: `width:${pct}%` })),
+      extra ? el("div", { class: "meta", style: "margin-top:4px" }, extra) : null);
+  };
+  const unitPill = (u) => u.active === "active" ? pill("ok", u.sub || "active")
+    : ["activating", "reloading"].includes(u.active) ? pill("warn", u.active) : pill("bad", u.active || "unknown");
+
+  function renderLive(cur, events) {
+    const box = $("live");
+    if (!cur) {
+      const last = events[0];
+      box.className = "live";
+      box.replaceChildren(el("div", { class: "live-head" }, el("span", { class: "dot" }),
+        el("strong", {}, "No deployment in progress"),
+        last ? el("span", { class: "meta" }, "Last: ", el("b", {}, last.project), ` ${last.action} `, statusPill(last.status), ` ${ago(last.finished_at)}`) : null));
+      return;
+    }
+    const running = cur.state === "running";
+    const done = new Set(cur.steps_done || []);
+    const shown = STEPS.filter((s) => done.has(s) || s === cur.step || ["checkout", "install", "restart", "health_check"].includes(s));
+    box.className = "live " + (running ? "running" : "interrupted");
+    box.replaceChildren(
+      el("div", { class: "live-head" }, el("span", { class: "dot" }),
+        el("strong", {}, running ? `Deploying ${cur.project}` : `Deployment of ${cur.project} was interrupted`),
+        pill(running ? "info" : "warn", cur.action), el("code", {}, cur.ref),
+        el("span", { class: "meta" }, `${dur(cur.started_elapsed_s)} elapsed · step "${cur.step}" for ${dur(cur.step_started_elapsed_s)}`),
+        el("span", { class: "meta" }, `by ${cur.actor} via ${cur.trigger}`),
+        link(cur.run_url, "View run →")),
+      el("ol", { class: "steps", "aria-label": "Deployment steps" },
+        shown.map((s) => el("li", { class: done.has(s) ? "done" : s === cur.step ? "now" : null, "aria-current": s === cur.step ? "step" : null },
+          done.has(s) ? "✓ " : "", s.replace("_", " ")))),
+      running ? null : el("div", { class: "meta" },
+        "The pipeline process is gone (instance stopped or the run was killed). Check the app's status below; a re-run clears this."));
+  }
+
+  function renderHost(s) {
+    const h = s.host, i = s.instance || {}, sch = s.schedule;
+    $("title").textContent = `Ops Dashboard — ${i.instance_id || h.hostname.split(".")[0]}`;
+    $("host").replaceChildren(
+      el("div", { class: "panel" }, el("h2", {}, "Memory"),
+        meter("RAM", h.memory.used, h.memory.total, `${bytes(h.memory.available)} available`),
+        el("div", { style: "height:10px" }), meter("Swap", h.swap.used, h.swap.total)),
+      el("div", { class: "panel" }, el("h2", {}, "Disk & CPU"),
+        meter("Root volume", h.disk.used, h.disk.total, `${bytes(h.disk.free)} free`),
+        el("dl", { class: "kv" },
+          el("dt", {}, "Load 1/5/15"), el("dd", { class: "mono" }, h.load.join(" · ") + ` (${h.cpus} vCPU)`))),
+      el("div", { class: "panel" }, el("h2", {}, "Instance"),
+        el("dl", { class: "kv", style: "margin-top:0" },
+          el("dt", {}, "Instance"), el("dd", {}, i.instance_id ? [el("code", {}, i.instance_id), ` · ${i.instance_type}`] : h.hostname),
+          el("dt", {}, "Zone"), el("dd", {}, i.az || "—"),
+          el("dt", {}, "Uptime"), el("dd", {}, `${dur(h.uptime_seconds)} (since ${when(h.booted_at)})`),
+          el("dt", {}, "Schedule"), el("dd", {}, `Up ${String(sch.start_hour_utc).padStart(2, "0")}:00–${sch.stop_hour_utc}:00 UTC`),
+          el("dt", {}, "Stops in"), el("dd", {}, sch.seconds_to_stop < 3600 ? pill("warn", dur(sch.seconds_to_stop)) : dur(sch.seconds_to_stop)))));
+  }
+
+  function renderApps(list, cur) {
+    $("apps").replaceChildren(...list.map((p) => {
+      const deploying = cur && cur.state === "running" && cur.project === p.project;
+      const healthy = p.health && p.health.code >= 200 && p.health.code < 300;
+      const status = deploying ? pill("info", `deploying · ${cur.step}`)
+        : p.unit.active !== "active" ? pill("bad", "down")
+        : healthy ? pill("ok", `healthy · ${p.health.ms} ms`) : pill("bad", `health ${p.health ? p.health.code ?? "timeout" : "n/a"}`);
+      const g = p.git || {}, w = p.warnings_24h || { count: 0 }, ds = p.deploy_summary || {};
+      const ls = ds.last_success, last = ds.last;
+      return el("article", { class: "panel" + (deploying ? " deploying" : "") },
+        el("div", { class: "app-head" }, el("h3", {}, p.project), status),
+        el("dl", { class: "kv" },
+          el("dt", {}, "URL"), el("dd", {}, p.domain ? link(`https://${p.domain}`, p.domain) : "—"),
+          el("dt", {}, "Running"), el("dd", {}, g.sha ? [sha(g.sha), " ", g.subject || ""] : "—"),
+          el("dt", {}, "Last deployed"), el("dd", {}, ls
+            ? [`${ago(ls.finished_at)} · ${dur(ls.duration_s)} · by ${ls.actor} `, link(ls.run_url, "run")]
+            : el("span", { class: "meta" }, "no pipeline deploy recorded yet")),
+          last && last !== ls && last.status !== "success" ? [el("dt", {}, "Last attempt"),
+            el("dd", {}, statusPill(last.status), ` ${ago(last.finished_at)}`, last.failed_step ? ` at ${last.failed_step}` : "")] : null,
+          el("dt", {}, "7-day deploys"), el("dd", {}, ds.deploys_7d
+            ? `${ds.deploys_7d} · ${ds.success_rate_7d}% succeeded · median ${dur(ds.median_duration_s)}` : "0"),
+          el("dt", {}, "Service"), el("dd", {}, el("code", {}, p.service), " ", unitPill(p.unit),
+            ` · up ${dur(p.unit.uptime_seconds)} · ${p.unit.restarts ?? 0} restarts · ${bytes(p.unit.memory)}`),
+          el("dt", {}, "Database"), el("dd", {}, p.db ? [el("code", {}, p.db), p.migrations ? " · migrations on" : ""] : "—"),
+          el("dt", {}, "Warnings 24h"), el("dd", {}, w.count
+            ? [pill("warn", String(w.count)), " ", el("span", { class: "mono", title: w.last }, (w.last || "").slice(0, 60))]
+            : pill("ok", "0"))));
+    }));
+  }
+
+  function renderTimeline(events) {
+    if (!events.length) { $("timeline").replaceChildren(el("p", { class: "meta" }, "No pipeline runs recorded yet. They appear here after the next deploy.")); return; }
+    $("timeline").replaceChildren(el("table", {},
+      el("thead", {}, el("tr", {}, ["When", "Project", "Action", "Status", "Change", "Duration", "By", "Trigger", "Details"]
+        .map((h, i) => el("th", { class: i === 5 ? "num" : null }, h)))),
+      el("tbody", {}, events.map((e) => el("tr", {},
+        el("td", { title: e.finished_at }, when(e.finished_at)),
+        el("td", {}, el("b", {}, e.project)),
+        el("td", {}, e.action),
+        el("td", {}, statusPill(e.status)),
+        el("td", {}, sha(e.from_sha), " → ", sha(e.to_sha), el("span", { class: "meta" }, ` ${e.ref}`)),
+        el("td", { class: "num" }, dur(e.duration_s)),
+        el("td", {}, e.actor),
+        el("td", {}, e.run_url ? link(e.run_url, e.trigger) : e.trigger),
+        el("td", { class: "wrap meta" }, e.note || (e.failed_step ? `failed at ${e.failed_step}` : "")))))));
+  }
+
+  function renderDb(db) {
+    const box = $("db");
+    if (!db.ok) { box.replaceChildren(el("p", { class: "err" }, db.error)); return; }
+    const conns = Object.entries(db.connections_by_state).map(([k, v]) => `${v} ${k}`).join(" · ");
+    box.replaceChildren(
+      el("dl", { class: "kv", style: "margin-top:0" },
+        el("dt", {}, "Engine"), el("dd", {}, db.version),
+        el("dt", {}, "Running since"), el("dd", {}, when(db.started_at)),
+        el("dt", {}, "Connections"), el("dd", {}, `${conns} (max ${db.max_connections})`),
+        el("dt", {}, "Shared buffers"), el("dd", {}, db.shared_buffers)),
+      el("div", { class: "table-wrap", style: "margin-top:10px" }, el("table", {},
+        el("thead", {}, el("tr", {}, el("th", {}, "Database"), el("th", { class: "num" }, "Size"), el("th", { class: "num" }, "Tables"),
+          el("th", { class: "num" }, "≈ Rows"), el("th", { class: "num" }, "Conns"), el("th", {}, "Largest tables"))),
+        el("tbody", {}, db.databases.map((d) => el("tr", {},
+          el("td", {}, el("code", {}, d.name)), el("td", { class: "num" }, bytes(d.size)),
+          el("td", { class: "num" }, d.tables ?? "—"), el("td", { class: "num" }, d.est_rows ?? "—"),
+          el("td", { class: "num" }, d.connections),
+          el("td", { class: "meta" }, (d.largest || []).map((t) => `${t.table} (${t.rows})`).join(", ") || "—")))))));
+  }
+
+  function renderServices(list) {
+    $("services").replaceChildren(el("table", {}, el("tbody", {}, list.map((u) => el("tr", {},
+      el("td", {}, el("code", {}, u.unit)), el("td", {}, unitPill(u)),
+      el("td", { class: "num meta" }, u.memory ? bytes(u.memory) : ""))))));
+  }
+
+  function renderCerts(list) {
+    $("certs").replaceChildren(el("table", {}, el("tbody", {}, list.map((c) => el("tr", {},
+      el("td", {}, c.domain),
+      el("td", { class: "num" }, c.error ? pill("bad", c.error)
+        : pill(c.days_left < 14 ? "bad" : c.days_left < 30 ? "warn" : "ok", `${c.days_left} days`)))))));
+  }
+
+  let timer;
+  async function load() {
+    clearTimeout(timer);
+    let fast = false;
+    try {
+      const r = await fetch("api/status", { cache: "no-store" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const s = await r.json();
+      const events = s.deploy_events || [];
+      fast = !!(s.deploying && s.deploying.state === "running");
+      renderLive(s.deploying, events); renderHost(s); renderApps(s.projects, s.deploying);
+      renderTimeline(events); renderDb(s.database); renderServices(s.services); renderCerts(s.certificates);
+      $("updated").textContent = `Updated ${new Date(s.generated_at).toLocaleTimeString()} · ${fast ? "live (3s)" : "every 10s"}`;
+    } catch (e) {
+      $("updated").replaceChildren(el("span", { class: "err" }, `Update failed: ${e.message}`));
+    }
+    timer = setTimeout(load, fast ? 3000 : 10000);
+  }
+  $("refresh").addEventListener("click", load);
+  load();
+})();
+</script>
+</body>
+</html>

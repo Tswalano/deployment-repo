@@ -10,6 +10,7 @@
 #   pipeline.sh restore-snapshot <project> <file>     (sync-mode projects only)
 #   pipeline.sh history  <project>
 #   pipeline.sh secrets-cutover <project|all>         (one-time: move secrets to SSM)
+#   pipeline.sh ops-dashboard install | expose <domain>
 #
 # Env flags:
 #   FORCE=1           deploy even if the source checkout has uncommitted changes
@@ -23,6 +24,11 @@ PROJECTS_DIR="$PIPELINE_ROOT/projects"
 STATE_ROOT="${STATE_ROOT:-/opt/deploy-state}"
 LOCK_FILE="$STATE_ROOT/.pipeline.lock"
 KEEP_BACKUPS="${KEEP_BACKUPS:-10}"
+CURRENT_FILE="$STATE_ROOT/current.json"      # live "deploying now" state (read by ops-dashboard)
+EVENTS_FILE="$STATE_ROOT/deployments.jsonl"  # one JSON line per finished operation
+DEPLOY_ACTOR="${DEPLOY_ACTOR:-${SUDO_USER:-$(id -un)}@$(hostname -s)}"
+DEPLOY_TRIGGER="${DEPLOY_TRIGGER:-cli}"
+DEPLOY_RUN_URL="${DEPLOY_RUN_URL:-}"
 
 c_info=$'\e[36m'; c_ok=$'\e[32m'; c_warn=$'\e[33m'; c_err=$'\e[31m'; c_off=$'\e[0m'
 log()  { printf '%s[%s] %s%s\n' "$c_info" "${PROJECT:-pipeline}" "$*" "$c_off"; }
@@ -85,6 +91,55 @@ record() { # record <sha> <ref> <status> <action>
   printf '%s %s %s %s %s\n' "$(date -u +%FT%TZ)" "$1" "$2" "$3" "$4" >> "$HISTORY"
 }
 
+# ----------------------------------------------------------------------------- live state + history
+# op_begin/op_step/op_end write machine-readable deploy metadata; they never affect the deploy itself.
+iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+
+# JSON is built by python3 (present on the host) from environment variables: no quoting pitfalls
+_json() { python3 -I -c "$1"; }
+
+write_current() {
+  local tmp="$CURRENT_FILE.$$"
+  P_PROJECT="$PROJECT" P_SERVICE="$SERVICE" P_ACTION="$OP_ACTION" P_REF="$OP_REF" P_FROM="$OP_FROM" \
+  P_STEP="$OP_STEP" P_STEPS="$OP_STEPS" P_STARTED="$(iso "$OP_START")" P_STEP_STARTED="$(iso "$OP_STEP_START")" \
+  P_ACTOR="$DEPLOY_ACTOR" P_TRIGGER="$DEPLOY_TRIGGER" P_RUN_URL="$DEPLOY_RUN_URL" P_PID="$BASHPID" \
+  _json 'import json,os; e=os.environ.get
+print(json.dumps({"project":e("P_PROJECT"),"service":e("P_SERVICE"),"action":e("P_ACTION"),"ref":e("P_REF"),
+  "from_sha":e("P_FROM"),"step":e("P_STEP"),"steps_done":e("P_STEPS","").split(),"started_at":e("P_STARTED"),
+  "step_started_at":e("P_STEP_STARTED"),"actor":e("P_ACTOR"),"trigger":e("P_TRIGGER"),"run_url":e("P_RUN_URL"),
+  "pid":int(e("P_PID"))}))' > "$tmp" 2>/dev/null && chmod 644 "$tmp" && mv -f "$tmp" "$CURRENT_FILE" || rm -f "$tmp"
+}
+
+op_begin() { # op_begin <action> <ref>
+  OP_ACTION="$1"; OP_REF="$2"; OP_START="$(date +%s)"; OP_STEP_START="$OP_START"
+  OP_FROM="$(current_sha)"; OP_STEP="starting"; OP_STEPS=""; OP_OPEN=1
+  write_current
+}
+
+op_step() { # op_step <name>
+  [[ "${OP_OPEN:-0}" == 1 ]] || return 0
+  [[ "$OP_STEP" != starting ]] && OP_STEPS+=" $OP_STEP"
+  OP_STEP="$1"; OP_STEP_START="$(date +%s)"
+  write_current
+}
+
+op_end() { # op_end <success|failed|rolled_back> [to_sha] [note]
+  [[ "${OP_OPEN:-0}" == 1 ]] || return 0
+  OP_OPEN=0
+  local now; now="$(date +%s)"
+  P_PROJECT="$PROJECT" P_SERVICE="$SERVICE" P_DOMAIN="${DOMAIN:-}" P_ACTION="$OP_ACTION" P_REF="$OP_REF" \
+  P_FROM="$OP_FROM" P_TO="${2:-}" P_STATUS="$1" P_NOTE="${3:-}" P_FAILED_STEP="$([[ "$1" != success ]] && echo "$OP_STEP")" \
+  P_STARTED="$(iso "$OP_START")" P_FINISHED="$(iso "$now")" P_DURATION="$((now - OP_START))" \
+  P_ACTOR="$DEPLOY_ACTOR" P_TRIGGER="$DEPLOY_TRIGGER" P_RUN_URL="$DEPLOY_RUN_URL" \
+  _json 'import json,os; e=os.environ.get
+print(json.dumps({"project":e("P_PROJECT"),"service":e("P_SERVICE"),"domain":e("P_DOMAIN"),"action":e("P_ACTION"),
+  "ref":e("P_REF"),"from_sha":e("P_FROM"),"to_sha":e("P_TO"),"status":e("P_STATUS"),"failed_step":e("P_FAILED_STEP"),
+  "note":e("P_NOTE"),"started_at":e("P_STARTED"),"finished_at":e("P_FINISHED"),"duration_s":int(e("P_DURATION")),
+  "actor":e("P_ACTOR"),"trigger":e("P_TRIGGER"),"run_url":e("P_RUN_URL")}))' >> "$EVENTS_FILE" 2>/dev/null || true
+  chmod 644 "$EVENTS_FILE" 2>/dev/null || true
+  rm -f "$CURRENT_FILE"
+}
+
 ensure_clean_tree() {
   local dirty
   dirty="$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)"
@@ -101,6 +156,7 @@ ensure_clean_tree() {
 backup_db() {
   [[ -n "${DB_NAME:-}" ]] || { log "no DB_NAME configured — skipping DB backup"; return 0; }
   if [[ "${SKIP_DB_BACKUP:-0}" == 1 ]]; then warn "SKIP_DB_BACKUP=1 — no DB backup taken"; return 0; fi
+  op_step backup
   local out="$STATE_DIR/backups/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ)-$(current_sha | cut -c1-8).sql.gz"
   log "backing up database '$DB_NAME' → $out"
   # Credentials come from ~/.pgpass (see README → One-time server setup)
@@ -115,6 +171,7 @@ backup_db() {
 }
 
 snapshot_run_dir() { # sync-mode only: tarball of the running code (excluding node_modules)
+  op_step snapshot
   local out="$STATE_DIR/snapshots/$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
   log "snapshotting $RUN_DIR → $out"
   (umask 077; tar -C "$RUN_DIR" --exclude=node_modules -czf "$out" .)
@@ -171,15 +228,22 @@ wait_healthy() {
 release() { # release <ref> [migrate] → returns 0 if healthy
   local sha
   RELEASED_SHA=""
+  op_step checkout
   sha="$(checkout "$1")"                  || return 1
   RELEASED_SHA="$sha"
+  [[ "$SYNC_MODE" == 1 ]] && op_step sync
   sync_code                               || return 1
+  op_step install
   run_in_app install "$INSTALL_CMD"       || return 1
+  [[ -n "$BUILD_CMD" ]] && op_step build
   run_in_app build   "$BUILD_CMD"         || return 1
   if [[ "${2:-}" == migrate ]]; then
+    [[ -n "$MIGRATE_CMD" ]] && op_step migrate
     run_in_app migrate "$MIGRATE_CMD"     || return 1
   fi
+  op_step restart
   restart_service                         || return 1
+  op_step health_check
   wait_healthy
 }
 
@@ -188,6 +252,8 @@ cmd_deploy() {
   local ref="${1:-$BRANCH}" prev
   prev="$(current_sha)"
   log "deploy ref=$ref  (currently at ${prev:0:8}, service=$SERVICE, run_dir=$RUN_DIR)"
+  op_begin deploy "$ref"
+  op_step preflight
   ensure_clean_tree
   [[ "$SYNC_MODE" == 1 ]] && snapshot_run_dir
   backup_db
@@ -196,16 +262,19 @@ cmd_deploy() {
 
   if release "$ref" migrate; then
     record "$RELEASED_SHA" "$ref" ok deploy
+    op_end success "$RELEASED_SHA"
     ok "deployed ${RELEASED_SHA:0:8} ($ref)"
     return 0
   fi
 
   record "${RELEASED_SHA:-unknown}" "$ref" failed deploy
-  if [[ "${NO_AUTO_ROLLBACK:-0}" == 1 ]]; then die "deploy failed; NO_AUTO_ROLLBACK=1 so leaving it in place"; fi
+  if [[ "${NO_AUTO_ROLLBACK:-0}" == 1 ]]; then op_end failed "${RELEASED_SHA:-}" "NO_AUTO_ROLLBACK=1: left in place"; die "deploy failed; NO_AUTO_ROLLBACK=1 so leaving it in place"; fi
+  local failed_at="$OP_STEP"
   warn "deploy failed — rolling back to ${prev:0:8}"
   [[ -n "$MIGRATE_CMD" ]] && warn "migrations are NOT reverted automatically; latest DB backup is in $STATE_DIR/backups/"
-  if release "$prev"; then record "$prev" "auto-rollback" ok rollback; ok "rolled back to ${prev:0:8}"
-  else record "$prev" "auto-rollback" failed rollback; warn "ROLLBACK ALSO FAILED — manual intervention needed"; fi
+  op_step auto_rollback
+  if release "$prev"; then record "$prev" "auto-rollback" ok rollback; OP_STEP="$failed_at"; op_end rolled_back "$prev" "failed at $failed_at; auto-rolled back to ${prev:0:8}"; ok "rolled back to ${prev:0:8}"
+  else record "$prev" "auto-rollback" failed rollback; OP_STEP="$failed_at"; op_end failed "${RELEASED_SHA:-}" "failed at $failed_at; AUTO-ROLLBACK ALSO FAILED"; warn "ROLLBACK ALSO FAILED — manual intervention needed"; fi
   return 1
 }
 
@@ -214,9 +283,10 @@ cmd_rollback() {
   [[ -n "$target" ]] || target="$(previous_good_sha "$cur")"
   [[ -n "$target" ]] || die "no previous successful deploy in $HISTORY; pass a SHA explicitly"
   log "rollback ${cur:0:8} → ${target:0:8}"
+  op_begin rollback "$target"
   FORCE=1 ensure_clean_tree   # rollback is an emergency path: never blocked by a dirty tree
-  if release "$target"; then record "$RELEASED_SHA" "rollback" ok rollback; ok "rolled back to ${RELEASED_SHA:0:8}"
-  else record "$target" "rollback" failed rollback; die "rollback target is unhealthy too — check logs above"; fi
+  if release "$target"; then record "$RELEASED_SHA" "rollback" ok rollback; op_end success "$RELEASED_SHA"; ok "rolled back to ${RELEASED_SHA:0:8}"
+  else record "$target" "rollback" failed rollback; op_end failed "$target" "rollback target unhealthy"; die "rollback target is unhealthy too — check logs above"; fi
 }
 
 cmd_restore_snapshot() {
@@ -224,11 +294,14 @@ cmd_restore_snapshot() {
   local file="${1:-$(ls -1t "$STATE_DIR"/snapshots/*.tar.gz 2>/dev/null | head -1)}"
   [[ -f "$file" ]] || die "snapshot not found: ${file:-<none>}"
   log "restoring $file → $RUN_DIR"
+  op_begin restore "snapshot:$(basename "$file")"
+  op_step restore
   find "$RUN_DIR" -mindepth 1 -maxdepth 1 ! -name node_modules ! -name '.env*' -exec rm -rf {} +
   tar -C "$RUN_DIR" -xzf "$file"
   run_in_app install "$INSTALL_CMD"
   restart_service
-  wait_healthy && record "snapshot:$(basename "$file")" restore ok rollback
+  op_step health_check
+  wait_healthy && record "snapshot:$(basename "$file")" restore ok rollback && op_end success "$(current_sha)"
 }
 
 cmd_status() {
@@ -253,6 +326,7 @@ main() {
   case "$cmd" in
     list) list_projects; return ;;
     secrets-cutover) exec bash "$PIPELINE_ROOT/server/secrets-cutover.sh" "$@" ;;
+    ops-dashboard)   exec bash "$PIPELINE_ROOT/server/install-ops-dashboard.sh" "$@" ;;
     -h|--help|help) usage ;;
   esac
 
@@ -284,6 +358,8 @@ main() {
     set +e
     (
       set -e
+      # anything that exits early (die, set -e) still closes the live state and logs a failed event
+      trap 'op_end failed "${RELEASED_SHA:-}" "aborted during ${OP_STEP:-?}"' EXIT
       load_project "$p"
       case "$cmd" in
         deploy)           cmd_deploy "$@" ;;

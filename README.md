@@ -94,6 +94,56 @@ When you're happy, delete the backup folder, since it contains the old plaintext
 
 ---
 
+## Ops dashboard
+
+A read-only status page for the box. It shows:
+
+- **Deployments:**
+  - a live **"Deploying now"** banner with the current step, elapsed time, who triggered it and a link to the GitHub Actions run. It polls every 3s while a deploy runs, and flags runs that were killed mid-way as *interrupted*.
+  - per app: when it was last deployed, how long that took, by whom, and the last failed attempt
+  - 7-day deploy count, success rate and median duration
+  - a **timeline of every pipeline run** with its status, from-commit → to-commit, duration and trigger
+- **Instance:** RAM, swap, disk, load, the instance ID, type and zone, uptime, and a countdown to the daily 16:00 UTC stop.
+- **Apps:** systemd state, health and latency, memory, restarts, the running commit, and warnings in the last 24h.
+- **Postgres:** databases with sizes, tables, row estimates and connections. Also system services and TLS certificate expiry.
+
+The pipeline writes the data: `/opt/deploy-state/current.json` while a run is in progress, and one JSON line
+per finished run in `/opt/deploy-state/deployments.jsonl`. Who and what triggered a run comes from
+`DEPLOY_ACTOR`, `DEPLOY_TRIGGER` and `DEPLOY_RUN_URL`, which the GitHub workflow sets automatically.
+
+**Why on the EC2 box rather than Amplify:** all the data lives on the box, so hosting it there needs no public
+API, no cross-site login and no extra cost. The trade-off is that it's offline when the instance is stopped,
+when nothing can deploy anyway.
+
+- [`ops-dashboard/app.py`](ops-dashboard/app.py) uses only the Python standard library (system python3.9, about 15 MB RAM), plus [`index.html`](ops-dashboard/index.html). The page auto-refreshes every 10s, and the JSON is at `/api/status`.
+- It reads `projects/*.conf`, so **new projects appear automatically**.
+- It's **read-only** and changes nothing:
+  - runs as the `opsdash` system user under a hardened systemd unit (`ProtectSystem=strict`, `MemoryMax=96M`)
+  - listens on `127.0.0.1:9100` only
+  - queries the DB as `ops_monitor`, a member of `pg_monitor` with no superuser rights and a 5-connection limit
+
+**Install (one-time):**
+```bash
+# 1. two random passwords into SSM (never printed)
+for n in /apps/ops-dashboard/PGPASSWORD /apps/ops-dashboard-auth/PASSWORD; do
+  aws ssm put-parameter --region af-south-1 --name "$n" --type SecureString \
+    --value "$(python3 -c 'import secrets;print(secrets.token_urlsafe(30))')"
+done
+# 2. install the service
+./deploy.sh ops-dashboard install
+```
+
+**View it** in one of these ways:
+- **Tunnel (nothing public):** `ssh -L 9100:127.0.0.1:9100 ec2-user@<host>`, then open <http://localhost:9100>. With SSM instead:
+  `aws ssm start-session --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters portNumber=9100,localPortNumber=9100`
+- **Public with a password:**
+  1. Add an `A` record `ops.glenify.studio → <Elastic IP>`.
+  2. Run `./deploy.sh ops-dashboard expose ops.glenify.studio`. This sets up nginx, basic auth and a Let's Encrypt certificate.
+  3. Log in as user `ops`. Get the password with
+     `aws ssm get-parameter --name /apps/ops-dashboard-auth/PASSWORD --with-decryption --query Parameter.Value --output text`
+
+---
+
 ## Repository layout
 
 ```
@@ -104,6 +154,8 @@ server/secrets-cutover.sh    # one-time migration of an app's secrets to SSM, wi
 systemd/<service>.service    # source of truth for the unit files (no secrets)
 infra/iam/*.json             # IAM policies: instance role + GitHub OIDC deploy role
 scripts/setup-aws-iam.sh     # creates/updates those roles and attaches the instance profile
+ops-dashboard/               # read-only status page (stdlib Python) served on 127.0.0.1:9100
+server/install-ops-dashboard.sh  # installs it (install) and optionally publishes it with auth + TLS (expose)
 projects/<name>.conf         # one file per project (files starting with "_" are ignored)
 projects/_template.conf      # documented template for new projects
 templates/                   # systemd unit, nginx site and "trigger from app repo" workflow templates

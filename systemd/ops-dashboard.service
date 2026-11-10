@@ -1,0 +1,36 @@
+# Ops dashboard — managed by deployment-repo (systemd/ops-dashboard.service)
+# Read-only status page on 127.0.0.1:9100. Secrets: SSM /apps/ops-dashboard/* (PGPASSWORD for ops_monitor)
+[Unit]
+Description=Ops dashboard (read-only host/app/DB status)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=opsdash
+Group=opsdash
+SupplementaryGroups=systemd-journal
+Environment=OPS_BIND=127.0.0.1 OPS_PORT=9100 PGUSER=ops_monitor HOME=/nonexistent
+ExecStartPre=+/usr/local/bin/load-app-secrets ops-dashboard
+EnvironmentFile=/run/app-secrets/ops-dashboard.env
+ExecStart=/usr/bin/python3 -I /opt/deploy/ops-dashboard/app.py
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+# --- hardening: it only needs to read
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=96M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target
