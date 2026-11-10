@@ -47,8 +47,11 @@ jobs:
       PROJECT: ${{ github.event.inputs.project || github.event.client_payload.project }}
       REF:     ${{ github.event.inputs.ref     || github.event.client_payload.ref }}
       FORCE:   ${{ github.event.inputs.force == 'true' && '1' || '' }}
-      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER || 'ec2-user' }}
+      # EC2 Instance Connect: deploy.sh pushes a throwaway key (valid 60s) via the OIDC role — no PEM
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      AWS_REGION: af-south-1
     steps:
       - uses: actions/checkout@v4
 
@@ -77,15 +80,6 @@ jobs:
           aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --ip-permissions \
             "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$ip/32,Description=github-actions-run-${{ github.run_id }}}]"
           sleep 5
-
-      - name: Load SSH key
-        env:
-          DEPLOY_SSH_KEY_CONTENT: ${{ secrets.DEPLOY_SSH_KEY }}
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY_CONTENT" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          echo "DEPLOY_SSH_KEY=$HOME/.ssh/deploy_key" >> "$GITHUB_ENV"
 
       - name: Run pipeline
         run: |

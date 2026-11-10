@@ -167,11 +167,15 @@ Commit those deletions in the app repos (and **remove those `.pem` files from gi
 
 | Name | Type | Value |
 |---|---|---|
-| `DEPLOY_HOST` | secret | `lendifyapi.glenify.studio` (or the Elastic IP) |
-| `DEPLOY_SSH_KEY` | secret | full contents of the private key for `ec2-user` |
+| `DEPLOY_HOST` | variable | `lendifyapi.glenify.studio` (resolves to the Elastic IP) |
+| `EC2_INSTANCE_ID` | variable | the instance id (printed by `scripts/setup-aws-iam.sh`) |
 | `DEPLOY_USER` | variable (optional) | defaults to `ec2-user` |
-| `AWS_DEPLOY_ROLE_ARN` | secret | printed by `scripts/setup-aws-iam.sh` (OIDC role, no AWS keys stored in GitHub) |
+| `AWS_DEPLOY_ROLE_ARN` | secret | printed by `scripts/setup-aws-iam.sh`. This OIDC role is the **only** credential CI uses: no AWS keys and no SSH key/PEM are stored in GitHub |
 | `DEPLOY_SG_ID` | variable | the instance's security group id (printed by the same script) |
+
+**No PEM needed.** CI connects with **EC2 Instance Connect**: the OIDC role pushes a throwaway public key for
+`ec2-user`, valid for 60 seconds, and `deploy.sh` uses it straight away. Locally it works the same way with
+your AWS CLI credentials. Set `EC2_INSTANCE_ID` in `.deploy.env` and leave `DEPLOY_SSH_KEY` unset.
 
 **Port 22 is restricted** to the admin IP and the EC2 Instance Connect range. Each workflow run uses the
 OIDC role to allow **its own runner IP** for the length of the job, and always revokes it at the end.
