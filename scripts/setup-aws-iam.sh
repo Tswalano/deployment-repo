@@ -11,9 +11,14 @@ INSTANCE_NAME="${INSTANCE_NAME:-lendify-instance}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 INSTANCE_ID="$(aws ec2 describe-instances --region "$REGION" --filters "Name=tag:Name,Values=$INSTANCE_NAME" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text)"
 SG_ID="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text)"
-render() { sed -e "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" -e "s/\${SG_ID}/$SG_ID/g" -e "s/\${INSTANCE_ID}/$INSTANCE_ID/g" "$1"; }
+# GitHub may issue "immutable" subject claims (repo:OWNER@ID/REPO@ID:...) instead of repo:OWNER/REPO:...
+# Ask GitHub which prefix this repo's tokens actually use, so the trust policy matches.
+GH_REPO="${GH_REPO:-Tswalano/deployment-repo}"
+OIDC_SUB_PREFIX="$(gh api "repos/$GH_REPO/actions/oidc/customization/sub" --jq '.sub_claim_prefix // empty' 2>/dev/null || true)"
+OIDC_SUB_PREFIX="${OIDC_SUB_PREFIX:-repo:$GH_REPO}"
+render() { sed -e "s#\${OIDC_SUB_PREFIX}#$OIDC_SUB_PREFIX#g" -e "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" -e "s/\${SG_ID}/$SG_ID/g" -e "s/\${INSTANCE_ID}/$INSTANCE_ID/g" "$1"; }
 exists() { aws iam get-role --role-name "$1" >/dev/null 2>&1; }
-echo "account=$ACCOUNT_ID instance=$INSTANCE_ID sg=$SG_ID"
+echo "account=$ACCOUNT_ID instance=$INSTANCE_ID sg=$SG_ID oidc_sub_prefix=$OIDC_SUB_PREFIX"
 
 # --- 1. instance role
 exists lendify-instance-role || aws iam create-role --role-name lendify-instance-role \
@@ -36,6 +41,8 @@ fi
 # --- 2. GitHub Actions deploy role
 exists github-deploy-repo-role || aws iam create-role --role-name github-deploy-repo-role \
   --assume-role-policy-document "$(render github-deploy-trust.json)" --description "Tswalano/deployment-repo Actions: temporary SSH ingress for the runner" >/dev/null
+# create-role only sets the trust policy once — keep it in sync on every run
+aws iam update-assume-role-policy --role-name github-deploy-repo-role --policy-document "$(render github-deploy-trust.json)"
 aws iam put-role-policy --role-name github-deploy-repo-role --policy-name sg-ssh-runner-ingress --policy-document "$(render github-deploy-sg-ssh.json)"
 aws iam put-role-policy --role-name github-deploy-repo-role --policy-name ec2-instance-connect --policy-document "$(render github-deploy-instance-connect.json)"
 echo "✔ github-deploy-repo-role ready"
