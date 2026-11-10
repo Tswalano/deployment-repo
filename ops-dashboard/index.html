@@ -104,27 +104,6 @@
   .steps li.done { color: var(--ok); border-color: transparent; background: var(--ok-bg); }
   .steps li.now { color: var(--info); border-color: var(--info); font-weight: 600; }
 
-  /* list rows (timeline, deploys, commits): wrap instead of scrolling */
-  .rows { display: grid; }
-  .row { display: grid; grid-template-columns: 110px 1fr auto; gap: 4px 14px; align-items: center; padding: 9px 8px; border-bottom: 1px solid var(--line);
-         border-radius: 6px; transition: background .12s; }
-  .row:last-child { border-bottom: 0; } .row:hover { background: var(--panel-2); }
-  .row .when { color: var(--muted); font-size: 12px; }
-  .row .main { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
-  .row .side { text-align: right; font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .row .note { grid-column: 2 / -1; font-size: 12px; color: var(--muted); }
-  @media (max-width: 640px) { .row { grid-template-columns: 1fr auto; } .row .when { grid-column: 1 / -1; } .row .note { grid-column: 1 / -1; } }
-
-  /* database cards */
-  .db-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin-top: 12px; }
-  .db-card { border: 1px solid var(--line); border-radius: 9px; padding: 12px; background: var(--panel-2); transition: border-color .15s, box-shadow .15s; }
-  .db-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-hover); }
-  .db-card h4 { margin: 0 0 8px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
-  .nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center; }
-  .nums b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; } .nums span { font-size: 11px; color: var(--muted); }
-  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
-  .chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
-  .chip b { color: var(--ink); font-weight: 600; }
   .svc-list { display: grid; gap: 2px; } .svc { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; transition: background .12s; }
   .svc:hover { background: var(--panel-2); }
 
@@ -149,11 +128,39 @@
   .logline.p3 .msg, .logline.p2 .msg { color: #ffb4ae; } .logline.p4 .msg { color: #f6d39a; }
   mark { background: #f0b25255; color: inherit; border-radius: 2px; }
   @media (max-width: 640px) { .logline { grid-template-columns: 1fr; gap: 0; padding: 4px 12px; } }
-  .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .tbl th, .tbl td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
-  .tbl th { color: var(--muted); font-weight: 600; font-size: 12px; } .tbl td.num, .tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  /* tables: fixed layout, never scroll; long text gets an ellipsis (full value on hover) */
+  .tbox { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
+  .tbl { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+  .tbl th, .tbl td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line);
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+  .tbl thead th { background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 12px; position: static; }
+  .tbl tbody tr:last-child td { border-bottom: 0; }
   .tbl tbody tr { transition: background .12s; } .tbl tbody tr:hover { background: var(--panel-2); }
-  @media (max-width: 760px) { .tbl .opt { display: none; } }
+  .tbl .r { text-align: right; font-variant-numeric: tabular-nums; }
+  .tbl td .pill { vertical-align: middle; }
+  .tbl a { color: var(--ink); font-weight: 600; } .tbl a:hover { color: var(--info); }
+  @media (max-width: 960px) { .tbl .h-md { display: none; } }
+  @media (max-width: 640px) { .tbl .h-sm { display: none; } .tbl th, .tbl td { padding: 8px 8px; } .tbl th { width: auto !important; } }
+  .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .panel-head h2 { margin: 0; }
+  .kv.clip dd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  details.more { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  details.more > summary { cursor: pointer; padding: 12px 16px; color: var(--muted); font-weight: 600; font-size: 13px; list-style: none; border-radius: 10px; }
+  details.more > summary::-webkit-details-marker { display: none; }
+  details.more > summary::before { content: "▸"; display: inline-block; margin-right: 8px; transition: transform .15s; }
+  details.more[open] > summary::before { transform: rotate(90deg); }
+  details.more > summary:hover { color: var(--ink); background: var(--panel-2); }
+  details.more > .inner { padding: 0 16px 16px; display: grid; gap: 14px; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; transition: border-color .15s, box-shadow .15s; }
+  .kpi:hover { border-color: var(--line-strong); box-shadow: var(--shadow-hover); }
+  .kpi .lbl { color: var(--muted); font-size: 12px; }
+  .kpi .val { font-size: 22px; font-weight: 650; margin-top: 4px; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi .sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi.good .val { color: var(--ok); } .kpi.bad .val { color: var(--bad); } .kpi.warnv .val { color: var(--warn); }
+  .two { display: grid; gap: 14px; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+  @media (max-width: 860px) { .two { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -188,6 +195,7 @@
   const num = (n) => n == null ? "—" : Number(n).toLocaleString();
   const dur = (s) => { if (s == null) return "—"; if (s < 60) return `${s}s`; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
   const ago = (iso) => { if (!iso) return "—"; const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
+  const whenShort = (iso) => { if (!iso) return "—"; const d = new Date(iso); return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} · ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`; };
   const when = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
   const pill = (cls, text) => el("span", { class: "pill " + cls }, text);
   const sha = (s) => s ? el("code", {}, String(s).slice(0, 8)) : "—";
@@ -206,6 +214,20 @@
     : p.unit.active !== "active" ? pill("bad", "down")
     : p.health && p.health.code >= 200 && p.health.code < 300 ? pill("ok", `healthy · ${p.health.ms} ms`)
     : pill("bad", `health ${p.health ? p.health.code ?? "timeout" : "n/a"}`);
+
+
+  // Table builder. cols: [{h, w, cls}] (cls: "r" right-align, "h-md"/"h-sm" hide on narrow screens)
+  // rows: arrays of cells; a cell is a value/node, or {v, title} to set the hover text explicitly.
+  const titleOf = (v) => v == null ? null : v instanceof Node ? v.textContent : Array.isArray(v) ? v.map(titleOf).join("") : String(v);
+  function table(cols, rows, empty = "Nothing here yet.") {
+    if (!rows.length) return el("p", { class: "empty" }, empty);
+    return el("div", { class: "tbox" }, el("table", { class: "tbl" },
+      el("thead", {}, el("tr", {}, cols.map((c) => el("th", { class: c.cls, style: c.w ? `width:${c.w}` : null, scope: "col" }, c.h)))),
+      el("tbody", {}, rows.map((r) => el("tr", {}, r.map((cell, i) => {
+        const obj = cell && typeof cell === "object" && !(cell instanceof Node) && !Array.isArray(cell) && "v" in cell ? cell : { v: cell };
+        return el("td", { class: cols[i].cls, title: obj.title !== undefined ? obj.title : titleOf(obj.v) }, obj.v ?? "—");
+    }))))));
+  }
 
   // ------------------------------------------------------------------ fetch + loading state
   let inflight = 0, ctrl = null;
@@ -276,39 +298,46 @@
     })));
   }
 
-  function eventRows(events, showProject = true) {
-    if (!events.length) return el("p", { class: "empty" }, "No pipeline runs recorded yet. They appear here after the next deploy.");
-    return el("div", { class: "rows" }, events.map((e) => el("div", { class: "row" },
-      el("span", { class: "when", title: e.finished_at }, when(e.finished_at)),
-      el("span", { class: "main" }, showProject ? el("a", { href: `#/app/${e.project}` }, el("b", {}, e.project)) : null, e.action, statusPill(e.status),
-        el("span", {}, sha(e.from_sha), " → ", sha(e.to_sha)), el("span", { class: "meta" }, e.ref)),
-      el("span", { class: "side" }, dur(e.duration_s), " · ", e.actor, " · ", e.run_url ? ext(e.run_url, e.trigger) : e.trigger),
-      e.note || e.failed_step ? el("span", { class: "note" }, e.note || `failed at ${e.failed_step}`) : null)));
+  function eventsTable(events, showProject = true) {
+    const cols = [{ h: "When", w: "128px" }];
+    if (showProject) cols.push({ h: "App", w: "120px" });
+    cols.push({ h: "Action", w: "90px", cls: "h-sm" }, { h: "Status", w: "110px" }, { h: "Version", w: "170px", cls: "h-sm" },
+      { h: "Duration", w: "92px", cls: "r h-md" }, { h: "By", w: "120px", cls: "h-md" }, { h: "Details", cls: "h-md" });
+    return table(cols, events.map((e) => [
+      { v: whenShort(e.finished_at), title: e.finished_at },
+      ...(showProject ? [el("a", { href: `#/app/${e.project}` }, e.project)] : []),
+      e.action,
+      statusPill(e.status),
+      { v: [sha(e.from_sha), " → ", sha(e.to_sha)], title: `${e.from_sha || "?"} → ${e.to_sha || "—"} (${e.ref})` },
+      dur(e.duration_s),
+      e.run_url ? { v: ext(e.run_url, e.actor), title: `${e.actor} via ${e.trigger}` } : { v: e.actor, title: `${e.actor} via ${e.trigger}` },
+      e.note || (e.failed_step ? `failed at ${e.failed_step}` : e.ref),
+    ]), "No pipeline runs recorded yet. They appear here after the next deploy.");
   }
 
   function dbPanel(db) {
-    if (!db.ok) return el("div", { class: "panel" }, el("h2", {}, "Database"), el("p", { class: "err" }, db.error));
+    const head = el("div", { class: "panel-head" }, el("h2", {}, "Databases"));
+    if (!db.ok) return el("div", { class: "panel" }, head, el("p", { class: "err" }, db.error));
     const conns = Object.entries(db.connections_by_state).map(([k, v]) => `${v} ${k}`).join(" · ");
-    return el("div", { class: "panel" }, el("h2", {}, "Database"),
-      el("div", { class: "meta" }, `${db.version} · up since ${when(db.started_at)} · ${conns} (max ${db.max_connections}) · shared_buffers ${db.shared_buffers}`),
-      el("div", { class: "db-grid" }, db.databases.map((d) => el("div", { class: "db-card" },
-        el("h4", {}, el("code", {}, d.name), el("span", { class: "meta" }, bytes(d.size))),
-        el("div", { class: "nums" },
-          el("div", {}, el("b", {}, d.tables ?? "—"), el("span", {}, "tables")),
-          el("div", { title: d.unanalyzed_tables ? `${d.unanalyzed_tables} table(s) not analyzed since stats were reset; refreshed after the next deploy` : "Estimate from Postgres statistics" },
-            el("b", {}, d.unanalyzed_tables && d.unanalyzed_tables === d.tables ? "—" : num(d.est_rows) + (d.unanalyzed_tables ? "+" : "")), el("span", {}, "≈ rows")),
-          el("div", {}, el("b", {}, d.connections), el("span", {}, "conns"))),
-        d.largest && d.largest.length ? el("div", { class: "chips", title: "Largest tables" },
-          d.largest.map((t) => el("span", { class: "chip" }, t.table, t.rows || !d.unanalyzed_tables ? [" ", el("b", {}, num(t.rows))] : null))) : null,
-        d.unanalyzed_tables ? el("div", { class: "meta", style: "margin-top:6px" }, "Row estimates refresh after the next deploy.") : null))));
+    head.append(el("span", { class: "meta", title: `${db.version} · up since ${when(db.started_at)} · ${conns} (max ${db.max_connections}) · shared_buffers ${db.shared_buffers}` },
+      `${db.version.replace("PostgreSQL ", "Postgres ")} · ${db.connections_by_state.active || 0} active / ${db.max_connections} max`));
+    const rows = (d) => d.tables == null ? "—" : d.unanalyzed_tables === d.tables ? { v: "—", title: "Not analyzed since statistics were reset; refreshed after the next deploy" }
+      : { v: num(d.est_rows) + (d.unanalyzed_tables ? "+" : ""), title: d.unanalyzed_tables ? `${d.unanalyzed_tables} table(s) not analyzed yet` : "Estimate from Postgres statistics" };
+    return el("div", { class: "panel" }, head, table(
+      [{ h: "Database" }, { h: "Size", w: "84px", cls: "r" }, { h: "Tables", w: "78px", cls: "r" }, { h: "≈ Rows", w: "84px", cls: "r h-sm" },
+       { h: "Conns", w: "76px", cls: "r h-sm" }, { h: "Largest tables", cls: "h-md" }],
+      db.databases.map((d) => [el("code", {}, d.name), bytes(d.size), d.tables ?? "—", rows(d), d.connections,
+        (d.largest || []).map((t) => t.table).join(", ") || "—"])));
   }
 
   function servicesPanel(services, certs) {
-    return el("div", { class: "panel" }, el("h2", {}, "System services"),
+    return el("section", { class: "grid", style: "grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))" },
+      el("div", { class: "panel" }, el("h2", {}, "System services"),
       el("div", { class: "svc-list" }, services.map((u) => el("div", { class: "svc" }, el("code", {}, u.unit), el("span", {}, u.memory ? el("span", { class: "meta" }, bytes(u.memory), " ") : "", unitPill(u))))),
-      el("h2", { style: "margin-top:16px" }, "TLS certificates"),
+      ),
+      el("div", { class: "panel" }, el("h2", {}, "TLS certificates"),
       el("div", { class: "svc-list" }, certs.map((c) => el("div", { class: "svc" }, el("span", {}, c.domain),
-        c.error ? pill("bad", c.error) : pill(c.days_left < 14 ? "bad" : c.days_left < 30 ? "warn" : "ok", `${c.days_left} days`)))));
+        c.error ? pill("bad", c.error) : pill(c.days_left < 14 ? "bad" : c.days_left < 30 ? "warn" : "ok", `${c.days_left} days`))))));
   }
 
   async function renderOverview(fresh) {
@@ -318,8 +347,8 @@
     $("title").textContent = `Ops Dashboard — ${(s.instance && s.instance.instance_id) || s.host.hostname.split(".")[0]}`;
     $("back").replaceChildren();
     put($("view"), liveBanner(s.deploying, events), hostPanels(s), appCards(s.projects, s.deploying),
-      el("section", { class: "panel" }, el("h2", {}, "Deployment history"), eventRows(events)),
-      el("section", { class: "grid", style: "grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))" }, dbPanel(s.database), servicesPanel(s.services, s.certificates)));
+      el("section", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Deployment history"), el("span", { class: "meta" }, `${events.length} recent runs`)), eventsTable(events)),
+      dbPanel(s.database), servicesPanel(s.services, s.certificates));
     const live = !!(s.deploying && s.deploying.state === "running");
     stamp(`Updated ${new Date(s.generated_at).toLocaleTimeString()}`, live);
     return live ? 3000 : 10000;
@@ -330,42 +359,49 @@
   const logState = { lines: "200", priority: "7", since: "24h", q: "", follow: true };
   let detailCache = null;
 
-  function tile(label, value, sub) { return el("div", { class: "tile" }, el("span", {}, label), el("b", {}, value), sub ? el("div", { class: "meta" }, sub) : null); }
+  function kpi(label, value, sub, tone) { return el("div", { class: "kpi" + (tone ? " " + tone : "") }, el("div", { class: "lbl" }, label), el("div", { class: "val", title: titleOf(value) }, value), sub ? el("div", { class: "sub", title: titleOf(sub) }, sub) : null); }
+  function tile(label, value, sub) { return kpi(label, value, sub); }
 
   function overviewTab(d) {
-    const u = d.unit, h = d.health, ds = d.deploy_summary || {}, ls = ds.last_success;
+    const u = d.unit, h = d.health, ls = (d.deploy_summary || {}).last_success, g = d.git || {}, w = d.warnings_24h;
+    const healthy = h && h.code >= 200 && h.code < 300 && u.active === "active";
+    const db = d.database;
     return [
-      el("div", { class: "tiles" },
-        tile("Status", u.active === "active" ? "Running" : u.active, `${u.sub} · ${u.restarts ?? 0} restarts`),
-        tile("Health", h ? (h.code ?? "timeout") : "—", h ? `${h.ms} ms` : ""),
-        tile("Uptime", dur(u.uptime_seconds), when(u.started_at && new Date(u.started_at.replace(/^\w+ /, "").replace(" UTC", "Z").replace(" ", "T")).toISOString())),
-        tile("Memory", bytes(u.memory), `${u.tasks ?? "—"} tasks`),
-        tile("CPU time", u.cpu_seconds != null ? `${u.cpu_seconds}s` : "—", "since start"),
-        tile("Last deployed", ls ? ago(ls.finished_at) : "—", ls ? `${dur(ls.duration_s)} · ${ls.actor}` : "no pipeline deploy yet"),
-        tile("Deploys (7d)", ds.deploys_7d ?? 0, ds.deploys_7d ? `${ds.success_rate_7d}% ok · median ${dur(ds.median_duration_s)}` : ""),
-        tile("Problems 24h", d.warnings_24h.count, d.warnings_24h.count
-          ? [`${d.warnings_24h.errors || 0} errors · ${d.warnings_24h.count - (d.warnings_24h.errors || 0)} warnings · `, el("a", { href: `#/app/${d.project}/logs`, onclick: () => { logState.priority = "4"; } }, "view →")]
-          : "no errors or warnings")),
-      el("div", { class: "grid" },
-        el("div", { class: "panel" }, el("h2", {}, "Service"), el("dl", { class: "kv", style: "margin-top:0" },
-          el("dt", {}, "Unit"), el("dd", {}, el("code", {}, d.service), " ", unitPill(u), " ", pill(u.enabled === "enabled" ? "ok" : "warn", u.enabled || "?")),
-          el("dt", {}, "Main PID"), el("dd", {}, u.main_pid || "—"),
-          el("dt", {}, "User"), el("dd", {}, u.user || "—"),
-          el("dt", {}, "Working dir"), el("dd", {}, el("code", {}, u.working_dir || "—")),
-          el("dt", {}, "Unit file"), el("dd", {}, el("code", {}, u.unit_file || "—")),
-          el("dt", {}, "Depends on"), el("dd", {}, u.requires.filter((r) => !r.endsWith(".mount") && !r.endsWith(".slice")).join(", ") || "—"),
-          el("dt", {}, "Env vars"), el("dd", {}, u.env.length ? u.env.map((e) => el("span", { class: "chip", style: "margin:0 4px 4px 0;display:inline-block" }, e.name, e.value != null ? `=${e.value}` : "")) : "—",
-            el("div", { class: "meta" }, "Names only. Secrets come from SSM and are never shown.")))),
-        el("div", { class: "panel" }, el("h2", {}, "Pipeline config"), el("dl", { class: "kv", style: "margin-top:0" },
-          Object.entries(d.config).map(([k, v]) => [el("dt", {}, k), el("dd", {}, el("code", {}, v))])))),
-      h ? el("div", { class: "panel" }, el("h2", {}, "Health endpoint"),
-        el("div", { class: "meta" }, el("code", {}, h.url), " → ", pill(h.code >= 200 && h.code < 300 ? "ok" : "bad", String(h.code ?? "timeout")), ` in ${h.ms} ms ${h.content_type ? "· " + h.content_type : ""}`),
-        el("pre", { class: "json" }, h.body || "")) : null,
+      el("div", { class: "kpis" },
+        kpi("Health", healthy ? "Healthy" : u.active !== "active" ? "Down" : "Unhealthy", h ? `HTTP ${h.code ?? "timeout"} · ${h.ms} ms` : "no health URL", healthy ? "good" : "bad"),
+        kpi("Uptime", dur(u.uptime_seconds), `${u.restarts ?? 0} restarts`),
+        kpi("Memory", bytes(u.memory), `${u.tasks ?? "—"} tasks · ${u.cpu_seconds ?? "—"}s CPU`),
+        kpi("Last deploy", ls ? ago(ls.finished_at) : "Never", ls ? `took ${dur(ls.duration_s)} · ${ls.actor}` : "no pipeline deploy yet")),
+      el("div", { class: "two" },
+        el("div", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Details")),
+          el("dl", { class: "kv clip", style: "margin-top:0" },
+            el("dt", {}, "URL"), el("dd", {}, d.domain ? ext(`https://${d.domain}`, d.domain) : "—"),
+            el("dt", {}, "Version"), el("dd", { title: g.subject || "" }, g.sha ? [sha(g.sha), " ", g.subject || ""] : "—"),
+            el("dt", {}, "Branch"), el("dd", {}, g.behind ? [d.branch, " ", pill("info", `${g.behind} new`)] : d.branch),
+            el("dt", {}, "Service"), el("dd", {}, el("code", {}, d.service), " ", unitPill(u)),
+            el("dt", {}, "Database"), el("dd", {}, db && db.ok ? `${db.name} · ${bytes(db.size)} · ${db.tables.length} tables` : d.config.DB_NAME || "—"),
+            el("dt", {}, "Problems 24h"), el("dd", {}, !w.count ? pill("ok", "none")
+              : el("a", { href: `#/app/${d.project}/logs`, onclick: () => { logState.priority = "4"; } },
+                  w.errors ? pill("bad", `${w.errors} errors`) : null, " ", w.count - (w.errors || 0) ? pill("warn", `${w.count - (w.errors || 0)} warnings`) : null)))),
+        el("div", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Recent deployments"),
+            d.deploys.length > 5 ? el("a", { href: `#/app/${d.project}/deploys`, class: "meta" }, "View all →") : null),
+          table([{ h: "When", w: "128px" }, { h: "Status", w: "110px" }, { h: "Version", cls: "h-sm" }, { h: "Duration", w: "92px", cls: "r" }],
+            d.deploys.slice(0, 5).map((e) => [{ v: whenShort(e.finished_at), title: e.finished_at }, statusPill(e.status),
+              { v: [sha(e.from_sha), " → ", sha(e.to_sha)], title: e.note || e.ref }, dur(e.duration_s)]), "No pipeline deploys yet."))),
+      el("details", { class: "more" }, el("summary", {}, "Technical details"),
+        el("div", { class: "inner" },
+          el("dl", { class: "kv clip", style: "margin-top:0" },
+            el("dt", {}, "Unit file"), el("dd", {}, el("code", {}, u.unit_file || "—")),
+            el("dt", {}, "Working dir"), el("dd", {}, el("code", {}, u.working_dir || "—")),
+            el("dt", {}, "Runs as"), el("dd", {}, `${u.user || "—"} · PID ${u.main_pid || "—"} · ${u.enabled || "?"} at boot`),
+            Object.entries(d.config).map(([k, v]) => [el("dt", {}, k), el("dd", { title: v }, el("code", {}, v))]),
+            el("dt", {}, "Env vars"), el("dd", { title: u.env.map((e) => e.name).join(", ") }, u.env.map((e) => e.name).join(", ") || "—")),
+          h ? el("div", {}, el("div", { class: "meta" }, `Health response · ${h.url}`), el("pre", { class: "json" }, h.body || "")) : null)),
     ];
   }
 
   function deploysTab(d) {
-    return el("div", { class: "panel" }, el("h2", {}, `Deployments (${d.deploys.length})`), eventRows(d.deploys, false));
+    return el("div", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Deployments"), el("span", { class: "meta" }, `${d.deploys.length} runs`)), eventsTable(d.deploys, false));
   }
 
   function databaseTab(d) {
@@ -373,34 +409,36 @@
     if (!db) return el("p", { class: "empty" }, "No database configured for this project.");
     if (!db.ok) return el("p", { class: "err" }, db.error);
     const known = db.tables.filter((t) => t.rows != null), unknown = db.tables.length - known.length;
-    const totalRows = known.reduce((a, t) => a + t.rows, 0), dead = db.tables.reduce((a, t) => a + t.dead, 0);
+    const totalRows = known.reduce((a, t) => a + t.rows, 0);
     return [
-      el("div", { class: "tiles" }, tile("Database", db.name, bytes(db.size)), tile("Tables", db.tables.length), tile("≈ Rows", unknown === db.tables.length ? "—" : num(totalRows) + (unknown ? "+" : ""),
-          unknown ? `${unknown} table(s) not analyzed yet` : dead ? `${num(dead)} dead tuples` : "no dead tuples"),
-        tile("Connections", db.connections.length, Object.entries(db.connections.reduce((a, c) => (a[c.state] = (a[c.state] || 0) + 1, a), {})).map(([k, v]) => `${v} ${k}`).join(" · ") || "none"),
-        tile("Migrations applied", db.migrations_applied ?? "—", db.migrations_table || "no migrations table")),
-      unknown ? el("p", { class: "meta" }, `Row counts are Postgres estimates. ${unknown} table(s) haven't been analyzed since statistics were last reset${db.stats_reset ? ` (${when(db.stats_reset)})` : ""}, so they show "—". The pipeline refreshes them (ANALYZE, which never changes data) after each deploy.`) : null,
-      el("div", { class: "panel" }, el("h2", {}, "Tables"), el("table", { class: "tbl" },
-        el("thead", {}, el("tr", {}, el("th", {}, "Table"), el("th", { class: "num" }, "Rows"), el("th", { class: "num" }, "Size"),
-          el("th", { class: "num opt" }, "Indexes"), el("th", { class: "num opt" }, "Seq / idx scans"), el("th", { class: "num opt" }, "Ins / upd / del"), el("th", { class: "opt" }, "Last vacuum"))),
-        el("tbody", {}, db.tables.map((t) => el("tr", {},
-          el("td", {}, el("code", {}, t.table.replace(/^public\./, "")), t.dead > t.rows && t.dead > 50 ? [" ", pill("warn", "bloat")] : null),
-          el("td", { class: "num", title: t.rows == null ? "Not analyzed since statistics were reset" : null }, rowsText(t.rows, t.rows == null)), el("td", { class: "num" }, bytes(t.size)), el("td", { class: "num opt" }, bytes(t.index_size)),
-          el("td", { class: "num opt" }, `${num(t.seq_scans)} / ${num(t.idx_scans)}`), el("td", { class: "num opt" }, `${num(t.inserts)} / ${num(t.updates)} / ${num(t.deletes)}`),
-          el("td", { class: "opt meta" }, t.last_vacuum ? ago(t.last_vacuum) : "never"))))))];
+      el("div", { class: "kpis" },
+        kpi("Size", bytes(db.size), db.name),
+        kpi("Tables", db.tables.length, unknown ? `${unknown} not analyzed yet` : "all analyzed"),
+        kpi("≈ Rows", unknown === db.tables.length ? "—" : num(totalRows) + (unknown ? "+" : ""), "Postgres estimate"),
+        kpi("Migrations", db.migrations_applied ?? "—", db.migrations_table || "no migrations table")),
+      el("div", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Tables"),
+          el("span", { class: "meta" }, `${db.connections.length} connection${db.connections.length === 1 ? "" : "s"}`)),
+        table([{ h: "Table" }, { h: "Rows", w: "84px", cls: "r" }, { h: "Size", w: "88px", cls: "r" }, { h: "Indexes", w: "92px", cls: "r h-sm" },
+               { h: "Seq / idx scans", w: "136px", cls: "r h-md" }, { h: "Last vacuum", w: "116px", cls: "h-md" }],
+          db.tables.map((t) => [el("code", {}, t.table.replace(/^public\./, "")),
+            t.rows == null ? { v: "—", title: "Not analyzed since statistics were reset; refreshed after the next deploy" } : num(t.rows),
+            bytes(t.size), bytes(t.index_size), `${num(t.seq_scans)} / ${num(t.idx_scans)}`, t.last_vacuum ? ago(t.last_vacuum) : "never"])),
+        unknown ? el("p", { class: "meta", style: "margin:10px 0 0" }, "“—” = not analyzed since Postgres statistics were reset. The pipeline refreshes them after each deploy (ANALYZE never changes data).") : null)];
   }
 
   function commitsTab(d) {
     const g = d.git;
     if (!g) return el("p", { class: "empty" }, "No source checkout configured.");
-    const list = (items) => el("div", { class: "rows" }, items.map((c) => el("div", { class: "row" },
-      el("span", { class: "when" }, when(c.date)), el("span", { class: "main" }, sha(c.sha), c.subject), el("span", { class: "side" }, c.author))));
+    const ctable = (items) => table([{ h: "Date", w: "128px" }, { h: "Commit", w: "96px" }, { h: "Message" }, { h: "Author", w: "150px", cls: "h-sm" }],
+      items.map((c) => [{ v: whenShort(c.date), title: c.date }, sha(c.sha), c.subject, c.author]));
     return [
-      el("div", { class: "tiles" }, tile("Deployed", g.sha || "—", g.branch), tile("Behind " + g.tracking, g.behind ?? "—", g.last_fetch ? `as of last fetch, ${ago(g.last_fetch)} (next deploy re-fetches)` : "never fetched on the server"),
-        tile("Uncommitted files", g.dirty_files.length, g.dirty_files.length ? "deploy will need FORCE=1" : "clean")),
-      g.dirty_files.length ? el("div", { class: "panel" }, el("h2", {}, "Uncommitted changes on the server"), el("div", { class: "chips" }, g.dirty_files.map((f) => el("span", { class: "chip" }, f)))) : null,
-      g.upstream_commits.length ? el("div", { class: "panel" }, el("h2", {}, `Waiting to deploy (${g.behind})`), list(g.upstream_commits)) : null,
-      el("div", { class: "panel" }, el("h2", {}, "Deployed history"), list(g.commits))];
+      el("div", { class: "kpis" },
+        kpi("Deployed", g.sha || "—", g.branch),
+        kpi("Waiting to deploy", g.behind ?? "—", g.last_fetch ? `as of fetch ${ago(g.last_fetch)}` : "never fetched", g.behind ? "warnv" : null),
+        kpi("Uncommitted files", g.dirty_files.length, g.dirty_files.length ? g.dirty_files.join(", ") : "clean", g.dirty_files.length ? "warnv" : null),
+        kpi("Tracking", g.tracking, "")),
+      g.upstream_commits.length ? el("div", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, `Waiting to deploy (${g.behind})`)), ctable(g.upstream_commits)) : null,
+      el("div", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Deployed history")), ctable(g.commits))];
   }
 
   const LV = { 0: "EMERG", 1: "ALERT", 2: "CRIT", 3: "ERROR", 4: "WARN", 5: "NOTICE", 6: "INFO", 7: "DEBUG" };
