@@ -106,6 +106,13 @@ A read-only status page for the box. It shows:
 - **Instance:** RAM, swap, disk, load, the instance ID, type and zone, uptime, and a countdown to the daily 16:00 UTC stop.
 - **Apps:** systemd state, health and latency, memory, restarts, the running commit, and warnings in the last 24h.
 - **Postgres:** databases with sizes, tables, row estimates and connections. Also system services and TLS certificate expiry.
+- **Per-app pages** (click an app card, or go to `#/app/<project>`), with tabs:
+  - **Overview:** service, health response, uptime, memory, CPU time, tasks, enabled state, pipeline config, and env var *names* (never values)
+  - **Logs:** journald logs with level filter (All / Info+ / Warnings+ / Errors), time range, line count, search with highlighting, and live follow. Levels are inferred from the message text (`error`, `exception`, `warn`…), because journald records an app's stdout and stderr as INFO.
+  - **Deployments:** every pipeline run for that app
+  - **Database:** per-table rows, size, index size, scans, inserts/updates/deletes and last vacuum, plus connections and the migrations-applied count. Rows Postgres hasn't analyzed since its statistics were reset show as "—". The pipeline runs `ANALYZE` after each deploy; this only refreshes statistics and never changes data.
+  - **Commits:** the deployed commit, recent history, commits on `origin/<branch>` waiting to deploy (as of the last fetch), and uncommitted files on the server
+- The **Refresh** button (or the `R` key) skips the server cache, and shows a spinner and a loading bar while it works.
 
 The pipeline writes the data: `/opt/deploy-state/current.json` while a run is in progress, and one JSON line
 per finished run in `/opt/deploy-state/deployments.jsonl`. Who and what triggered a run comes from
