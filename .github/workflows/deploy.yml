@@ -52,6 +52,10 @@ jobs:
       # EC2 Instance Connect: deploy.sh pushes a throwaway key (valid 60s) via the OIDC role — no PEM
       EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
       AWS_REGION: af-south-1
+      # shown on the ops dashboard
+      DEPLOY_ACTOR: ${{ github.actor }}
+      DEPLOY_TRIGGER: ${{ github.event_name }}
+      DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
 

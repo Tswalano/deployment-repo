@@ -58,7 +58,10 @@ push_key
 rsync -az --delete -e "ssh ${SSH_OPTS[*]}" server projects systemd ops-dashboard templates "$TARGET:$REMOTE_DIR/"
 
 ENV_FWD=""
-for v in FORCE SKIP_DB_BACKUP NO_AUTO_ROLLBACK HEALTH_TIMEOUT; do
+# who/what triggered this run, shown on the ops dashboard
+DEPLOY_ACTOR="${DEPLOY_ACTOR:-$(git config user.name 2>/dev/null || id -un) (local)}"
+DEPLOY_TRIGGER="${DEPLOY_TRIGGER:-cli}"
+for v in FORCE SKIP_DB_BACKUP NO_AUTO_ROLLBACK HEALTH_TIMEOUT DEPLOY_ACTOR DEPLOY_TRIGGER DEPLOY_RUN_URL; do
   [[ -n "${!v:-}" ]] && ENV_FWD+="$v=$(printf %q "${!v}") "
 done
 ARGS="$(printf '%q ' "$@")"

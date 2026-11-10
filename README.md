@@ -96,9 +96,24 @@ When you're happy, delete the backup folder, since it contains the old plaintext
 
 ## Ops dashboard
 
-A read-only status page for the box: RAM, swap and disk; each app's systemd state, health, memory,
-deployed commit, warnings in the last 24h and recent deploys; Postgres databases, sizes, tables and
-connections; system services; and TLS certificate expiry.
+A read-only status page for the box. It shows:
+
+- **Deployments:**
+  - a live **"Deploying now"** banner with the current step, elapsed time, who triggered it and a link to the GitHub Actions run. It polls every 3s while a deploy runs, and flags runs that were killed mid-way as *interrupted*.
+  - per app: when it was last deployed, how long that took, by whom, and the last failed attempt
+  - 7-day deploy count, success rate and median duration
+  - a **timeline of every pipeline run** with its status, from-commit → to-commit, duration and trigger
+- **Instance:** RAM, swap, disk, load, the instance ID, type and zone, uptime, and a countdown to the daily 16:00 UTC stop.
+- **Apps:** systemd state, health and latency, memory, restarts, the running commit, and warnings in the last 24h.
+- **Postgres:** databases with sizes, tables, row estimates and connections. Also system services and TLS certificate expiry.
+
+The pipeline writes the data: `/opt/deploy-state/current.json` while a run is in progress, and one JSON line
+per finished run in `/opt/deploy-state/deployments.jsonl`. Who and what triggered a run comes from
+`DEPLOY_ACTOR`, `DEPLOY_TRIGGER` and `DEPLOY_RUN_URL`, which the GitHub workflow sets automatically.
+
+**Why on the EC2 box rather than Amplify:** all the data lives on the box, so hosting it there needs no public
+API, no cross-site login and no extra cost. The trade-off is that it's offline when the instance is stopped,
+when nothing can deploy anyway.
 
 - [`ops-dashboard/app.py`](ops-dashboard/app.py) uses only the Python standard library (system python3.9, about 15 MB RAM), plus [`index.html`](ops-dashboard/index.html). The page auto-refreshes every 10s, and the JSON is at `/api/status`.
 - It reads `projects/*.conf`, so **new projects appear automatically**.

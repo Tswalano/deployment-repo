@@ -23,7 +23,7 @@ import subprocess
 import threading
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BIND = os.environ.get("OPS_BIND", "127.0.0.1")
@@ -32,7 +32,9 @@ PIPELINE_DIR = os.environ.get("OPS_PIPELINE_DIR", "/opt/deploy")
 STATE_DIR = os.environ.get("OPS_STATE_DIR", "/opt/deploy-state")
 EXTRA_UNITS = os.environ.get("OPS_EXTRA_UNITS", "nginx postgresql amazon-ssm-agent certbot-renew.timer").split()
 PG_USER = os.environ.get("PGUSER", "ops_monitor")
-CACHE_SECONDS = 5
+CACHE_SECONDS = 3
+STOP_HOUR_UTC = int(os.environ.get("OPS_STOP_HOUR_UTC", "16"))   # EventBridge daily stop
+START_HOUR_UTC = int(os.environ.get("OPS_START_HOUR_UTC", "4"))  # EventBridge daily start
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -74,6 +76,94 @@ def host_info():
             "used": (st.f_blocks - st.f_bfree) * st.f_frsize,
             "free": st.f_bavail * st.f_frsize,
         },
+    }
+
+
+# --------------------------------------------------------------------------- instance
+_imds_cache = {}
+
+
+def instance_meta():
+    """EC2 instance metadata via IMDSv2 (cached: it never changes while running)."""
+    if _imds_cache:
+        return _imds_cache
+    base = "http://169.254.169.254/latest"
+    try:
+        req = urllib.request.Request(base + "/api/token", method="PUT",
+                                     headers={"X-aws-ec2-metadata-token-ttl-seconds": "300"})
+        token = urllib.request.urlopen(req, timeout=1).read().decode()
+        doc = json.loads(urllib.request.urlopen(urllib.request.Request(
+            base + "/dynamic/instance-identity/document", headers={"X-aws-ec2-metadata-token": token}), timeout=1).read())
+        _imds_cache.update(instance_id=doc.get("instanceId"), instance_type=doc.get("instanceType"),
+                           region=doc.get("region"), az=doc.get("availabilityZone"), image_id=doc.get("imageId"))
+    except Exception:
+        return {}
+    return _imds_cache
+
+
+def schedule():
+    now = datetime.now(timezone.utc)
+    stop = now.replace(hour=STOP_HOUR_UTC, minute=0, second=0, microsecond=0)
+    if stop <= now:
+        stop += timedelta(days=1)
+    return {"stop_hour_utc": STOP_HOUR_UTC, "start_hour_utc": START_HOUR_UTC,
+            "next_stop": stop.isoformat(timespec="seconds"), "seconds_to_stop": int((stop - now).total_seconds())}
+
+
+# --------------------------------------------------------------------------- deployments
+def live_deploy():
+    """The pipeline's current.json, with a liveness check on the pipeline process."""
+    try:
+        with open(os.path.join(STATE_DIR, "current.json")) as f:
+            cur = json.load(f)
+    except (OSError, ValueError):
+        return None
+    alive = os.path.exists("/proc/%d" % int(cur.get("pid", 0)))
+    cur["state"] = "running" if alive else "interrupted"
+    for k in ("started_at", "step_started_at"):
+        try:
+            cur[k.replace("_at", "_elapsed_s")] = int(time.time() - datetime.strptime(
+                cur[k], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
+        except (KeyError, ValueError):
+            pass
+    return cur
+
+
+def deploy_events(limit=200):
+    path = os.path.join(STATE_DIR, "deployments.jsonl")
+    try:
+        with open(path) as f:
+            lines = f.readlines()[-limit:]
+    except OSError:
+        return []
+    out = []
+    for l in lines:
+        try:
+            out.append(json.loads(l))
+        except ValueError:
+            pass
+    return list(reversed(out))   # newest first
+
+
+def deploy_summary(events, project):
+    mine = [e for e in events if e.get("project") == project]
+    week_ago = time.time() - 7 * 86400
+
+    def ts(e):
+        try:
+            return datetime.strptime(e["finished_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        except (KeyError, ValueError):
+            return 0
+    week = [e for e in mine if ts(e) >= week_ago and e.get("action") == "deploy"]
+    ok = [e for e in week if e.get("status") == "success"]
+    last_ok = next((e for e in mine if e.get("action") in ("deploy", "rollback", "restore") and e.get("status") == "success"), None)
+    durations = sorted(e.get("duration_s", 0) for e in mine if e.get("action") == "deploy" and e.get("status") == "success")
+    return {
+        "last": mine[0] if mine else None,
+        "last_success": last_ok,
+        "deploys_7d": len(week),
+        "success_rate_7d": round(len(ok) / len(week) * 100) if week else None,
+        "median_duration_s": durations[len(durations) // 2] if durations else None,
     }
 
 
@@ -168,7 +258,7 @@ def deploy_history(project, n=5):
     return out
 
 
-def projects():
+def projects(events):
     res = []
     for path in sorted(glob.glob(os.path.join(PIPELINE_DIR, "projects", "*.conf"))):
         name = os.path.basename(path)[:-5]
@@ -186,6 +276,7 @@ def projects():
             "health": http_health(c["HEALTH_URL"]) if c.get("HEALTH_URL") else None,
             "git": git_info(c["SOURCE_DIR"]) if c.get("SOURCE_DIR") else None,
             "deploys": deploy_history(name),
+            "deploy_summary": deploy_summary(events, name),
             "warnings_24h": warnings_24h(svc),
             "migrations": bool(c.get("MIGRATE_CMD")),
         }
@@ -253,10 +344,15 @@ def status():
         if _cache["data"] and time.time() - _cache["at"] < CACHE_SECONDS:
             return _cache["data"]
         t0 = time.monotonic()
-        projs = projects()
+        events = deploy_events()
+        projs = projects(events)
         domains = [p["domain"] for p in projs if p.get("domain")]
         data = {
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "deploying": live_deploy(),
+            "deploy_events": events[:25],
+            "instance": instance_meta(),
+            "schedule": schedule(),
             "host": host_info(),
             "projects": projs,
             "services": [unit_info(u) for u in EXTRA_UNITS],
