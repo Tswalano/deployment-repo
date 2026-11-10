@@ -3,7 +3,8 @@
 [Unit]
 Description=Ops dashboard (read-only host/app/DB status)
 Wants=network-online.target
-After=network-online.target postgresql.service
+Requires=app-secrets@ops-dashboard.service
+After=network-online.target postgresql.service app-secrets@ops-dashboard.service
 
 [Service]
 Type=simple
@@ -11,7 +12,6 @@ User=opsdash
 Group=opsdash
 SupplementaryGroups=systemd-journal
 Environment=OPS_BIND=127.0.0.1 OPS_PORT=9100 PGUSER=ops_monitor HOME=/nonexistent
-ExecStartPre=+/usr/local/bin/load-app-secrets ops-dashboard
 EnvironmentFile=/run/app-secrets/ops-dashboard.env
 ExecStart=/usr/bin/python3 -I /opt/deploy/ops-dashboard/app.py
 Restart=on-failure

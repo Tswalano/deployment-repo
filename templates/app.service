@@ -3,7 +3,8 @@
 [Unit]
 Description=<Human readable name>
 Wants=network-online.target
-After=network-online.target postgresql.service
+Requires=app-secrets@<SERVICE>.service
+After=network-online.target postgresql.service app-secrets@<SERVICE>.service
 
 [Service]
 Type=simple
@@ -11,8 +12,7 @@ User=ec2-user
 WorkingDirectory=/opt/apps/<repo>/<APP_SUBDIR>
 Environment=NODE_ENV=production PORT=<PORT>
 # Secrets: never in this file. Store them in SSM Parameter Store under /apps/<SERVICE>/<KEY>
-# (see README → Secrets); they are loaded into a root-only tmpfs file at start.
-ExecStartPre=+/usr/local/bin/load-app-secrets <SERVICE>
+# (see README → Secrets); app-secrets@<SERVICE>.service loads them into a root-only tmpfs file first.
 EnvironmentFile=/run/app-secrets/<SERVICE>.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure
