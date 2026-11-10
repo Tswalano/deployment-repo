@@ -7,294 +7,482 @@
 <title>Ops Dashboard</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #5f6b7a; --line: #e3e7ec;
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #f9fafb; --ink: #14171c; --muted: #5f6b7a; --line: #e3e7ec; --line-strong: #cfd5dd;
     --ok: #12805c; --ok-bg: #e5f5ee; --warn: #a15c00; --warn-bg: #fff3df; --bad: #b42318; --bad-bg: #fde8e7;
-    --info: #2f6fdf; --info-bg: #e7edf8; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --info: #2f6fdf; --info-bg: #e7edf8; --shadow: 0 1px 2px rgba(16,24,40,.05);
+    --shadow-hover: 0 6px 18px rgba(16,24,40,.10); --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --log-bg: #0f1419; --log-ink: #d7dde5;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #0f1216; --panel: #171b21; --ink: #e8ecf1; --muted: #93a0b0; --line: #262c35;
+      --bg: #0f1216; --panel: #171b21; --panel-2: #1b2027; --ink: #e8ecf1; --muted: #93a0b0; --line: #262c35; --line-strong: #37404c;
       --ok: #4cc38a; --ok-bg: #11291f; --warn: #f0b252; --warn-bg: #2d2412; --bad: #ff7b72; --bad-bg: #331817;
-      --info: #6ea2ff; --info-bg: #1a2436;
+      --info: #6ea2ff; --info-bg: #1a2436; --shadow: none; --shadow-hover: 0 6px 18px rgba(0,0,0,.45); --log-bg: #0b0e12;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #0f1216; --panel: #171b21; --ink: #e8ecf1; --muted: #93a0b0; --line: #262c35;
+    --bg: #0f1216; --panel: #171b21; --panel-2: #1b2027; --ink: #e8ecf1; --muted: #93a0b0; --line: #262c35; --line-strong: #37404c;
     --ok: #4cc38a; --ok-bg: #11291f; --warn: #f0b252; --warn-bg: #2d2412; --bad: #ff7b72; --bad-bg: #331817;
-    --info: #6ea2ff; --info-bg: #1a2436;
+    --info: #6ea2ff; --info-bg: #1a2436; --shadow: none; --shadow-hover: 0 6px 18px rgba(0,0,0,.45); --log-bg: #0b0e12;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; justify-content: space-between;
-           padding: 18px 16px 6px; max-width: 1200px; margin: 0 auto; }
-  h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
-  main { max-width: 1200px; margin: 0 auto; padding: 8px 16px 32px; display: grid; gap: 14px; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--info); text-decoration: none; } a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+  :focus-visible { outline: 2px solid var(--info); outline-offset: 2px; border-radius: 4px; }
+
+  /* top loading bar */
+  #progress { position: fixed; inset: 0 0 auto 0; height: 3px; z-index: 10; pointer-events: none; opacity: 0; transition: opacity .2s; }
+  #progress.on { opacity: 1; }
+  #progress::before { content: ""; position: absolute; inset: 0; width: 35%; background: var(--info); border-radius: 0 3px 3px 0; animation: slide 1s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+
+  header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(6px);
+           border-bottom: 1px solid var(--line); }
+  .bar-inner { max-width: 1200px; margin: 0 auto; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .brand h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand a.back { color: var(--muted); font-size: 13px; padding: 4px 8px; border-radius: 6px; }
+  .brand a.back:hover { background: var(--panel); color: var(--ink); text-decoration: none; }
+  .actions { display: flex; align-items: center; gap: 10px; }
   .meta { color: var(--muted); font-size: 12px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 14px 16px 40px; display: grid; gap: 16px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
   .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; box-shadow: var(--shadow);
+           transition: border-color .15s, box-shadow .15s, transform .15s; }
+  .panel.hoverable:hover { border-color: var(--line-strong); box-shadow: var(--shadow-hover); }
+
+  button, select, input[type=search] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong);
+           border-radius: 7px; padding: 5px 11px; }
+  button { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background .15s, border-color .15s, transform .05s; }
+  button:hover:not(:disabled) { background: var(--panel-2); border-color: var(--info); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: .6; cursor: progress; }
+  button.primary { background: var(--info); border-color: var(--info); color: #fff; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--info); }
+  select:hover, input[type=search]:hover { border-color: var(--info); }
+  .spin { width: 13px; height: 13px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; display: none; animation: rot .7s linear infinite; }
+  .busy .spin { display: inline-block; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin, #progress::before, .running .dot { animation: none !important; } }
+
   .stat { display: flex; justify-content: space-between; gap: 8px; margin: 6px 0 4px; }
   .stat b { font-variant-numeric: tabular-nums; }
-  .bar { height: 8px; background: var(--info-bg); border-radius: 99px; overflow: hidden; }
-  .bar > i { display: block; height: 100%; background: var(--info); border-radius: 99px; transition: width .4s; }
-  .bar.warn > i { background: var(--warn); } .bar.bad > i { background: var(--bad); }
+  .meter { height: 8px; background: var(--info-bg); border-radius: 99px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; background: var(--info); border-radius: 99px; transition: width .4s; }
+  .meter.warn > i { background: var(--warn); } .meter.bad > i { background: var(--bad); }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .ok { color: var(--ok); background: var(--ok-bg); } .warn { color: var(--warn); background: var(--warn-bg); }
   .bad { color: var(--bad); background: var(--bad-bg); } .info { color: var(--info); background: var(--info-bg); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 10px 0 0; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .err { color: var(--bad); } .empty { color: var(--muted); padding: 8px 0; }
+
+  /* app cards */
+  a.card { display: block; color: inherit; text-decoration: none; cursor: pointer; }
+  a.card:hover { text-decoration: none; border-color: var(--info); box-shadow: var(--shadow-hover); transform: translateY(-1px); }
   .app-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
   .app-head h3 { margin: 0; font-size: 16px; }
-  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin-top: 10px; font-size: 13px; }
-  .kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-  code, .mono { font-family: var(--mono); font-size: 12px; }
-  a { color: var(--info); text-decoration: none; } a:hover { text-decoration: underline; }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; }
-  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  td.wrap { white-space: normal; min-width: 180px; }
-  .err { color: var(--bad); }
-  button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .card-foot { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; color: var(--info); font-size: 13px; font-weight: 600; }
+  a.card:hover .card-foot span.arrow { transform: translateX(3px); } .card-foot span.arrow { transition: transform .15s; }
+  article.deploying { border-color: var(--info); }
 
-  /* live deployment banner */
-  .live { border-radius: 10px; padding: 14px 16px; border: 1px solid var(--line); background: var(--panel);
-          display: grid; gap: 10px; }
+  /* live banner */
+  .live { border-radius: 10px; padding: 14px 16px; border: 1px solid var(--line); background: var(--panel); display: grid; gap: 10px; }
   .live.running { border-color: var(--info); background: linear-gradient(90deg, var(--info-bg), var(--panel)); }
   .live.interrupted { border-color: var(--warn); background: var(--warn-bg); }
   .live-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
-  .live-head strong { font-size: 16px; }
+  .live-head strong { font-size: 15px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
   .running .dot { background: var(--info); animation: pulse 1.2s ease-in-out infinite; }
   .interrupted .dot { background: var(--warn); }
   @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
-  @media (prefers-reduced-motion: reduce) { .running .dot { animation: none; } }
   .steps { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 0; list-style: none; }
   .steps li { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
   .steps li.done { color: var(--ok); border-color: transparent; background: var(--ok-bg); }
   .steps li.now { color: var(--info); border-color: var(--info); font-weight: 600; }
-  article.deploying { border-color: var(--info); }
+
+  /* list rows (timeline, deploys, commits): wrap instead of scrolling */
+  .rows { display: grid; }
+  .row { display: grid; grid-template-columns: 110px 1fr auto; gap: 4px 14px; align-items: center; padding: 9px 8px; border-bottom: 1px solid var(--line);
+         border-radius: 6px; transition: background .12s; }
+  .row:last-child { border-bottom: 0; } .row:hover { background: var(--panel-2); }
+  .row .when { color: var(--muted); font-size: 12px; }
+  .row .main { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+  .row .side { text-align: right; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .row .note { grid-column: 2 / -1; font-size: 12px; color: var(--muted); }
+  @media (max-width: 640px) { .row { grid-template-columns: 1fr auto; } .row .when { grid-column: 1 / -1; } .row .note { grid-column: 1 / -1; } }
+
+  /* database cards */
+  .db-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin-top: 12px; }
+  .db-card { border: 1px solid var(--line); border-radius: 9px; padding: 12px; background: var(--panel-2); transition: border-color .15s, box-shadow .15s; }
+  .db-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-hover); }
+  .db-card h4 { margin: 0 0 8px; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center; }
+  .nums b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; } .nums span { font-size: 11px; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+  .chip { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .svc-list { display: grid; gap: 2px; } .svc { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; transition: background .12s; }
+  .svc:hover { background: var(--panel-2); }
+
+  /* app detail */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+  .tabs a { padding: 8px 12px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 500; border-radius: 6px 6px 0 0; }
+  .tabs a:hover { color: var(--ink); background: var(--panel); text-decoration: none; }
+  .tabs a[aria-selected="true"] { color: var(--info); border-bottom-color: var(--info); }
+  .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; transition: border-color .15s; }
+  .tile:hover { border-color: var(--line-strong); } .tile span { color: var(--muted); font-size: 12px; } .tile b { display: block; font-size: 18px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  pre.json { margin: 8px 0 0; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 260px; font: 12px/1.5 var(--mono); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .controls label { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .controls input[type=search] { min-width: 180px; flex: 1; }
+  .logs { background: var(--log-bg); color: var(--log-ink); border-radius: 10px; padding: 8px 0; height: min(65vh, 640px); overflow: auto; font: 12px/1.55 var(--mono); }
+  .logline { display: grid; grid-template-columns: 150px 52px 1fr; gap: 10px; padding: 1px 12px; }
+  .logline:hover { background: rgba(255,255,255,.05); }
+  .logline time { color: #7d8896; white-space: nowrap; } .logline .lv { font-weight: 700; }
+  .logline .msg { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .lv.p0, .lv.p1, .lv.p2, .lv.p3 { color: #ff7b72; } .lv.p4 { color: #f0b252; } .lv.p5, .lv.p6 { color: #6ea2ff; } .lv.p7 { color: #7d8896; }
+  .logline.p3 .msg, .logline.p2 .msg { color: #ffb4ae; } .logline.p4 .msg { color: #f6d39a; }
+  mark { background: #f0b25255; color: inherit; border-radius: 2px; }
+  @media (max-width: 640px) { .logline { grid-template-columns: 1fr; gap: 0; padding: 4px 12px; } }
+  .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tbl th, .tbl td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  .tbl th { color: var(--muted); font-weight: 600; font-size: 12px; } .tbl td.num, .tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tbl tbody tr { transition: background .12s; } .tbl tbody tr:hover { background: var(--panel-2); }
+  @media (max-width: 760px) { .tbl .opt { display: none; } }
 </style>
 </head>
 <body>
+<div id="progress" aria-hidden="true"></div>
 <header>
-  <h1 id="title">Ops Dashboard</h1>
-  <div class="meta"><span id="updated">loading…</span> · <button id="refresh" type="button">Refresh</button></div>
+  <div class="bar-inner">
+    <div class="brand"><span id="back"></span><h1 id="title">Ops Dashboard</h1></div>
+    <div class="actions">
+      <span class="meta" id="updated" aria-live="polite">loading…</span>
+      <button id="refresh" type="button" title="Refresh now (R)"><span class="spin" aria-hidden="true"></span><span class="label">Refresh</span></button>
+    </div>
+  </div>
 </header>
-<main>
-  <section id="live" class="live" aria-live="polite"></section>
-  <section class="grid" id="host"></section>
-  <section>
-    <h2>Applications</h2>
-    <div class="grid" id="apps"></div>
-  </section>
-  <section class="panel">
-    <h2>Deployment history</h2>
-    <div class="table-wrap" id="timeline"></div>
-  </section>
-  <section class="grid">
-    <div class="panel"><h2>Database</h2><div id="db"></div></div>
-    <div class="panel"><h2>System services</h2><div id="services"></div>
-      <h2 style="margin-top:16px">TLS certificates</h2><div id="certs"></div></div>
-  </section>
-</main>
+<main id="view"></main>
 <script>
 (() => {
+  // ------------------------------------------------------------------ helpers
   const $ = (id) => document.getElementById(id);
   const el = (tag, attrs = {}, ...kids) => {
     const n = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v == null) continue;
-      if (k === "class") n.className = v; else if (k === "style") n.style.cssText = v; else n.setAttribute(k, v);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") n.className = v; else if (k === "style") n.style.cssText = v;
+      else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v === true ? "" : v);
     }
     for (const k of kids.flat(Infinity)) if (k != null && k !== false) n.append(k instanceof Node ? k : String(k));
     return n;
   };
-  const bytes = (b) => {
-    if (b == null) return "—";
-    const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
-    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
-    return (b >= 100 || i === 0 ? b.toFixed(0) : b.toFixed(1)) + " " + u[i];
-  };
-  const dur = (s) => {
-    if (s == null) return "—";
-    if (s < 60) return `${s}s`;
-    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
-  };
-  const ago = (iso) => {
-    if (!iso) return "—";
-    const s = (Date.now() - new Date(iso).getTime()) / 1000;
-    return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
-  };
+  const put = (node, ...kids) => node.replaceChildren(...kids.flat(Infinity).filter((k) => k != null && k !== false));
+  const rowsText = (n, unknown) => unknown ? "—" : num(n);
+  const bytes = (b) => { if (b == null) return "—"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return (b >= 100 || i === 0 ? b.toFixed(0) : b.toFixed(1)) + " " + u[i]; };
+  const num = (n) => n == null ? "—" : Number(n).toLocaleString();
+  const dur = (s) => { if (s == null) return "—"; if (s < 60) return `${s}s`; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
+  const ago = (iso) => { if (!iso) return "—"; const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
   const when = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
   const pill = (cls, text) => el("span", { class: "pill " + cls }, text);
-  const sha = (s) => s ? el("code", {}, s.slice(0, 8)) : "—";
-  const link = (href, text) => href ? el("a", { href, target: "_blank", rel: "noopener" }, text) : null;
+  const sha = (s) => s ? el("code", {}, String(s).slice(0, 8)) : "—";
+  const ext = (href, text) => href ? el("a", { href, target: "_blank", rel: "noopener" }, text) : null;
   const STATUS = { success: ["ok", "success"], failed: ["bad", "failed"], rolled_back: ["warn", "rolled back"] };
   const statusPill = (s) => pill(...(STATUS[s] || ["info", s || "?"]));
+  const unitPill = (u) => u.active === "active" ? pill("ok", u.sub || "active") : ["activating", "reloading"].includes(u.active) ? pill("warn", u.active) : pill("bad", u.active || "unknown");
   const STEPS = ["preflight", "snapshot", "backup", "checkout", "sync", "install", "build", "migrate", "restart", "health_check"];
-
   const meter = (label, used, total, extra) => {
-    const pct = total ? Math.round(used / total * 100) : 0;
-    const level = pct >= 90 ? " bad" : pct >= 75 ? " warn" : "";
-    return el("div", {},
-      el("div", { class: "stat" }, el("span", {}, label), el("b", {}, `${bytes(used)} / ${bytes(total)} · ${pct}%`)),
-      el("div", { class: "bar" + level, role: "meter", "aria-valuenow": pct, "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": label },
-        el("i", { style: `width:${pct}%` })),
+    const pct = total ? Math.round(used / total * 100) : 0, level = pct >= 90 ? " bad" : pct >= 75 ? " warn" : "";
+    return el("div", {}, el("div", { class: "stat" }, el("span", {}, label), el("b", {}, `${bytes(used)} / ${bytes(total)} · ${pct}%`)),
+      el("div", { class: "meter" + level, role: "meter", "aria-valuenow": pct, "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": label }, el("i", { style: `width:${pct}%` })),
       extra ? el("div", { class: "meta", style: "margin-top:4px" }, extra) : null);
   };
-  const unitPill = (u) => u.active === "active" ? pill("ok", u.sub || "active")
-    : ["activating", "reloading"].includes(u.active) ? pill("warn", u.active) : pill("bad", u.active || "unknown");
+  const healthPill = (p, deploying) => deploying ? pill("info", `deploying · ${deploying.step}`)
+    : p.unit.active !== "active" ? pill("bad", "down")
+    : p.health && p.health.code >= 200 && p.health.code < 300 ? pill("ok", `healthy · ${p.health.ms} ms`)
+    : pill("bad", `health ${p.health ? p.health.code ?? "timeout" : "n/a"}`);
 
-  function renderLive(cur, events) {
-    const box = $("live");
+  // ------------------------------------------------------------------ fetch + loading state
+  let inflight = 0, ctrl = null;
+  async function api(path) {
+    inflight++; $("progress").classList.add("on"); $("refresh").disabled = true; $("refresh").classList.add("busy");
+    $("refresh").querySelector(".label").textContent = "Refreshing…";
+    try {
+      const r = await fetch(path, { cache: "no-store", signal: ctrl?.signal });
+      if (!r.ok) throw new Error(r.status === 404 ? "Not found" : `HTTP ${r.status}`);
+      return await r.json();
+    } finally {
+      if (--inflight === 0) { $("progress").classList.remove("on"); $("refresh").disabled = false; $("refresh").classList.remove("busy"); $("refresh").querySelector(".label").textContent = "Refresh"; }
+    }
+  }
+  const stamp = (text, live) => $("updated").replaceChildren(text, live ? el("span", {}, " · ", pill("info", "live")) : "");
+  const fail = (e) => { if (e.name !== "AbortError") $("updated").replaceChildren(el("span", { class: "err" }, `Update failed: ${e.message}`)); };
+
+  // ------------------------------------------------------------------ overview
+  function liveBanner(cur, events) {
     if (!cur) {
       const last = events[0];
-      box.className = "live";
-      box.replaceChildren(el("div", { class: "live-head" }, el("span", { class: "dot" }),
+      return el("section", { class: "live", "aria-live": "polite" }, el("div", { class: "live-head" }, el("span", { class: "dot" }),
         el("strong", {}, "No deployment in progress"),
-        last ? el("span", { class: "meta" }, "Last: ", el("b", {}, last.project), ` ${last.action} `, statusPill(last.status), ` ${ago(last.finished_at)}`) : null));
-      return;
+        last ? el("span", { class: "meta" }, "Last: ", el("a", { href: `#/app/${last.project}/deploys` }, last.project), ` ${last.action} `, statusPill(last.status), ` ${ago(last.finished_at)}`) : null));
     }
-    const running = cur.state === "running";
-    const done = new Set(cur.steps_done || []);
+    const running = cur.state === "running", done = new Set(cur.steps_done || []);
     const shown = STEPS.filter((s) => done.has(s) || s === cur.step || ["checkout", "install", "restart", "health_check"].includes(s));
-    box.className = "live " + (running ? "running" : "interrupted");
-    box.replaceChildren(
+    return el("section", { class: "live " + (running ? "running" : "interrupted"), "aria-live": "polite" },
       el("div", { class: "live-head" }, el("span", { class: "dot" }),
-        el("strong", {}, running ? `Deploying ${cur.project}` : `Deployment of ${cur.project} was interrupted`),
+        el("strong", {}, running ? "Deploying " : "Interrupted: ", el("a", { href: `#/app/${cur.project}` }, cur.project)),
         pill(running ? "info" : "warn", cur.action), el("code", {}, cur.ref),
-        el("span", { class: "meta" }, `${dur(cur.started_elapsed_s)} elapsed · step "${cur.step}" for ${dur(cur.step_started_elapsed_s)}`),
-        el("span", { class: "meta" }, `by ${cur.actor} via ${cur.trigger}`),
-        link(cur.run_url, "View run →")),
-      el("ol", { class: "steps", "aria-label": "Deployment steps" },
-        shown.map((s) => el("li", { class: done.has(s) ? "done" : s === cur.step ? "now" : null, "aria-current": s === cur.step ? "step" : null },
-          done.has(s) ? "✓ " : "", s.replace("_", " ")))),
-      running ? null : el("div", { class: "meta" },
-        "The pipeline process is gone (instance stopped or the run was killed). Check the app's status below; a re-run clears this."));
+        el("span", { class: "meta" }, `${dur(cur.started_elapsed_s)} elapsed · "${cur.step}" for ${dur(cur.step_started_elapsed_s)} · by ${cur.actor} via ${cur.trigger}`),
+        ext(cur.run_url, "View run →")),
+      el("ol", { class: "steps", "aria-label": "Deployment steps" }, shown.map((s) =>
+        el("li", { class: done.has(s) ? "done" : s === cur.step ? "now" : null, "aria-current": s === cur.step ? "step" : null }, done.has(s) ? "✓ " : "", s.replace("_", " ")))),
+      running ? null : el("div", { class: "meta" }, "The pipeline process is gone (instance stopped or run killed). A re-run clears this."));
   }
 
-  function renderHost(s) {
+  function hostPanels(s) {
     const h = s.host, i = s.instance || {}, sch = s.schedule;
-    $("title").textContent = `Ops Dashboard — ${i.instance_id || h.hostname.split(".")[0]}`;
-    $("host").replaceChildren(
-      el("div", { class: "panel" }, el("h2", {}, "Memory"),
-        meter("RAM", h.memory.used, h.memory.total, `${bytes(h.memory.available)} available`),
+    return el("section", { class: "grid" },
+      el("div", { class: "panel hoverable" }, el("h2", {}, "Memory"), meter("RAM", h.memory.used, h.memory.total, `${bytes(h.memory.available)} available`),
         el("div", { style: "height:10px" }), meter("Swap", h.swap.used, h.swap.total)),
-      el("div", { class: "panel" }, el("h2", {}, "Disk & CPU"),
-        meter("Root volume", h.disk.used, h.disk.total, `${bytes(h.disk.free)} free`),
-        el("dl", { class: "kv" },
-          el("dt", {}, "Load 1/5/15"), el("dd", { class: "mono" }, h.load.join(" · ") + ` (${h.cpus} vCPU)`))),
-      el("div", { class: "panel" }, el("h2", {}, "Instance"),
-        el("dl", { class: "kv", style: "margin-top:0" },
-          el("dt", {}, "Instance"), el("dd", {}, i.instance_id ? [el("code", {}, i.instance_id), ` · ${i.instance_type}`] : h.hostname),
-          el("dt", {}, "Zone"), el("dd", {}, i.az || "—"),
-          el("dt", {}, "Uptime"), el("dd", {}, `${dur(h.uptime_seconds)} (since ${when(h.booted_at)})`),
-          el("dt", {}, "Schedule"), el("dd", {}, `Up ${String(sch.start_hour_utc).padStart(2, "0")}:00–${sch.stop_hour_utc}:00 UTC`),
-          el("dt", {}, "Stops in"), el("dd", {}, sch.seconds_to_stop < 3600 ? pill("warn", dur(sch.seconds_to_stop)) : dur(sch.seconds_to_stop)))));
+      el("div", { class: "panel hoverable" }, el("h2", {}, "Disk & CPU"), meter("Root volume", h.disk.used, h.disk.total, `${bytes(h.disk.free)} free`),
+        el("dl", { class: "kv" }, el("dt", {}, "Load 1/5/15"), el("dd", { class: "mono" }, h.load.join(" · ") + ` (${h.cpus} vCPU)`))),
+      el("div", { class: "panel hoverable" }, el("h2", {}, "Instance"), el("dl", { class: "kv", style: "margin-top:0" },
+        el("dt", {}, "Instance"), el("dd", {}, i.instance_id ? [el("code", {}, i.instance_id), ` · ${i.instance_type}`] : h.hostname),
+        el("dt", {}, "Zone"), el("dd", {}, i.az || "—"),
+        el("dt", {}, "Uptime"), el("dd", {}, `${dur(h.uptime_seconds)} (since ${when(h.booted_at)})`),
+        el("dt", {}, "Schedule"), el("dd", {}, `Up ${String(sch.start_hour_utc).padStart(2, "0")}:00–${sch.stop_hour_utc}:00 UTC`),
+        el("dt", {}, "Stops in"), el("dd", {}, sch.seconds_to_stop < 3600 ? pill("warn", dur(sch.seconds_to_stop)) : dur(sch.seconds_to_stop)))));
   }
 
-  function renderApps(list, cur) {
-    $("apps").replaceChildren(...list.map((p) => {
-      const deploying = cur && cur.state === "running" && cur.project === p.project;
-      const healthy = p.health && p.health.code >= 200 && p.health.code < 300;
-      const status = deploying ? pill("info", `deploying · ${cur.step}`)
-        : p.unit.active !== "active" ? pill("bad", "down")
-        : healthy ? pill("ok", `healthy · ${p.health.ms} ms`) : pill("bad", `health ${p.health ? p.health.code ?? "timeout" : "n/a"}`);
-      const g = p.git || {}, w = p.warnings_24h || { count: 0 }, ds = p.deploy_summary || {};
-      const ls = ds.last_success, last = ds.last;
-      return el("article", { class: "panel" + (deploying ? " deploying" : "") },
-        el("div", { class: "app-head" }, el("h3", {}, p.project), status),
+  function appCards(list, cur) {
+    return el("section", {}, el("h2", {}, "Applications"), el("div", { class: "grid" }, list.map((p) => {
+      const deploying = cur && cur.state === "running" && cur.project === p.project ? cur : null;
+      const g = p.git || {}, w = p.warnings_24h || { count: 0 }, ds = p.deploy_summary || {}, ls = ds.last_success;
+      return el("a", { class: "panel card" + (deploying ? " deploying" : ""), href: `#/app/${p.project}`, "aria-label": `${p.project} details` },
+        el("div", { class: "app-head" }, el("h3", {}, p.project), healthPill(p, deploying)),
         el("dl", { class: "kv" },
-          el("dt", {}, "URL"), el("dd", {}, p.domain ? link(`https://${p.domain}`, p.domain) : "—"),
+          el("dt", {}, "URL"), el("dd", {}, p.domain || "—"),
           el("dt", {}, "Running"), el("dd", {}, g.sha ? [sha(g.sha), " ", g.subject || ""] : "—"),
-          el("dt", {}, "Last deployed"), el("dd", {}, ls
-            ? [`${ago(ls.finished_at)} · ${dur(ls.duration_s)} · by ${ls.actor} `, link(ls.run_url, "run")]
-            : el("span", { class: "meta" }, "no pipeline deploy recorded yet")),
-          last && last !== ls && last.status !== "success" ? [el("dt", {}, "Last attempt"),
-            el("dd", {}, statusPill(last.status), ` ${ago(last.finished_at)}`, last.failed_step ? ` at ${last.failed_step}` : "")] : null,
-          el("dt", {}, "7-day deploys"), el("dd", {}, ds.deploys_7d
-            ? `${ds.deploys_7d} · ${ds.success_rate_7d}% succeeded · median ${dur(ds.median_duration_s)}` : "0"),
-          el("dt", {}, "Service"), el("dd", {}, el("code", {}, p.service), " ", unitPill(p.unit),
-            ` · up ${dur(p.unit.uptime_seconds)} · ${p.unit.restarts ?? 0} restarts · ${bytes(p.unit.memory)}`),
-          el("dt", {}, "Database"), el("dd", {}, p.db ? [el("code", {}, p.db), p.migrations ? " · migrations on" : ""] : "—"),
-          el("dt", {}, "Warnings 24h"), el("dd", {}, w.count
-            ? [pill("warn", String(w.count)), " ", el("span", { class: "mono", title: w.last }, (w.last || "").slice(0, 60))]
-            : pill("ok", "0"))));
-    }));
+          el("dt", {}, "Last deployed"), el("dd", {}, ls ? `${ago(ls.finished_at)} · ${dur(ls.duration_s)} · ${ls.actor}` : el("span", { class: "meta" }, "none recorded yet")),
+          el("dt", {}, "Service"), el("dd", {}, unitPill(p.unit), ` · up ${dur(p.unit.uptime_seconds)} · ${bytes(p.unit.memory)}`),
+          el("dt", {}, "Problems 24h"), el("dd", {}, !w.count ? pill("ok", "none")
+            : [w.errors ? pill("bad", `${w.errors} errors`) : null, w.count - (w.errors || 0) ? [" ", pill("warn", `${w.count - (w.errors || 0)} warnings`)] : null])),
+        el("div", { class: "card-foot" }, el("span", {}, "Logs, deployments, database"), el("span", { class: "arrow" }, "→")));
+    })));
   }
 
-  function renderTimeline(events) {
-    if (!events.length) { $("timeline").replaceChildren(el("p", { class: "meta" }, "No pipeline runs recorded yet. They appear here after the next deploy.")); return; }
-    $("timeline").replaceChildren(el("table", {},
-      el("thead", {}, el("tr", {}, ["When", "Project", "Action", "Status", "Change", "Duration", "By", "Trigger", "Details"]
-        .map((h, i) => el("th", { class: i === 5 ? "num" : null }, h)))),
-      el("tbody", {}, events.map((e) => el("tr", {},
-        el("td", { title: e.finished_at }, when(e.finished_at)),
-        el("td", {}, el("b", {}, e.project)),
-        el("td", {}, e.action),
-        el("td", {}, statusPill(e.status)),
-        el("td", {}, sha(e.from_sha), " → ", sha(e.to_sha), el("span", { class: "meta" }, ` ${e.ref}`)),
-        el("td", { class: "num" }, dur(e.duration_s)),
-        el("td", {}, e.actor),
-        el("td", {}, e.run_url ? link(e.run_url, e.trigger) : e.trigger),
-        el("td", { class: "wrap meta" }, e.note || (e.failed_step ? `failed at ${e.failed_step}` : "")))))));
+  function eventRows(events, showProject = true) {
+    if (!events.length) return el("p", { class: "empty" }, "No pipeline runs recorded yet. They appear here after the next deploy.");
+    return el("div", { class: "rows" }, events.map((e) => el("div", { class: "row" },
+      el("span", { class: "when", title: e.finished_at }, when(e.finished_at)),
+      el("span", { class: "main" }, showProject ? el("a", { href: `#/app/${e.project}` }, el("b", {}, e.project)) : null, e.action, statusPill(e.status),
+        el("span", {}, sha(e.from_sha), " → ", sha(e.to_sha)), el("span", { class: "meta" }, e.ref)),
+      el("span", { class: "side" }, dur(e.duration_s), " · ", e.actor, " · ", e.run_url ? ext(e.run_url, e.trigger) : e.trigger),
+      e.note || e.failed_step ? el("span", { class: "note" }, e.note || `failed at ${e.failed_step}`) : null)));
   }
 
-  function renderDb(db) {
-    const box = $("db");
-    if (!db.ok) { box.replaceChildren(el("p", { class: "err" }, db.error)); return; }
+  function dbPanel(db) {
+    if (!db.ok) return el("div", { class: "panel" }, el("h2", {}, "Database"), el("p", { class: "err" }, db.error));
     const conns = Object.entries(db.connections_by_state).map(([k, v]) => `${v} ${k}`).join(" · ");
-    box.replaceChildren(
-      el("dl", { class: "kv", style: "margin-top:0" },
-        el("dt", {}, "Engine"), el("dd", {}, db.version),
-        el("dt", {}, "Running since"), el("dd", {}, when(db.started_at)),
-        el("dt", {}, "Connections"), el("dd", {}, `${conns} (max ${db.max_connections})`),
-        el("dt", {}, "Shared buffers"), el("dd", {}, db.shared_buffers)),
-      el("div", { class: "table-wrap", style: "margin-top:10px" }, el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "Database"), el("th", { class: "num" }, "Size"), el("th", { class: "num" }, "Tables"),
-          el("th", { class: "num" }, "≈ Rows"), el("th", { class: "num" }, "Conns"), el("th", {}, "Largest tables"))),
-        el("tbody", {}, db.databases.map((d) => el("tr", {},
-          el("td", {}, el("code", {}, d.name)), el("td", { class: "num" }, bytes(d.size)),
-          el("td", { class: "num" }, d.tables ?? "—"), el("td", { class: "num" }, d.est_rows ?? "—"),
-          el("td", { class: "num" }, d.connections),
-          el("td", { class: "meta" }, (d.largest || []).map((t) => `${t.table} (${t.rows})`).join(", ") || "—")))))));
+    return el("div", { class: "panel" }, el("h2", {}, "Database"),
+      el("div", { class: "meta" }, `${db.version} · up since ${when(db.started_at)} · ${conns} (max ${db.max_connections}) · shared_buffers ${db.shared_buffers}`),
+      el("div", { class: "db-grid" }, db.databases.map((d) => el("div", { class: "db-card" },
+        el("h4", {}, el("code", {}, d.name), el("span", { class: "meta" }, bytes(d.size))),
+        el("div", { class: "nums" },
+          el("div", {}, el("b", {}, d.tables ?? "—"), el("span", {}, "tables")),
+          el("div", { title: d.unanalyzed_tables ? `${d.unanalyzed_tables} table(s) not analyzed since stats were reset; refreshed after the next deploy` : "Estimate from Postgres statistics" },
+            el("b", {}, d.unanalyzed_tables && d.unanalyzed_tables === d.tables ? "—" : num(d.est_rows) + (d.unanalyzed_tables ? "+" : "")), el("span", {}, "≈ rows")),
+          el("div", {}, el("b", {}, d.connections), el("span", {}, "conns"))),
+        d.largest && d.largest.length ? el("div", { class: "chips", title: "Largest tables" },
+          d.largest.map((t) => el("span", { class: "chip" }, t.table, t.rows || !d.unanalyzed_tables ? [" ", el("b", {}, num(t.rows))] : null))) : null,
+        d.unanalyzed_tables ? el("div", { class: "meta", style: "margin-top:6px" }, "Row estimates refresh after the next deploy.") : null))));
   }
 
-  function renderServices(list) {
-    $("services").replaceChildren(el("table", {}, el("tbody", {}, list.map((u) => el("tr", {},
-      el("td", {}, el("code", {}, u.unit)), el("td", {}, unitPill(u)),
-      el("td", { class: "num meta" }, u.memory ? bytes(u.memory) : ""))))));
+  function servicesPanel(services, certs) {
+    return el("div", { class: "panel" }, el("h2", {}, "System services"),
+      el("div", { class: "svc-list" }, services.map((u) => el("div", { class: "svc" }, el("code", {}, u.unit), el("span", {}, u.memory ? el("span", { class: "meta" }, bytes(u.memory), " ") : "", unitPill(u))))),
+      el("h2", { style: "margin-top:16px" }, "TLS certificates"),
+      el("div", { class: "svc-list" }, certs.map((c) => el("div", { class: "svc" }, el("span", {}, c.domain),
+        c.error ? pill("bad", c.error) : pill(c.days_left < 14 ? "bad" : c.days_left < 30 ? "warn" : "ok", `${c.days_left} days`)))));
   }
 
-  function renderCerts(list) {
-    $("certs").replaceChildren(el("table", {}, el("tbody", {}, list.map((c) => el("tr", {},
-      el("td", {}, c.domain),
-      el("td", { class: "num" }, c.error ? pill("bad", c.error)
-        : pill(c.days_left < 14 ? "bad" : c.days_left < 30 ? "warn" : "ok", `${c.days_left} days`)))))));
+  async function renderOverview(fresh) {
+    const s = await api("api/status" + (fresh ? "?fresh=1" : ""));
+    const events = s.deploy_events || [];
+    document.title = "Ops Dashboard";
+    $("title").textContent = `Ops Dashboard — ${(s.instance && s.instance.instance_id) || s.host.hostname.split(".")[0]}`;
+    $("back").replaceChildren();
+    put($("view"), liveBanner(s.deploying, events), hostPanels(s), appCards(s.projects, s.deploying),
+      el("section", { class: "panel" }, el("h2", {}, "Deployment history"), eventRows(events)),
+      el("section", { class: "grid", style: "grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))" }, dbPanel(s.database), servicesPanel(s.services, s.certificates)));
+    const live = !!(s.deploying && s.deploying.state === "running");
+    stamp(`Updated ${new Date(s.generated_at).toLocaleTimeString()}`, live);
+    return live ? 3000 : 10000;
   }
 
-  let timer;
-  async function load() {
-    clearTimeout(timer);
-    let fast = false;
+  // ------------------------------------------------------------------ app detail
+  const TABS = [["overview", "Overview"], ["logs", "Logs"], ["deploys", "Deployments"], ["database", "Database"], ["commits", "Commits"]];
+  const logState = { lines: "200", priority: "7", since: "24h", q: "", follow: true };
+  let detailCache = null;
+
+  function tile(label, value, sub) { return el("div", { class: "tile" }, el("span", {}, label), el("b", {}, value), sub ? el("div", { class: "meta" }, sub) : null); }
+
+  function overviewTab(d) {
+    const u = d.unit, h = d.health, ds = d.deploy_summary || {}, ls = ds.last_success;
+    return [
+      el("div", { class: "tiles" },
+        tile("Status", u.active === "active" ? "Running" : u.active, `${u.sub} · ${u.restarts ?? 0} restarts`),
+        tile("Health", h ? (h.code ?? "timeout") : "—", h ? `${h.ms} ms` : ""),
+        tile("Uptime", dur(u.uptime_seconds), when(u.started_at && new Date(u.started_at.replace(/^\w+ /, "").replace(" UTC", "Z").replace(" ", "T")).toISOString())),
+        tile("Memory", bytes(u.memory), `${u.tasks ?? "—"} tasks`),
+        tile("CPU time", u.cpu_seconds != null ? `${u.cpu_seconds}s` : "—", "since start"),
+        tile("Last deployed", ls ? ago(ls.finished_at) : "—", ls ? `${dur(ls.duration_s)} · ${ls.actor}` : "no pipeline deploy yet"),
+        tile("Deploys (7d)", ds.deploys_7d ?? 0, ds.deploys_7d ? `${ds.success_rate_7d}% ok · median ${dur(ds.median_duration_s)}` : ""),
+        tile("Problems 24h", d.warnings_24h.count, d.warnings_24h.count
+          ? [`${d.warnings_24h.errors || 0} errors · ${d.warnings_24h.count - (d.warnings_24h.errors || 0)} warnings · `, el("a", { href: `#/app/${d.project}/logs`, onclick: () => { logState.priority = "4"; } }, "view →")]
+          : "no errors or warnings")),
+      el("div", { class: "grid" },
+        el("div", { class: "panel" }, el("h2", {}, "Service"), el("dl", { class: "kv", style: "margin-top:0" },
+          el("dt", {}, "Unit"), el("dd", {}, el("code", {}, d.service), " ", unitPill(u), " ", pill(u.enabled === "enabled" ? "ok" : "warn", u.enabled || "?")),
+          el("dt", {}, "Main PID"), el("dd", {}, u.main_pid || "—"),
+          el("dt", {}, "User"), el("dd", {}, u.user || "—"),
+          el("dt", {}, "Working dir"), el("dd", {}, el("code", {}, u.working_dir || "—")),
+          el("dt", {}, "Unit file"), el("dd", {}, el("code", {}, u.unit_file || "—")),
+          el("dt", {}, "Depends on"), el("dd", {}, u.requires.filter((r) => !r.endsWith(".mount") && !r.endsWith(".slice")).join(", ") || "—"),
+          el("dt", {}, "Env vars"), el("dd", {}, u.env.length ? u.env.map((e) => el("span", { class: "chip", style: "margin:0 4px 4px 0;display:inline-block" }, e.name, e.value != null ? `=${e.value}` : "")) : "—",
+            el("div", { class: "meta" }, "Names only. Secrets come from SSM and are never shown.")))),
+        el("div", { class: "panel" }, el("h2", {}, "Pipeline config"), el("dl", { class: "kv", style: "margin-top:0" },
+          Object.entries(d.config).map(([k, v]) => [el("dt", {}, k), el("dd", {}, el("code", {}, v))])))),
+      h ? el("div", { class: "panel" }, el("h2", {}, "Health endpoint"),
+        el("div", { class: "meta" }, el("code", {}, h.url), " → ", pill(h.code >= 200 && h.code < 300 ? "ok" : "bad", String(h.code ?? "timeout")), ` in ${h.ms} ms ${h.content_type ? "· " + h.content_type : ""}`),
+        el("pre", { class: "json" }, h.body || "")) : null,
+    ];
+  }
+
+  function deploysTab(d) {
+    return el("div", { class: "panel" }, el("h2", {}, `Deployments (${d.deploys.length})`), eventRows(d.deploys, false));
+  }
+
+  function databaseTab(d) {
+    const db = d.database;
+    if (!db) return el("p", { class: "empty" }, "No database configured for this project.");
+    if (!db.ok) return el("p", { class: "err" }, db.error);
+    const known = db.tables.filter((t) => t.rows != null), unknown = db.tables.length - known.length;
+    const totalRows = known.reduce((a, t) => a + t.rows, 0), dead = db.tables.reduce((a, t) => a + t.dead, 0);
+    return [
+      el("div", { class: "tiles" }, tile("Database", db.name, bytes(db.size)), tile("Tables", db.tables.length), tile("≈ Rows", unknown === db.tables.length ? "—" : num(totalRows) + (unknown ? "+" : ""),
+          unknown ? `${unknown} table(s) not analyzed yet` : dead ? `${num(dead)} dead tuples` : "no dead tuples"),
+        tile("Connections", db.connections.length, Object.entries(db.connections.reduce((a, c) => (a[c.state] = (a[c.state] || 0) + 1, a), {})).map(([k, v]) => `${v} ${k}`).join(" · ") || "none"),
+        tile("Migrations applied", db.migrations_applied ?? "—", db.migrations_table || "no migrations table")),
+      unknown ? el("p", { class: "meta" }, `Row counts are Postgres estimates. ${unknown} table(s) haven't been analyzed since statistics were last reset${db.stats_reset ? ` (${when(db.stats_reset)})` : ""}, so they show "—". The pipeline refreshes them (ANALYZE, which never changes data) after each deploy.`) : null,
+      el("div", { class: "panel" }, el("h2", {}, "Tables"), el("table", { class: "tbl" },
+        el("thead", {}, el("tr", {}, el("th", {}, "Table"), el("th", { class: "num" }, "Rows"), el("th", { class: "num" }, "Size"),
+          el("th", { class: "num opt" }, "Indexes"), el("th", { class: "num opt" }, "Seq / idx scans"), el("th", { class: "num opt" }, "Ins / upd / del"), el("th", { class: "opt" }, "Last vacuum"))),
+        el("tbody", {}, db.tables.map((t) => el("tr", {},
+          el("td", {}, el("code", {}, t.table.replace(/^public\./, "")), t.dead > t.rows && t.dead > 50 ? [" ", pill("warn", "bloat")] : null),
+          el("td", { class: "num", title: t.rows == null ? "Not analyzed since statistics were reset" : null }, rowsText(t.rows, t.rows == null)), el("td", { class: "num" }, bytes(t.size)), el("td", { class: "num opt" }, bytes(t.index_size)),
+          el("td", { class: "num opt" }, `${num(t.seq_scans)} / ${num(t.idx_scans)}`), el("td", { class: "num opt" }, `${num(t.inserts)} / ${num(t.updates)} / ${num(t.deletes)}`),
+          el("td", { class: "opt meta" }, t.last_vacuum ? ago(t.last_vacuum) : "never"))))))];
+  }
+
+  function commitsTab(d) {
+    const g = d.git;
+    if (!g) return el("p", { class: "empty" }, "No source checkout configured.");
+    const list = (items) => el("div", { class: "rows" }, items.map((c) => el("div", { class: "row" },
+      el("span", { class: "when" }, when(c.date)), el("span", { class: "main" }, sha(c.sha), c.subject), el("span", { class: "side" }, c.author))));
+    return [
+      el("div", { class: "tiles" }, tile("Deployed", g.sha || "—", g.branch), tile("Behind " + g.tracking, g.behind ?? "—", g.last_fetch ? `as of last fetch, ${ago(g.last_fetch)} (next deploy re-fetches)` : "never fetched on the server"),
+        tile("Uncommitted files", g.dirty_files.length, g.dirty_files.length ? "deploy will need FORCE=1" : "clean")),
+      g.dirty_files.length ? el("div", { class: "panel" }, el("h2", {}, "Uncommitted changes on the server"), el("div", { class: "chips" }, g.dirty_files.map((f) => el("span", { class: "chip" }, f)))) : null,
+      g.upstream_commits.length ? el("div", { class: "panel" }, el("h2", {}, `Waiting to deploy (${g.behind})`), list(g.upstream_commits)) : null,
+      el("div", { class: "panel" }, el("h2", {}, "Deployed history"), list(g.commits))];
+  }
+
+  const LV = { 0: "EMERG", 1: "ALERT", 2: "CRIT", 3: "ERROR", 4: "WARN", 5: "NOTICE", 6: "INFO", 7: "DEBUG" };
+  function highlight(text, q) {
+    if (!q) return text;
+    const out = [], lower = text.toLowerCase(); let i = 0, j;
+    while ((j = lower.indexOf(q, i)) !== -1) { out.push(text.slice(i, j), el("mark", {}, text.slice(j, j + q.length))); i = j + q.length; }
+    out.push(text.slice(i)); return out;
+  }
+  let logsBox = null;
+  function logsTab(d) {
+    const sel = (key, label, opts) => el("label", {}, label, el("select", { onchange: (e) => { logState[key] = e.target.value; refreshLogs(d.project); } },
+      opts.map(([v, t]) => el("option", { value: v, selected: logState[key] === v }, t))));
+    let t;
+    const search = el("input", { type: "search", placeholder: "Search messages…", value: logState.q, "aria-label": "Search logs",
+      oninput: (e) => { clearTimeout(t); t = setTimeout(() => { logState.q = e.target.value; refreshLogs(d.project); }, 350); } });
+    logsBox = el("div", { class: "logs", role: "log", "aria-label": `${d.service} logs`, tabindex: 0 }, el("div", { class: "empty", style: "padding:8px 12px" }, "Loading logs…"));
+    const counts = el("span", { class: "meta", id: "logcounts" });
+    setTimeout(() => refreshLogs(d.project), 0);
+    return [el("div", { class: "panel" },
+      el("div", { class: "controls" },
+        sel("priority", "Level", [["7", "All"], ["6", "Info+"], ["4", "Warnings+"], ["3", "Errors"]]),
+        sel("since", "Since", [["15m", "15 min"], ["1h", "1 hour"], ["6h", "6 hours"], ["24h", "24 hours"], ["7d", "7 days"], ["boot", "This boot"]]),
+        sel("lines", "Lines", [["100", "100"], ["200", "200"], ["500", "500"], ["1000", "1000"]]),
+        search,
+        el("label", {}, el("input", { type: "checkbox", checked: logState.follow, onchange: (e) => { logState.follow = e.target.checked; } }), "Follow"),
+        counts),
+      logsBox)];
+  }
+  async function refreshLogs(project) {
+    if (!logsBox) return;
+    const qs = new URLSearchParams({ lines: logState.lines, priority: logState.priority, since: logState.since, q: logState.q });
     try {
-      const r = await fetch("api/status", { cache: "no-store" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const s = await r.json();
-      const events = s.deploy_events || [];
-      fast = !!(s.deploying && s.deploying.state === "running");
-      renderLive(s.deploying, events); renderHost(s); renderApps(s.projects, s.deploying);
-      renderTimeline(events); renderDb(s.database); renderServices(s.services); renderCerts(s.certificates);
-      $("updated").textContent = `Updated ${new Date(s.generated_at).toLocaleTimeString()} · ${fast ? "live (3s)" : "every 10s"}`;
-    } catch (e) {
-      $("updated").replaceChildren(el("span", { class: "err" }, `Update failed: ${e.message}`));
-    }
-    timer = setTimeout(load, fast ? 3000 : 10000);
+      const r = await api(`api/app/${project}/logs?${qs}`);
+      const atBottom = logsBox.scrollHeight - logsBox.scrollTop - logsBox.clientHeight < 40;
+      const q = (logState.q || "").toLowerCase();
+      logsBox.replaceChildren(...(r.entries.length ? r.entries.map((e) => el("div", { class: `logline p${e.priority}` },
+        el("time", { datetime: new Date(e.ts).toISOString() }, new Date(e.ts).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })),
+        el("span", { class: `lv p${e.priority}` }, LV[e.priority] || e.priority),
+        el("span", { class: "msg" }, highlight(e.message, q)))) : [el("div", { class: "empty", style: "padding:8px 12px" }, "No log lines match.")]));
+      if (atBottom || logsBox.dataset.first !== "0") { logsBox.scrollTop = logsBox.scrollHeight; logsBox.dataset.first = "0"; }
+      const c = r.by_priority, errs = (c[0] || 0) + (c[1] || 0) + (c[2] || 0) + (c[3] || 0), warns = c[4] || 0;
+      const lc = $("logcounts"); if (lc) put(lc, `${r.count} lines`, errs ? [" · ", pill("bad", `${errs} errors`)] : null, warns ? [" · ", pill("warn", `${warns} warnings`)] : null);
+      stamp(`Logs updated ${new Date(r.generated_at).toLocaleTimeString()}`, logState.follow);
+    } catch (e) { fail(e); }
   }
-  $("refresh").addEventListener("click", load);
-  load();
+
+  async function renderApp(name, tab, fresh) {
+    if (tab === "logs" && detailCache && detailCache.project === name && !fresh && logsBox && document.contains(logsBox)) {
+      await refreshLogs(name);            // follow mode: only reload the log lines
+      return logState.follow ? 5000 : null;
+    }
+    const d = await api(`api/app/${encodeURIComponent(name)}`);
+    detailCache = d;
+    document.title = `${d.project} · Ops Dashboard`;
+    $("title").textContent = d.project;
+    $("back").replaceChildren(el("a", { class: "back", href: "#/" }, "← Overview"));
+    const body = { overview: overviewTab, logs: logsTab, deploys: deploysTab, database: databaseTab, commits: commitsTab }[tab] || overviewTab;
+    put($("view"),
+      d.deploying ? liveBanner(d.deploying, []) : null,
+      el("div", { class: "app-head" }, el("div", { class: "meta" }, d.domain ? ext(`https://${d.domain}`, d.domain) : "", d.domain ? " · " : "",
+        el("code", {}, d.service), " · branch ", el("code", {}, d.branch)), healthPill({ unit: d.unit, health: d.health }, d.deploying && d.deploying.state === "running" ? d.deploying : null)),
+      el("nav", { class: "tabs", role: "tablist" }, TABS.map(([k, t]) => el("a", { href: `#/app/${d.project}/${k}`, role: "tab", "aria-selected": String(k === tab) }, t))),
+      body(d));
+    if (tab !== "logs") stamp(`Updated ${new Date(d.generated_at).toLocaleTimeString()}`, !!d.deploying);
+    return tab === "logs" ? (logState.follow ? 5000 : null) : d.deploying ? 3000 : 15000;
+  }
+
+  // ------------------------------------------------------------------ router
+  let timer = null;
+  function route() { const m = location.hash.match(/^#\/app\/([A-Za-z0-9_-]+)(?:\/(\w+))?/); return m ? { app: m[1], tab: m[2] || "overview" } : { app: null }; }
+  async function load(fresh = false) {
+    clearTimeout(timer); ctrl?.abort(); ctrl = new AbortController();
+    const r = route(); let next = null;
+    try { next = r.app ? await renderApp(r.app, r.tab, fresh) : await renderOverview(fresh); }
+    catch (e) { fail(e); next = 15000; }
+    if (next) timer = setTimeout(() => load(false), next);
+  }
+  window.addEventListener("hashchange", () => { logsBox = null; detailCache = null; window.scrollTo(0, 0); load(true); });
+  $("refresh").addEventListener("click", () => { logsBox = null; load(true); });
+  document.addEventListener("keydown", (e) => { if (e.key === "r" && !e.metaKey && !e.ctrlKey && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) { logsBox = null; load(true); } });
+  load(true);
 })();
 </script>
 </body>

@@ -170,6 +170,16 @@ backup_db() {
   fi
 }
 
+# Refresh Postgres planner statistics (row estimates on the ops dashboard, query plans).
+# ANALYZE only reads tables and updates pg_statistic; it never modifies or deletes data. Best effort.
+analyze_db() {
+  [[ -n "${DB_NAME:-}" ]] || return 0
+  op_step analyze
+  (cd /tmp && psql -X -q -h localhost -U "$DB_USER" -w -d "$DB_NAME" -c 'ANALYZE' >/dev/null 2>&1) \
+    && log "refreshed statistics (ANALYZE) on $DB_NAME" || warn "ANALYZE on $DB_NAME skipped"
+  return 0
+}
+
 snapshot_run_dir() { # sync-mode only: tarball of the running code (excluding node_modules)
   op_step snapshot
   local out="$STATE_DIR/snapshots/$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
@@ -262,6 +272,7 @@ cmd_deploy() {
 
   if release "$ref" migrate; then
     record "$RELEASED_SHA" "$ref" ok deploy
+    analyze_db
     op_end success "$RELEASED_SHA"
     ok "deployed ${RELEASED_SHA:0:8} ($ref)"
     return 0
