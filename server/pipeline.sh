@@ -60,6 +60,8 @@ load_project() {
   SYNC_MODE=0; [[ "$(realpath -m "$RUN_DIR")" != "$(realpath -m "$BUILD_DIR")" ]] && SYNC_MODE=1
   STATE_DIR="$STATE_ROOT/$PROJECT"
   mkdir -p "$STATE_DIR/backups" "$STATE_DIR/snapshots"
+  # DB dumps and code snapshots can contain data/secrets: owner-only
+  chmod 700 "$STATE_DIR/backups" "$STATE_DIR/snapshots"
   HISTORY="$STATE_DIR/history.log"; touch "$HISTORY"
 }
 
@@ -102,7 +104,7 @@ backup_db() {
   local out="$STATE_DIR/backups/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ)-$(current_sha | cut -c1-8).sql.gz"
   log "backing up database '$DB_NAME' → $out"
   # Credentials come from ~/.pgpass (see README → One-time server setup)
-  if pg_dump -h localhost -U "$DB_USER" -w --no-owner "$DB_NAME" | gzip > "$out"; then
+  if (umask 077; pg_dump -h localhost -U "$DB_USER" -w --no-owner "$DB_NAME" | gzip > "$out"); then
     ok "DB backup done ($(du -h "$out" | cut -f1))"
     ls -1t "$STATE_DIR"/backups/*.sql.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
   else
@@ -115,7 +117,7 @@ backup_db() {
 snapshot_run_dir() { # sync-mode only: tarball of the running code (excluding node_modules)
   local out="$STATE_DIR/snapshots/$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
   log "snapshotting $RUN_DIR → $out"
-  tar -C "$RUN_DIR" --exclude=node_modules -czf "$out" .
+  (umask 077; tar -C "$RUN_DIR" --exclude=node_modules -czf "$out" .)
   ls -1t "$STATE_DIR"/snapshots/*.tar.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
 }
 
