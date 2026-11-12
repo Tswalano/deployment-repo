@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time AWS setup (run from a machine with admin AWS CLI creds). Idempotent.
-#   1. lendify-instance-role  → instance profile on the EC2 box: read /apps/* params (+ SSM Session Manager)
+#   1. lendify-instance-role  → instance profile on the EC2 box: read /apps/* params (+ SSM Session Manager),
+#      send email via SES only as lendify@glenify.studio
 #   2. github-deploy-repo-role → assumed by this repo's Actions (environment "production") via OIDC:
 #      may only add/remove ingress rules on the instance's security group and push a
 #      60-second EC2 Instance Connect key for ec2-user (no SSH key / PEM stored in GitHub)
@@ -24,6 +25,7 @@ echo "account=$ACCOUNT_ID instance=$INSTANCE_ID sg=$SG_ID oidc_sub_prefix=$OIDC_
 exists lendify-instance-role || aws iam create-role --role-name lendify-instance-role \
   --assume-role-policy-document "$(render instance-trust.json)" --description "lendify-instance: read /apps/* SSM parameters" >/dev/null
 aws iam put-role-policy --role-name lendify-instance-role --policy-name read-app-secrets --policy-document "$(render instance-read-app-secrets.json)"
+aws iam put-role-policy --role-name lendify-instance-role --policy-name send-email-as-lendify --policy-document "$(render instance-send-email.json)"
 aws iam attach-role-policy --role-name lendify-instance-role --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 aws iam get-instance-profile --instance-profile-name lendify-instance-profile >/dev/null 2>&1 || {
   aws iam create-instance-profile --instance-profile-name lendify-instance-profile >/dev/null

@@ -1,0 +1,12 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SendAsLendifyOnly",
+      "Effect": "Allow",
+      "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+      "Resource": "arn:aws:ses:af-south-1:${ACCOUNT_ID}:identity/*",
+      "Condition": { "StringEquals": { "ses:FromAddress": "lendify@glenify.studio" } }
+    }
+  ]
+}
