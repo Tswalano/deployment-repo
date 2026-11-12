@@ -151,6 +151,36 @@ done
 
 ---
 
+## Backups
+
+`db-backup.timer` runs `server/db-backup.sh` daily at **15:30 UTC**, before the 16:00 stop. If a run was missed, it catches up at boot.
+
+- Every project database is dumped with `pg_dump -Fc`, plus role definitions (`pg_dumpall --globals-only`), into `/var/backups/app-db/` (`0700`, files `0600`). **14 days** are kept.
+- The ops dashboard shows the last run next to *Databases* (green, or amber if older than 30h, or red if it failed).
+- **Free**, because it stays on the instance's own disk. It covers bad deploys, migrations and mistakes, **not** losing the volume itself. EBS snapshots would cover that for about R5–8/month (Cape Town: $0.0595/GB-month); they're deliberately not enabled.
+- Install or refresh: `./deploy.sh backups` (installs the timer and runs one backup now).
+- Restore one database:
+  ```bash
+  pg_restore -h localhost -U postgres -d <db> --clean --if-exists /var/backups/app-db/<db>/<db>-<timestamp>.dump
+  ```
+  ⚠️ `--clean` replaces the database's current contents. Restore into a new database first if you only want to look at the data.
+
+## Rotating secrets
+
+`./scripts/rotate-secrets.sh` (`--db-only` to skip the JWTs) rotates:
+- the Postgres passwords: `postgres` (FinanceFlow, LiftParcel) and `lendify_user` (Lendify)
+- LiftParcel's and Lendify's `JWT_SECRET`. This logs their users out once.
+
+How it works:
+1. Snapshots the current SSM values to a private temp file.
+2. Writes the new values to SSM.
+3. Has the box run `ALTER ROLE` (password read from SSM, SQL over stdin), update `.pgpass`, then restart and health-check each app.
+4. On any failure, restores everything automatically.
+
+New values never appear on a command line or in output. Provider keys (Paystack, Sentry, Mapbox, SMTP) have to be regenerated at each provider, then written to `/apps/<service>/<KEY>` in SSM, then the app restarted.
+
+---
+
 ## Repository layout
 
 ```
@@ -161,6 +191,8 @@ server/secrets-cutover.sh    # one-time migration of an app's secrets to SSM, wi
 systemd/<service>.service    # source of truth for the unit files (no secrets)
 infra/iam/*.json             # IAM policies: instance role + GitHub OIDC deploy role
 scripts/setup-aws-iam.sh     # creates/updates those roles and attaches the instance profile
+scripts/rotate-secrets.sh    # rotate DB passwords + JWT secrets safely (auto-restore on failure)
+server/db-backup.sh          # nightly pg_dump of all project DBs (systemd/db-backup.{service,timer})
 ops-dashboard/               # read-only status page (stdlib Python) served on 127.0.0.1:9100
 server/install-ops-dashboard.sh  # installs it (install) and optionally publishes it with auth + TLS (expose)
 projects/<name>.conf         # one file per project (files starting with "_" are ignored)

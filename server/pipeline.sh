@@ -11,6 +11,7 @@
 #   pipeline.sh history  <project>
 #   pipeline.sh secrets-cutover <project|all>         (one-time: move secrets to SSM)
 #   pipeline.sh ops-dashboard install | expose <domain>
+#   pipeline.sh backups                                (install nightly DB backup timer + run once)
 #
 # Env flags:
 #   FORCE=1           deploy even if the source checkout has uncommitted changes
@@ -372,6 +373,7 @@ main() {
     list) list_projects; return ;;
     secrets-cutover) exec bash "$PIPELINE_ROOT/server/secrets-cutover.sh" "$@" ;;
     ops-dashboard)   exec bash "$PIPELINE_ROOT/server/install-ops-dashboard.sh" "$@" ;;
+    backups)         exec bash "$PIPELINE_ROOT/server/install-backups.sh" "$@" ;;
     -h|--help|help) usage ;;
   esac
 

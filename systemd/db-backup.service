@@ -1,0 +1,12 @@
+# Nightly database backup: managed by deployment-repo (systemd/db-backup.service)
+[Unit]
+Description=Nightly pg_dump of all project databases
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=ec2-user
+ExecStart=/usr/bin/bash /opt/deploy/server/db-backup.sh
+Nice=10
+IOSchedulingClass=idle
