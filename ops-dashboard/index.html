@@ -315,8 +315,16 @@
     ]), "No pipeline runs recorded yet. They appear here after the next deploy.");
   }
 
-  function dbPanel(db) {
-    const head = el("div", { class: "panel-head" }, el("h2", {}, "Databases"));
+  function backupPill(b) {
+    if (!b) return pill("warn", "no backups yet");
+    const stale = b.age_hours > 30;
+    const label = b.ok ? `backed up ${ago(b.at)}` : "last backup FAILED";
+    return el("span", { title: `${b.items.map((i) => `${i.name}: ${i.ok ? bytes(i.bytes) : "failed"}`).join(" · ")} · kept ${b.keep_days} days in ${b.location} (${bytes(b.total_bytes)})` },
+      pill(!b.ok ? "bad" : stale ? "warn" : "ok", stale && b.ok ? `last backup ${ago(b.at)}` : label));
+  }
+
+  function dbPanel(db, backups) {
+    const head = el("div", { class: "panel-head" }, el("h2", {}, "Databases ", backupPill(backups)));
     if (!db.ok) return el("div", { class: "panel" }, head, el("p", { class: "err" }, db.error));
     const conns = Object.entries(db.connections_by_state).map(([k, v]) => `${v} ${k}`).join(" · ");
     head.append(el("span", { class: "meta", title: `${db.version} · up since ${when(db.started_at)} · ${conns} (max ${db.max_connections}) · shared_buffers ${db.shared_buffers}` },
@@ -348,7 +356,7 @@
     $("back").replaceChildren();
     put($("view"), liveBanner(s.deploying, events), hostPanels(s), appCards(s.projects, s.deploying),
       el("section", { class: "panel" }, el("div", { class: "panel-head" }, el("h2", {}, "Deployment history"), el("span", { class: "meta" }, `${events.length} recent runs`)), eventsTable(events)),
-      dbPanel(s.database), servicesPanel(s.services, s.certificates));
+      dbPanel(s.database, s.backups), servicesPanel(s.services, s.certificates));
     const live = !!(s.deploying && s.deploying.state === "running");
     stamp(`Updated ${new Date(s.generated_at).toLocaleTimeString()}`, live);
     return live ? 3000 : 10000;

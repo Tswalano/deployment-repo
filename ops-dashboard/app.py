@@ -338,6 +338,18 @@ def database():
     }
 
 
+def backup_status():
+    """Written by server/db-backup.sh after each nightly run (metadata only, no data)."""
+    try:
+        with open(os.path.join(STATE_DIR, "backups.json")) as f:
+            b = json.load(f)
+        b["age_hours"] = round((time.time() - datetime.strptime(b["at"], "%Y-%m-%dT%H:%M:%SZ")
+                                .replace(tzinfo=timezone.utc).timestamp()) / 3600, 1)
+        return b
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 # --------------------------------------------------------------------------- tls
 def cert_expiry(domain):
     ctx = ssl.create_default_context()
@@ -574,6 +586,7 @@ def status(fresh=False):
             "projects": projs,
             "services": [unit_info(u) for u in EXTRA_UNITS],
             "database": database(),
+            "backups": backup_status(),
             "certificates": [cert_expiry(d) for d in domains],
         }
         data["collect_ms"] = int((time.monotonic() - t0) * 1000)

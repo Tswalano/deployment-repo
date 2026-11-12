@@ -1,0 +1,11 @@
+# Runs before the daily 16:00 UTC stop; Persistent= catches up at boot if a run was missed.
+[Unit]
+Description=Nightly database backup
+
+[Timer]
+OnCalendar=*-*-* 15:30:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
