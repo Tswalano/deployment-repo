@@ -12,9 +12,11 @@ User=ec2-user
 WorkingDirectory=/opt/apps/liftparcel/api
 Environment=PORT=4000 NODE_ENV=production
 EnvironmentFile=/run/app-secrets/liftparcel.env
-# Compiled output from `npm run build` (the pipeline's BUILD_CMD). ~100 MB RSS, vs ~480 MB under
-# ts-node, which type-checks the whole codebase in memory at runtime.
-ExecStart=/usr/bin/node dist/lambda/dev.js
+# ts-node in transpile-only mode: no type-checking at runtime (~200 MB RSS instead of ~480 MB).
+# A full `tsc` build peaks at ~775 MB, which can't run on this 1 GB box next to the apps, so there
+# is no build step; type-checking happens on developer machines / PR checks instead.
+Environment=TS_NODE_TRANSPILE_ONLY=true
+ExecStart=/usr/bin/node node_modules/.bin/ts-node lambda/dev.ts
 Restart=on-failure
 RestartSec=5
 SuccessExitStatus=143
