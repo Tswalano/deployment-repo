@@ -12,7 +12,9 @@ User=ec2-user
 WorkingDirectory=/opt/apps/liftparcel/api
 Environment=PORT=4000 NODE_ENV=production
 EnvironmentFile=/run/app-secrets/liftparcel.env
-ExecStart=/usr/bin/env bash -lc 'npm run dev'
+# Compiled output from `npm run build` (the pipeline's BUILD_CMD). ~100 MB RSS, vs ~480 MB under
+# ts-node, which type-checks the whole codebase in memory at runtime.
+ExecStart=/usr/bin/node dist/lambda/dev.js
 Restart=on-failure
 RestartSec=5
 SuccessExitStatus=143
