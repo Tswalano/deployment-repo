@@ -238,9 +238,10 @@ your AWS CLI credentials. Set `EC2_INSTANCE_ID` in `.deploy.env` and leave `DEPL
 
 **Port 22 is restricted** to the admin IP and the EC2 Instance Connect range. Each workflow run uses the
 OIDC role to allow **its own runner IP** for the length of the job, and always revokes it at the end.
-For local runs from a new IP, add it first:
-`aws ec2 authorize-security-group-ingress --group-id <sg> --protocol tcp --port 22 --cidr $(curl -s https://checkip.amazonaws.com)/32`
-(or connect through the EC2 console / SSM Session Manager).
+If your home or office IP changes, laptop deploys and SSH time out. Run `./scripts/allow-my-ip.sh`
+(`--dry-run` to preview): it swaps the admin entry for your current IP and leaves the EC2 Instance
+Connect range and CI entries alone. The EC2 console's *Connect* and SSM Session Manager keep working
+regardless, because they don't need port 22.
 
 Also create an environment called `production` (**Settings → Environments**). Add required reviewers there if you want every deploy to need approval.
 
