@@ -213,6 +213,40 @@ run_in_app() { # run_in_app <label> <cmd>
   ( cd "$RUN_DIR" && bash -lc "$2" )
 }
 
+# Migrations need the app's database settings, which live only in the service's environment
+# (systemd unit / SSM secrets file), not in the pipeline's shell. Pass through DB-related
+# variables only (DATABASE_*, DB_*, PG*), read from the running process, or from
+# /run/app-secrets/<svc>.env when the service isn't running.
+service_db_env() {
+  local pid; pid="$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null)"
+  if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && sudo test -r "/proc/$pid/environ"; then
+    sudo cat "/proc/$pid/environ" | python3 -I -c '
+import re, sys
+for kv in sys.stdin.buffer.read().split(b"\0"):
+    if re.match(rb"^(DATABASE_[A-Z0-9_]*|DB_[A-Z0-9_]*|PG[A-Z0-9_]*)=", kv):
+        sys.stdout.buffer.write(kv + b"\0")'
+  elif sudo test -f "/run/app-secrets/$SERVICE.env"; then
+    sudo cat "/run/app-secrets/$SERVICE.env" | python3 -I -c '
+import re, sys
+for line in sys.stdin.read().splitlines():
+    m = re.match(r"^((?:DATABASE|DB|PG)[A-Z0-9_]*)=\"(.*)\"$", line)
+    if m:
+        v = m.group(2).replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+        sys.stdout.buffer.write((m.group(1) + "=" + v).encode() + b"\0")'
+  fi
+}
+
+run_migrate() {
+  [[ -n "$MIGRATE_CMD" ]] || return 0
+  local -a envs=()
+  mapfile -d '' -t envs < <(service_db_env)
+  if ((${#envs[@]} == 0)); then
+    warn "no DATABASE_*/DB_*/PG* variables found for $SERVICE: the migration will probably fail"
+  fi
+  log "migrate: $MIGRATE_CMD (with ${#envs[@]} DB variable(s) from $SERVICE)"
+  ( cd "$RUN_DIR" && env "${envs[@]}" bash -lc "$MIGRATE_CMD" )
+}
+
 restart_service() {
   log "restarting systemd unit '$SERVICE'"
   sudo systemctl restart "$SERVICE"
@@ -249,7 +283,7 @@ release() { # release <ref> [migrate] → returns 0 if healthy
   run_in_app build   "$BUILD_CMD"         || return 1
   if [[ "${2:-}" == migrate ]]; then
     [[ -n "$MIGRATE_CMD" ]] && op_step migrate
-    run_in_app migrate "$MIGRATE_CMD"     || return 1
+    run_migrate                           || return 1
   fi
   op_step restart
   restart_service                         || return 1
