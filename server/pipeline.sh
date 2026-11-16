@@ -374,6 +374,7 @@ main() {
     secrets-cutover) exec bash "$PIPELINE_ROOT/server/secrets-cutover.sh" "$@" ;;
     ops-dashboard)   exec bash "$PIPELINE_ROOT/server/install-ops-dashboard.sh" "$@" ;;
     backups)         exec bash "$PIPELINE_ROOT/server/install-backups.sh" "$@" ;;
+    ops-console)     exec bash "$PIPELINE_ROOT/server/install-ops-console.sh" "$@" ;;
     -h|--help|help) usage ;;
   esac
 

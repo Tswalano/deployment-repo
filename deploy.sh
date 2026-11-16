@@ -11,6 +11,7 @@
 #   ./deploy.sh restore-snapshot lendify [snapshot-file]
 #   ./deploy.sh secrets-cutover all            (one-time: move secrets to SSM)
 #   ./deploy.sh ops-dashboard install          (read-only status page on 127.0.0.1:9100)
+#   ./deploy.sh ops-console install            (Ops Console app on 127.0.0.1:9200; see scripts/setup-ops-console.sh)
 #   ./deploy.sh ops-dashboard expose ops.glenify.studio
 #
 # Connection (env vars, or put them in a git-ignored .deploy.env):
@@ -55,7 +56,7 @@ echo "→ syncing pipeline to $TARGET:$REMOTE_DIR"
 push_key
 ssh "${SSH_OPTS[@]}" "$TARGET" "sudo mkdir -p '$REMOTE_DIR' && sudo chown \$(id -un) '$REMOTE_DIR'"
 push_key
-rsync -az --delete -e "ssh ${SSH_OPTS[*]}" server projects systemd ops-dashboard templates "$TARGET:$REMOTE_DIR/"
+rsync -az --delete --exclude node_modules --exclude dist -e "ssh ${SSH_OPTS[*]}" server projects systemd ops-dashboard ops-console templates "$TARGET:$REMOTE_DIR/"
 
 ENV_FWD=""
 # who/what triggered this run, shown on the ops dashboard
