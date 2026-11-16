@@ -51,7 +51,7 @@ function CreateUser({ onCreated }: { onCreated: () => void }) {
       <button className="btn-primary" disabled={busy || !form.username || form.password.length < 8}>
         {busy ? 'Creating…' : 'Add user'}
       </button>
-      {error && <p role="alert" className="text-sm text-rose-600 sm:col-span-2 lg:col-span-5 dark:text-rose-400">{error}</p>}
+      {error && <p role="alert" className="text-sm text-rose-300 sm:col-span-2 lg:col-span-5">{error}</p>}
     </form>
   );
 }
@@ -86,16 +86,16 @@ export function Users() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        <h1 className="text-lg font-semibold tracking-tight text-slate-100 sm:text-xl">Users</h1>
+        <p className="mt-1 text-sm text-slate-500">
           Admins manage everything. Deployers can deploy applications. Viewers (and the public demo) are read-only.
         </p>
       </div>
 
       <CreateUser onCreated={() => void act(async () => undefined, 'User added.')} />
 
-      {error && <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/60 dark:text-rose-300">{error}</p>}
-      {notice && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">{notice}</p>}
+      {error && <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p>}
+      {notice && <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{notice}</p>}
 
       <div className="card overflow-hidden p-0">
         <table className="tbl">
@@ -116,12 +116,12 @@ export function Users() {
               return (
                 <tr key={u.id}>
                   <td title={`${u.displayName} (${u.username})`}>
-                    <div className="truncate font-medium">{u.displayName || u.username}</div>
+                    <div className="truncate font-medium text-slate-100">{u.displayName || u.username}</div>
                     <div className="truncate text-xs text-slate-500">@{u.username}{self && ' · you'}{u.isDemo && ' · public demo'}</div>
                   </td>
                   <td>
                     {u.isDemo || self ? (
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ROLE_INFO[u.role].badge}`}
+                      <span className={ROLE_INFO[u.role].badge}
                             title={self ? "You can't change your own role" : 'The demo account is always a viewer'}>
                         {ROLE_INFO[u.role].label}
                       </span>
@@ -133,9 +133,7 @@ export function Users() {
                     )}
                   </td>
                   <td className="hidden md:table-cell">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status === 'Active'
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                      : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}>{status}</span>
+                    <span className={status === 'Active' ? 'pill-ok' : 'pill-warn'}>{status}</span>
                   </td>
                   <td className="hidden text-slate-500 md:table-cell" title={u.lastLoginAt ?? 'never'}>{ago(u.lastLoginAt)}</td>
                   <td className="whitespace-normal text-right">

@@ -3,6 +3,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { db } from './db';
 import { checkOrigin, denyDemo, Env, loadSession, requireRole } from './middleware';
 import auth from './routes/auth';
+import instances from './routes/instances';
 import users from './routes/users';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
@@ -25,6 +26,7 @@ export function createApp() {
     app.use('/api/*', loadSession, checkOrigin);
     app.route('/api/auth', auth);
     app.route('/api/users', users);
+    app.route('/api/instances', instances);
 
     app.get('/api/audit', requireRole('admin'), denyDemo, async (c) => {
         const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') || 100)));

@@ -13,11 +13,14 @@ const LABELS: Record<string, string> = {
   'user.update': 'Updated user',
   'user.password_reset': 'Reset password',
   'user.delete': 'Deleted user',
+  'instance.add': 'Added instance',
+  'instance.update': 'Updated instance',
+  'instance.remove': 'Removed instance',
 };
 
 const tone = (action: string) =>
-  /failed|locked/.test(action) ? 'text-rose-600 dark:text-rose-400'
-    : action.startsWith('user.') ? 'text-violet-700 dark:text-violet-300' : '';
+  /failed|locked/.test(action) ? 'text-rose-300'
+    : action.startsWith('user.') ? 'text-violet-300' : action.startsWith('instance.') ? 'text-sky-300' : '';
 
 export function Audit() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
@@ -30,10 +33,10 @@ export function Audit() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Every sign-in and change, newest first.</p>
+        <h1 className="text-lg font-semibold tracking-tight text-slate-100 sm:text-xl">Audit log</h1>
+        <p className="mt-1 text-sm text-slate-500">Every sign-in and change, newest first.</p>
       </div>
-      {error && <p role="alert" className="text-sm text-rose-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
       <div className="card overflow-hidden p-0">
         <table className="tbl">
           <thead>

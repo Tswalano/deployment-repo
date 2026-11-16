@@ -36,9 +36,9 @@ export function Login() {
     <div className="grid min-h-screen place-items-center px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl bg-indigo-600 text-lg font-semibold text-white">OC</span>
-          <h1 className="text-2xl font-semibold tracking-tight">Ops Console</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Deployments, health and databases across EC2 instances.</p>
+          <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl border border-indigo-400/40 bg-indigo-500/15 text-indigo-300"><svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M12 3 3 20h18L12 3z" /></svg></span>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-100">Ops Console</h1>
+          <p className="mt-1 text-sm text-slate-500">Deployments, health and databases across EC2 instances.</p>
         </div>
 
         <form onSubmit={submit} className="card space-y-4" noValidate>
@@ -53,15 +53,15 @@ export function Login() {
                    value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
           {error && (
-            <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/60 dark:text-rose-300">{error}</p>
+            <p role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p>
           )}
           <button type="submit" className="btn-primary w-full" disabled={busy !== null || !username || !password}>
             {busy === 'login' ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
 
-        <div className="mt-6 rounded-xl border border-dashed border-slate-300 p-4 text-center dark:border-slate-700">
-          <p className="text-sm text-slate-600 dark:text-slate-400">Just looking around?</p>
+        <div className="mt-6 rounded-xl border border-dashed border-ink-600 p-4 text-center">
+          <p className="text-sm text-slate-400">Just looking around?</p>
           <button className="btn-secondary mt-3 w-full" disabled={busy !== null} onClick={() => void run('demo', api.demo)}>
             {busy === 'demo' ? 'Opening demo…' : 'Try the read-only demo'}
           </button>

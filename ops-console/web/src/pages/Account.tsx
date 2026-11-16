@@ -30,13 +30,13 @@ export function Account() {
   return (
     <div className="max-w-xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          @{user.username} · <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${ROLE_INFO[user.role].badge}`}>{ROLE_INFO[user.role].label}</span>
+        <h1 className="text-lg font-semibold tracking-tight text-slate-100 sm:text-xl">Account</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          @{user.username} · <span className={ROLE_INFO[user.role].badge}>{ROLE_INFO[user.role].label}</span>
         </p>
       </div>
       <form onSubmit={submit} className="card space-y-4">
-        <h2 className="font-medium">Change password</h2>
+        <h2 className="font-medium text-slate-100">Change password</h2>
         <div>
           <label className="label" htmlFor="cur">Current password</label>
           <input id="cur" type="password" autoComplete="current-password" className="input" required value={current} onChange={(e) => setCurrent(e.target.value)} />
@@ -51,9 +51,9 @@ export function Account() {
           <input id="conf" type="password" autoComplete="new-password" className="input" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         </div>
         {msg && (
-          <p role={msg.ok ? 'status' : 'alert'} className={`rounded-lg px-3 py-2 text-sm ${msg.ok
-            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-            : 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'}`}>{msg.text}</p>
+          <p role={msg.ok ? 'status' : 'alert'} className={`rounded-lg border px-3 py-2 text-sm ${msg.ok
+            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+            : 'border-rose-500/30 bg-rose-500/10 text-rose-200'}`}>{msg.text}</p>
         )}
         <button className="btn-primary" disabled={busy || !current || next.length < 8 || !confirm}>
           {busy ? 'Saving…' : 'Change password'}
