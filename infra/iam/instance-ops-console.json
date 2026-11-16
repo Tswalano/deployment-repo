@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunOnlyOpsConsoleDocuments",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ssm:*:${ACCOUNT_ID}:document/OpsConsole-*"
+    },
+    {
+      "Sid": "OnlyOnInstancesTaggedForTheConsole",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ec2:*:${ACCOUNT_ID}:instance/*",
+      "Condition": { "StringEquals": { "ssm:resourceTag/ops-console": "managed" } }
+    },
+    {
+      "Sid": "ReadResultsAndInventory",
+      "Effect": "Allow",
+      "Action": ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation", "ec2:DescribeInstances"],
+      "Resource": "*"
+    }
+  ]
+}

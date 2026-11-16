@@ -1,59 +1,119 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ROLE_INFO } from '../api';
 import { useAuth } from '../auth';
 
-const link = ({ isActive }: { isActive: boolean }) =>
-  `whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-    isActive
-      ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
-      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
-  }`;
+type Tab = { to: string; label: string; end?: boolean; admin?: boolean; mobile?: boolean; icon: JSX.Element };
 
-export function Layout() {
+const Icon = ({ d }: { d: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]" aria-hidden>
+    <path d={d} />
+  </svg>
+);
+const TABS: Tab[] = [
+  { to: '/', label: 'Overview', end: true, mobile: true, icon: <Icon d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /> },
+  { to: '/instances', label: 'Instances', mobile: true, icon: <Icon d="M4 6h16M4 12h16M4 18h16M7 6v0M7 12v0M7 18v0" /> },
+  { to: '/activity', label: 'Activity', mobile: true, icon: <Icon d="M3 12h4l3-8 4 16 3-8h4" /> },
+  { to: '/users', label: 'Users', admin: true, icon: <Icon d="M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 19v-1a4 4 0 0 0-3-3.9M16 2.1a4 4 0 0 1 0 7.8" /> },
+  { to: '/audit', label: 'Audit log', admin: true, icon: <Icon d="M9 12h6M9 16h6M9 8h2M6 3h9l5 5v13H6z" /> },
+  { to: '/settings', label: 'Settings', admin: true, icon: <Icon d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /> },
+];
+
+function UserMenu() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+  }, []);
   if (!user) return null;
-  const role = ROLE_INFO[user.role];
-
+  const initials = (user.displayName || user.username).split(/[\s._-]+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
   return (
-    <div className="min-h-screen">
-      {user.isDemo && (
-        <div className="bg-amber-100 px-4 py-2 text-center text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          You're exploring the <strong>read-only demo</strong>. Nothing you do here changes anything.
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
+              className="grid h-8 w-8 place-items-center rounded-full border border-ink-600 bg-gradient-to-br from-indigo-500/40 to-sky-500/30 text-xs font-semibold text-white transition hover:border-ink-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
+        {initials}
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-10 z-30 w-56 overflow-hidden rounded-xl border border-ink-600 bg-ink-850 shadow-2xl shadow-black/50">
+          <div className="border-b border-ink-700 px-4 py-3">
+            <div className="truncate text-sm font-medium text-slate-100" title={user.username}>{user.displayName || user.username}</div>
+            <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">@{user.username} <span className={ROLE_INFO[user.role].badge}>{ROLE_INFO[user.role].label}</span></div>
+          </div>
+          {!user.isDemo && (
+            <button role="menuitem" className="block w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-ink-800" onClick={() => { setOpen(false); navigate('/account'); }}>
+              Account & password
+            </button>
+          )}
+          <button role="menuitem" className="block w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-ink-800"
+                  onClick={async () => { await logout(); navigate('/login'); }}>
+            Sign out
+          </button>
         </div>
       )}
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/85 backdrop-blur dark:border-slate-800 dark:bg-slate-950/85">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-          <div className="flex items-center gap-2 font-semibold">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-sm text-white">OC</span>
-            <span className="hidden sm:inline">Ops Console</span>
-          </div>
-          <nav className="flex flex-1 items-center gap-1 overflow-x-auto">
-            <NavLink to="/" end className={link}>Overview</NavLink>
-            {user.role === 'admin' && <NavLink to="/users" className={link}>Users</NavLink>}
-            {user.role === 'admin' && <NavLink to="/audit" className={link}>Audit log</NavLink>}
-            {!user.isDemo && <NavLink to="/account" className={link}>Account</NavLink>}
-          </nav>
-          <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <div className="max-w-[10rem] truncate text-sm font-medium" title={user.username}>{user.displayName || user.username}</div>
-              <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${role.badge}`}>{role.label}</span>
-            </div>
-            <button
-              className="btn-secondary"
-              onClick={async () => {
-                await logout();
-                navigate('/login');
-              }}
-            >
-              Sign out
-            </button>
+    </div>
+  );
+}
+
+export function Layout() {
+  const { user } = useAuth();
+  const { pathname } = useLocation();
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  if (!user) return null;
+  const tabs = TABS.filter((t) => !t.admin || user.role === 'admin');
+
+  return (
+    <div className="min-h-screen pb-20 md:pb-0">
+      {user.isDemo && (
+        <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-200">
+          Read-only demo — you can look at everything; nothing you do changes anything.
+        </div>
+      )}
+      <header className="sticky top-0 z-20 border-b border-ink-700 bg-ink-950/90 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-4 sm:px-6">
+          <NavLink to="/" className="flex items-center gap-2.5">
+            <span className="grid h-7 w-7 place-items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-300">
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M12 3 3 20h18L12 3z" /></svg>
+            </span>
+            <span className="text-sm font-semibold tracking-tight text-slate-100">Ops Console</span>
+          </NavLink>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="hidden items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 sm:inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Production
+            </span>
+            <UserMenu />
           </div>
         </div>
+        <nav aria-label="Main" className="mx-auto hidden max-w-[1400px] gap-1 px-4 sm:px-6 md:flex">
+          {tabs.map((t) => (
+            <NavLink key={t.to} to={t.to} end={t.end}
+                     className={({ isActive }) => `-mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors ${isActive
+                       ? 'border-indigo-400 font-medium text-slate-100'
+                       : 'border-transparent text-slate-400 hover:border-ink-500 hover:text-slate-200'}`}>
+              {t.icon}{t.label}
+            </NavLink>
+          ))}
+        </nav>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">
+
+      <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
         <Outlet />
       </main>
+
+      {/* Phones: only the views that make sense on a small screen */}
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+        {TABS.filter((t) => t.mobile).map((t) => (
+          <NavLink key={t.to} to={t.to} end={t.end}
+                   className={({ isActive }) => `flex flex-col items-center gap-1 py-2.5 text-2xs font-medium ${isActive ? 'text-indigo-300' : 'text-slate-500'}`}>
+            {t.icon}{t.label}
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }

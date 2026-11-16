@@ -4,9 +4,13 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth';
 import { Layout } from './components/Layout';
 import { Account } from './pages/Account';
+import { Activity } from './pages/Activity';
 import { Audit } from './pages/Audit';
+import { InstanceDetail } from './pages/InstanceDetail';
+import { Instances } from './pages/Instances';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
+import { Settings } from './pages/Settings';
 import { Users } from './pages/Users';
 import type { Role } from './api';
 import './index.css';
@@ -25,7 +29,11 @@ function App() {
       <Route path="/login" element={<Login />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route index element={<Overview />} />
+        <Route path="instances" element={<Instances />} />
+        <Route path="instances/:id" element={<InstanceDetail />} />
+        <Route path="activity" element={<Activity />} />
         <Route path="account" element={<Account />} />
+        <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />
         <Route path="audit" element={<Protected role="admin"><Audit /></Protected>} />
       </Route>
