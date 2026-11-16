@@ -230,6 +230,19 @@ there (the console refuses to add one until they exist). The instance needs the 
 AmazonSSMManagedInstanceCore + the console's policy, and the tag `ops-console=managed`. Instances without the
 per-instance agent (127.0.0.1:9100) report host metrics only.
 
+
+### Secrets and instance power (Ops Console)
+- **Secrets** (deployers read, admins act) lists every `/apps/<service>/*` parameter with kind, version, age and who
+  changed it, using SSM DescribeParameters: **values are never shown**. Database passwords and JWT secrets are
+  rotated on the instance by `OpsConsole-RotateSecret` (new value generated there; affected apps restarted and
+  health-checked; everything restored automatically on failure). Provider keys (Paystack, Sentry, Mapbox…) are
+  replaced by pasting the new value; the app is reloaded and the old value restored if it fails.
+  IAM: `infra/iam/instance-ops-console-secrets.json` (PutParameter on `/apps/*`, explicitly denied for the console's
+  own parameters; `kms:Encrypt` only via SSM).
+- **Power** on an instance page: start / reboot (deployers, admins), stop / terminate (admins, typed name; terminate
+  needs a reason). The console refuses to stop or terminate the instance it runs on. IAM allows these only on
+  instances tagged `ops-console=managed`. Stopped instances show as stopped instead of raising "unreachable" alerts.
+
 ## Repository layout
 
 ```

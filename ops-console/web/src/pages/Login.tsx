@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
@@ -10,6 +10,8 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'login' | 'demo' | null>(null);
+  const [localMode, setLocalMode] = useState(false);
+  useEffect(() => { fetch('/api/health').then((r) => r.json()).then((h) => setLocalMode(h.mode === 'local-dry-run')).catch(() => undefined); }, []);
 
   if (user) return <Navigate to="/" replace />;
 
@@ -41,6 +43,13 @@ export function Login() {
           <p className="mt-1 text-sm text-slate-500">Deployments, health and databases across EC2 instances.</p>
         </div>
 
+        {localMode && (
+          <div className="mb-4 rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/10 p-3 text-xs text-fuchsia-200">
+            Local test server: it has its own logins (not your production password). They're in
+            <code className="mx-1 rounded bg-ink-900 px-1 font-mono">ops-console/.local/credentials.txt</code>,
+            or choose one with <code className="rounded bg-ink-900 px-1 font-mono">ops-console/dev/local.sh --password admin</code>.
+          </div>
+        )}
         <form onSubmit={submit} className="card space-y-4" noValidate>
           <div>
             <label htmlFor="username" className="label">Username</label>

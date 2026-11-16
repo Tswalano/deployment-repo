@@ -21,6 +21,8 @@ export interface InstanceRow {
     last_fetched_at: string | null;
     last_ok_at: string | null;
     last_error: string | null;
+    ec2_state?: string | null;
+    ec2_state_at?: string | null;
 }
 
 /** Normalised snapshot, the same shape whatever the instance reported ("agent" or "basic"). */
@@ -150,14 +152,20 @@ async function collect(row: InstanceRow): Promise<InstanceRow> {
         const out = await aws().runDocument(row.region, row.aws_instance_id, COLLECT_DOCUMENT);
         const snap = normalise(decodeOutput(out) as { source: string; data: unknown });
         const { rows } = await db().query(
-            `UPDATE instances SET last_status = $2, last_fetched_at = now(), last_ok_at = now(), last_error = NULL
+            `UPDATE instances SET last_status = $2, last_fetched_at = now(), last_ok_at = now(), last_error = NULL,
+                    ec2_state = 'running', ec2_state_at = now()
              WHERE id = $1 RETURNING *`, [row.id, JSON.stringify(snap)]);
         await maybeSample(row.id, snap);
         return rows[0] ?? row;
     } catch (err) {
-        const msg = (err as Error).message.slice(0, 300);
+        let msg = (err as Error).message.slice(0, 300);
+        // Is it simply not running? Then say so (and don't call it unreachable).
+        const info = await aws().describeInstance(row.region, row.aws_instance_id).catch(() => undefined);
+        const state = info === null ? 'terminated' : info?.state ?? null;
+        if (state && state !== 'running') msg = `Instance is ${state}`;
         const { rows } = await db().query(
-            'UPDATE instances SET last_fetched_at = now(), last_error = $2 WHERE id = $1 RETURNING *', [row.id, msg]);
+            `UPDATE instances SET last_fetched_at = now(), last_error = $2, ec2_state = COALESCE($3, ec2_state), ec2_state_at = CASE WHEN $3::text IS NULL THEN ec2_state_at ELSE now() END
+              WHERE id = $1 RETURNING *`, [row.id, msg, state]);
         return rows[0] ?? row;
     }
 }

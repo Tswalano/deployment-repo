@@ -63,6 +63,12 @@ export async function evaluateInstance(inst: InstanceRow, s?: AlertSettings): Pr
 
     // instance unreachable through SSM for 10+ minutes (the box itself failing is covered by CloudWatch)
     const key = `instance_unreachable:${id}`;
+    const powered = inst.ec2_state && inst.ec2_state !== 'running';   // stopped on purpose (or by the schedule): not an outage
+    if (inst.last_error && powered) {
+        unreachableSince.delete(id);
+        await resolve(key);
+        return;
+    }
     if (inst.last_error) {
         const since = unreachableSince.get(id) ?? Date.now();
         unreachableSince.set(id, since);
