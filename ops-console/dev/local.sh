@@ -28,34 +28,36 @@ echo "→ installing dependencies (first run only)"
 echo "→ building API"; (cd api && npx tsc -p .)
 
 pids=()
+BOOT=""
 cleanup() {
   trap - EXIT INT TERM
-  for p in "${pids[@]}"; do kill -INT "$p" 2>/dev/null || true; done           # bootstrap stops PostgreSQL on SIGINT
-  sleep 2
-  pkill -TERM -P $$ 2>/dev/null || true                                         # anything still parented here
-  for p in "${pids[@]}"; do pkill -TERM -P "$p" 2>/dev/null || true; done      # npx children (tsc, vite)
+  for p in "${pids[@]}"; do kill -TERM "$p" 2>/dev/null || true; done           # tsc, vite, API (each is the real node process)
+  [[ -n "$BOOT" ]] && kill -INT "$BOOT" 2>/dev/null || true                      # bootstrap stops PostgreSQL cleanly on SIGINT
   wait 2>/dev/null || true
+  echo "stopped"
 }
 trap cleanup EXIT INT TERM
 
-node dev/bootstrap.cjs > "$STATE/bootstrap.log" 2>&1 & pids+=($!)
-for _ in $(seq 1 90); do grep -q READY "$STATE/bootstrap.log" 2>/dev/null && break; sleep 1; kill -0 "${pids[0]}" 2>/dev/null || { cat "$STATE/bootstrap.log"; exit 1; }; done
+node dev/bootstrap.cjs > "$STATE/bootstrap.log" 2>&1 & BOOT=$!
+for _ in $(seq 1 90); do grep -q READY "$STATE/bootstrap.log" 2>/dev/null && break; sleep 1; kill -0 "$BOOT" 2>/dev/null || { cat "$STATE/bootstrap.log"; exit 1; }; done
 grep -v READY "$STATE/bootstrap.log" | sed 's/^/  /'
 
 export DATABASE_URL="postgresql://postgres:local@127.0.0.1:${OPS_LOCAL_PG_PORT:-55432}/opsconsole"
 export PORT="$API_PORT" HOST=127.0.0.1 COOKIE_SECURE=false TRUST_PROXY=false WEB_DIST=../web/dist
 export ALLOWED_ORIGINS="http://localhost:$API_PORT,http://localhost:5173" PUBLIC_URL="http://localhost:$API_PORT"
 export OPS_DRY_RUN="${OPS_DRY_RUN:-1}" ALERTS_DRY_RUN="${ALERTS_DRY_RUN:-1}" AWS_REGION="${AWS_REGION:-af-south-1}"
+export OPS_ALLOW_LOOPBACK_ORIGINS=1   # localhost, 127.0.0.1 or [::1], any port
 export TRANSFER_BUCKET="${TRANSFER_BUCKET:-$(aws ssm get-parameter --region "$AWS_REGION" --name /apps/ops-console/TRANSFER_BUCKET --query Parameter.Value --output text 2>/dev/null || true)}"
 
 if [[ $WATCH == 1 ]]; then
-  (cd api && npx tsc -p . --watch --preserveWatchOutput > "$STATE/tsc.log" 2>&1) & pids+=($!)
-  (cd api && node --watch-path=dist dist/server.js) & pids+=($!)
-  (cd web && OPS_API_PORT="$API_PORT" npx vite --host 127.0.0.1 --port 5173 --strictPort) & pids+=($!)
+  # exec the real node processes (not npx wrappers) so the recorded PIDs are what we stop on exit
+  (cd api && exec node node_modules/typescript/bin/tsc -p . --watch --preserveWatchOutput > "$STATE/tsc.log" 2>&1) & pids+=($!)
+  (cd api && exec node --watch-path=dist dist/server.js) & pids+=($!)
+  (cd web && OPS_API_PORT="$API_PORT" exec node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173 --strictPort) & pids+=($!)
   URL="http://localhost:5173"
 else
   echo "→ building web"; (cd web && npx vite build --logLevel warn)
-  (cd api && node dist/server.js) & pids+=($!)
+  (cd api && exec node dist/server.js) & pids+=($!)
   URL="http://localhost:$API_PORT"
 fi
 sleep 3
@@ -66,4 +68,4 @@ cat <<MSG
     deploys and "Back up now" are simulated; notifications are printed below. Ctrl-C to stop.
 
 MSG
-wait -n "${pids[@]}"
+wait -n "${pids[@]}" "$BOOT"

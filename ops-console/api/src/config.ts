@@ -24,6 +24,8 @@ export const config = {
     webDist: process.env.WEB_DIST || '../web/dist',
     /** Trust X-Forwarded-For from nginx on localhost. */
     trustProxy: bool(process.env.TRUST_PROXY, true),
+    /** Local test mode only: accept any http://localhost|127.0.0.1|[::1]:<port> origin (never set in production). */
+    allowLoopbackOrigins: bool(process.env.OPS_ALLOW_LOOPBACK_ORIGINS, false),
     /** Private S3 bucket for backup downloads (SSM /apps/ops-console/TRANSFER_BUCKET); '' disables downloads. */
     transferBucket: process.env.TRANSFER_BUCKET || '',
     transferRegion: process.env.TRANSFER_REGION || 'af-south-1',
