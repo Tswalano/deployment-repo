@@ -2,14 +2,14 @@ import { useState } from 'react';
 import { AppDetailData, AppView } from '../../api';
 import { ActivityList } from '../../components/ActivityList';
 import { ago, dur, Skeleton } from '../../components/ui';
-import { Section, STATUS_PILL, took } from './shared';
+import { Section, STATUS_LABEL, STATUS_PILL, took } from './shared';
 
 export function DeployTab({ view, detail, fetching, onCheck, onDeploy }:
   { view: AppView; detail: AppDetailData | null; fetching: boolean; onCheck: () => void; onDeploy: (ref: string, note?: string) => void }) {
   const [open, setOpen] = useState<number | null>(null);
   const op = view.canOperate;
   const g = detail?.git;
-  const running = view.deployments.some((d) => d.status === 'running');
+  const running = view.deployments.some((d) => d.status === 'running' || d.status === 'pending_approval');
   const s = detail?.deploySummary;
 
   return (
@@ -47,13 +47,15 @@ export function DeployTab({ view, detail, fetching, onCheck, onDeploy }:
         <Section title="Console deployments" sub={op ? 'Started from the Ops Console · click a row for the pipeline output' : 'Started from the Ops Console'} flush>
           {view.deployments.length === 0 ? <p className="px-5 pb-5 text-sm text-slate-500">None yet.</p> : (
             <table className="tbl">
-              <thead><tr><th className="w-[28%] sm:w-[16%]">When</th><th className="w-[24%] sm:w-[14%]">Action</th><th className="hidden sm:table-cell">Ref</th><th className="w-[26%] sm:w-[16%]">Status</th><th className="hidden w-[11%] text-right sm:table-cell">Took</th><th className="hidden w-[16%] md:table-cell">By</th></tr></thead>
+              <thead><tr><th className="w-[28%] sm:w-[16%]">When</th><th className="w-[24%] sm:w-[14%]">Action</th><th className="hidden sm:table-cell">Ref</th><th className="w-[30%] sm:w-[21%]">Status</th><th className="hidden w-[11%] text-right sm:table-cell">Took</th><th className="hidden w-[16%] md:table-cell">By</th></tr></thead>
               <tbody>{view.deployments.map((d) => [
                 <tr key={d.id} className={op && d.output ? 'cursor-pointer' : ''} onClick={() => op && d.output && setOpen(open === d.id ? null : d.id)}>
                   <td title={d.createdAt}>{ago(d.createdAt)}</td>
                   <td className="capitalize">{d.action}</td>
                   <td className="num hidden text-xs sm:table-cell" title={d.ref}>{d.ref || <span className="text-slate-500">default</span>}</td>
-                  <td><span className={STATUS_PILL[d.status]}>{d.status}</span></td>
+                  <td title={d.decisionReason ?? d.overrideReason ?? (d.approvedBy ? `approved by ${d.approvedBy}` : '')}>
+                    <span className={STATUS_PILL[d.status]}>{STATUS_LABEL(d.status)}</span>{d.overrideReason && <span className="ml-1.5 text-2xs text-rose-300">override</span>}
+                  </td>
                   <td className="num hidden text-right sm:table-cell">{took(d)}</td>
                   <td className="hidden md:table-cell" title={d.requestedBy}>{d.requestedBy}</td>
                 </tr>,

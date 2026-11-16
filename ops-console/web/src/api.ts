@@ -78,8 +78,10 @@ export interface Overview {
 
 export interface Deployment {
   id: number; instanceId: number; project: string; action: 'deploy' | 'rollback'; ref: string; requestedBy: string;
-  status: 'running' | 'success' | 'failed'; ssmStatus: string | null; createdAt: string; finishedAt: string | null;
-  output?: string | null; instance?: string;
+  status: 'pending_approval' | 'running' | 'success' | 'failed' | 'rejected' | 'expired' | 'cancelled';
+  ssmStatus: string | null; createdAt: string; finishedAt: string | null;
+  approvedBy: string | null; approvedAt: string | null; decisionReason: string | null; overrideReason: string | null; expiresAt: string | null;
+  output?: string | null; instance?: string; environment?: string;
 }
 export interface AppView {
   instance: { id: number; name: string; awsInstanceId: string; region: string; environment: string; lastOkAt: string | null; lastError: string | null };
@@ -90,6 +92,22 @@ export interface AppView {
   events: DeployEvent[];
   deployments: Deployment[];
   canOperate: boolean;
+  policy: PolicyStatus;
+}
+export interface PolicyStatus {
+  freeze: { id: string; name: string; endsAt: string } | null;
+  needsApproval: { deploy: boolean; rollback: boolean };
+  rollbackAllowedInFreeze: boolean;
+  requestTtlMinutes: number;
+}
+export type EnvName = 'production' | 'staging' | 'development';
+export interface FreezeWindow {
+  id?: string; name: string; environments: EnvName[]; kind: 'weekly' | 'once';
+  startDay?: number; startTime?: string; endDay?: number; endTime?: string; startAt?: string; endAt?: string;
+}
+export interface DeployPolicy {
+  timezone: string; approvals: Record<EnvName, boolean>; rollbackNeedsApproval: boolean; rollbackAllowedInFreeze: boolean;
+  requestTtlMinutes: number; freezes: FreezeWindow[];
 }
 
 export interface DbPoint { at: string; size: number | null; connections: number | null; tps: number | null; cacheHitPct: number | null; deadlocks: number | null }
@@ -197,8 +215,13 @@ export const api = {
     call<{ instance: Instance }>('PATCH', `/api/instances/${id}`, b).then((r) => r.instance),
   removeInstance: (id: number) => call('DELETE', `/api/instances/${id}`),
   appView: (id: number, project: string) => call<AppView>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}`),
-  startDeployment: (id: number, project: string, action: 'deploy' | 'rollback', ref: string) =>
-    call<{ deployment: Deployment }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/${action}`, { ref }).then((r) => r.deployment),
+  startDeployment: (id: number, project: string, action: 'deploy' | 'rollback', ref: string, override?: string) =>
+    call<{ deployment: Deployment }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/${action}`, override === undefined ? { ref } : { ref, override }).then((r) => r.deployment),
+  approveDeployment: (id: number) => call<{ deployment: Deployment }>('POST', `/api/deployments/${id}/approve`).then((r) => r.deployment),
+  rejectDeployment: (id: number, reason: string) => call<{ deployment: Deployment }>('POST', `/api/deployments/${id}/reject`, { reason }).then((r) => r.deployment),
+  pendingDeployments: () => call<{ deployments: Deployment[] }>('GET', '/api/deployments?status=pending').then((r) => r.deployments),
+  policy: () => call<{ policy: DeployPolicy; frozenNow: Record<EnvName, PolicyStatus['freeze']> }>('GET', '/api/policy'),
+  savePolicy: (p: Partial<DeployPolicy>) => call<{ policy: DeployPolicy; frozenNow: Record<EnvName, PolicyStatus['freeze']> }>('PUT', '/api/policy', p),
   deployment: (id: number) => call<{ deployment: Deployment }>('GET', `/api/deployments/${id}`).then((r) => r.deployment),
   appDetail: (id: number, project: string, fetch = false) =>
     call<{ detail: AppDetailData; dbSeries: DbPoint[]; fetchedAt: string }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/detail${fetch ? '?fetch=1' : ''}`),

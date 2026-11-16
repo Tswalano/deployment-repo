@@ -6,6 +6,7 @@ import alerts, { uptime } from './routes/alerts';
 import apps, { deployments } from './routes/apps';
 import auth from './routes/auth';
 import backups from './routes/backups';
+import policy from './routes/policy';
 import instances from './routes/instances';
 import users from './routes/users';
 
@@ -35,6 +36,7 @@ export function createApp() {
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);
     app.route('/api/backups', backups);
+    app.route('/api/policy', policy);
 
     app.get('/api/audit', requireRole('admin'), denyDemo, async (c) => {
         const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') || 100)));

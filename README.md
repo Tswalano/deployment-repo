@@ -202,6 +202,16 @@ New values never appear on a command line or in output. Provider keys (Paystack,
 - Admins can **Download** a dump: the instance uploads it to a private, encrypted, TLS-only S3 bucket
   (`./infra/ops-console-s3/setup.sh`; objects expire after 1 day) and the browser gets a 5-minute link. Logged.
 
+
+### Deploy approvals and freeze windows (Ops Console)
+- **Settings → Deploy policy** (admin): require a second person's approval per environment (production / staging /
+  development), optionally for rollbacks too; requests expire after N minutes. The requester can never approve
+  their own request.
+- Freeze windows: weekly (e.g. Friday 15:00 → Monday 06:00, in the policy timezone) or one-off. During a freeze
+  deploys are refused; rollbacks stay allowed unless turned off.
+- Break glass: an admin can override a freeze or skip approval with a written reason. It is audited and sent to
+  the alert channels. With approvals on and a single admin, this is how that admin deploys.
+
 ## Repository layout
 
 ```

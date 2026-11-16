@@ -3,7 +3,8 @@ import { ApiError, Deployment } from '../../api';
 import { Alert, ago, dur } from '../../components/ui';
 
 export const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
-export const STATUS_PILL = { running: 'pill-info', success: 'pill-ok', failed: 'pill-bad' } as const;
+export const STATUS_PILL = { pending_approval: 'pill-warn', running: 'pill-info', success: 'pill-ok', failed: 'pill-bad', rejected: 'pill-bad', expired: 'pill-mute', cancelled: 'pill-mute' } as const;
+export const STATUS_LABEL = (s: string) => (s === 'pending_approval' ? 'awaiting approval' : s);
 export const took = (d: Deployment) => (d.finishedAt ? dur((new Date(d.finishedAt).getTime() - new Date(d.createdAt).getTime()) / 1000) : '—');
 export const num = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('en-US'));
 
@@ -34,10 +35,14 @@ export function Facts({ rows }: { rows: [string, ReactNode, string?][] }) {
 }
 
 /** Modal asking for the ref (deploy) or SHA (rollback) before starting. */
-export function ActionDialog({ action, project, instance, initialRef = '', note, onClose, onStart }:
+export function ActionDialog({ action, project, instance, initialRef = '', note, policy, isAdmin, onClose, onStart }:
   { action: 'deploy' | 'rollback'; project: string; instance: string; initialRef?: string; note?: string;
-    onClose: () => void; onStart: (ref: string) => Promise<void> }) {
+    policy?: { frozen: string | null; needsApproval: boolean; ttl: number }; isAdmin?: boolean;
+    onClose: () => void; onStart: (ref: string, override?: string) => Promise<void> }) {
   const [ref, setRef] = useState(initialRef);
+  const [breakGlass, setBreakGlass] = useState(false);
+  const [reason, setReason] = useState('');
+  const blocked = !!policy?.frozen;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -52,7 +57,7 @@ export function ActionDialog({ action, project, instance, initialRef = '', note,
     e.preventDefault();
     setBusy(true);
     setError(null);
-    try { await onStart(ref.trim()); } catch (err) { setError(errMsg(err)); setBusy(false); }
+    try { await onStart(ref.trim(), breakGlass ? reason.trim() : undefined); } catch (err) { setError(errMsg(err)); setBusy(false); }
   }
   const deploy = action === 'deploy';
   return (
@@ -66,13 +71,35 @@ export function ActionDialog({ action, project, instance, initialRef = '', note,
             : 'Returns the app to an earlier commit and health-checks it.'}
         </p>
         {note && <p className="mt-2 rounded-lg border border-ink-600 bg-ink-900 px-3 py-2 text-xs text-slate-300">{note}</p>}
+        {policy?.frozen && <p className="mt-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">{policy.frozen}</p>}
+        {!policy?.frozen && policy?.needsApproval && (
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            This needs approval: it will wait (up to {policy.ttl} min) until another deployer or admin approves it.
+          </p>
+        )}
         <label className="label mt-4" htmlFor="dlg-ref">{deploy ? 'Branch, tag or commit' : 'Commit SHA'} <span className="text-slate-600">(optional)</span></label>
         <input id="dlg-ref" ref={input} className="input font-mono" value={ref} onChange={(e) => setRef(e.target.value)} maxLength={100}
                placeholder={deploy ? 'default branch' : 'previous good deploy'} autoComplete="off" spellCheck={false} />
+        {isAdmin && (blocked || policy?.needsApproval) && (
+          <div className="mt-4 rounded-lg border border-rose-500/30 p-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-rose-200">
+              <input type="checkbox" className="accent-rose-400" checked={breakGlass} onChange={(e) => setBreakGlass(e.target.checked)} />
+              Break glass: {blocked ? 'override the freeze' : 'skip approval'}
+            </label>
+            {breakGlass && (
+              <>
+                <label className="label mt-3" htmlFor="dlg-reason">Reason (logged and sent to the alert channels)</label>
+                <input id="dlg-reason" className="input" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="e.g. hotfix for failing payments" />
+              </>
+            )}
+          </div>
+        )}
         {error && <div className="mt-3"><Alert>{error}</Alert></div>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={deploy ? 'btn-primary' : 'btn-danger'} disabled={busy}>{busy ? 'Starting…' : deploy ? 'Deploy' : 'Roll back'}</button>
+          <button className={deploy ? 'btn-primary' : 'btn-danger'} disabled={busy || (blocked && !breakGlass) || (breakGlass && reason.trim().length < 10)}>
+            {busy ? 'Starting…' : breakGlass ? `${deploy ? 'Deploy' : 'Roll back'} anyway` : policy?.needsApproval ? 'Request approval' : deploy ? 'Deploy' : 'Roll back'}
+          </button>
         </div>
       </form>
     </div>

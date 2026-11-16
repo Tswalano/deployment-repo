@@ -2,7 +2,8 @@ import { Context, Hono } from 'hono';
 import { audit } from '../audit';
 import { freshInstance, InstanceRow } from '../collector';
 import { db } from '../db';
-import { DeployError, deploymentView, DeploymentRow, PROJECT_RE, startDeployment, syncDeployment, syncRunning } from '../deploys';
+import { approveDeployment, DeployError, deploymentView, DeploymentRow, expirePending, PROJECT_RE, rejectDeployment, requestDeployment, syncDeployment, syncRunning } from '../deploys';
+import { policyFor } from '../policy';
 import { appDetail, dbSeries, fetchLogs, shapeDetail } from '../insights';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
 
@@ -28,6 +29,7 @@ apps.get('/:id/apps/:project', async (c) => {
     const app = inst.last_status?.apps.find((a) => a.project === project);
     if (!app) return c.json({ error: 'App not found' }, 404);
     await syncRunning(inst.id);
+    await expirePending();
     const { rows } = await db().query<DeploymentRow>(
         'SELECT * FROM deployments WHERE instance_id = $1 AND project = $2 ORDER BY created_at DESC LIMIT 20', [inst.id, project]);
     const withOutput = canOperate(c);
@@ -40,6 +42,7 @@ apps.get('/:id/apps/:project', async (c) => {
         events: (inst.last_status?.deployEvents ?? []).filter((e) => e.project === project),
         deployments: rows.map((d) => deploymentView(d, withOutput)),
         canOperate: withOutput,
+        policy: await policyFor(inst.environment),
     });
 });
 
@@ -51,14 +54,16 @@ for (const action of ['deploy', 'rollback'] as const) {
         if (r instanceof Response) return r;
         const b = await c.req.json().catch(() => ({}));
         const ref = String(b.ref ?? '').trim();
+        const override = typeof b.override === 'string' ? b.override : undefined;
         const user = c.get('user')!;
         try {
-            const d = await startDeployment(r.inst, r.project, action, ref, user);
-            await audit({ id: user.id, username: user.username }, `app.${action}`, `${r.project} on ${r.inst.name}`,
-                { ref: ref || '(default)', deployment: d.id }, c.get('ip'));
+            const d = await requestDeployment(r.inst, r.project, action, ref, user, override);
+            const what = d.status === 'pending_approval' ? `app.${action}_requested` : override !== undefined ? `app.${action}_override` : `app.${action}`;
+            await audit({ id: user.id, username: user.username }, what, `${r.project} on ${r.inst.name}`,
+                { ref: ref || '(default)', deployment: d.id, ...(override !== undefined ? { reason: d.override_reason } : {}) }, c.get('ip'));
             return c.json({ deployment: deploymentView(d, true) }, 202);
         } catch (err) {
-            if (err instanceof DeployError) return c.json({ error: err.message }, err.status);
+            if (err instanceof DeployError) return c.json({ error: err.message, code: err.code }, err.status);
             throw err;
         }
     });
@@ -109,11 +114,14 @@ deployments.use('*', requireRole('viewer'));
 
 deployments.get('/', async (c) => {
     await syncRunning();
+    await expirePending();
+    const status = c.req.query('status');
     const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || 30)));
     const { rows } = await db().query<DeploymentRow & { instance_name: string }>(
-        `SELECT d.*, i.name AS instance_name FROM deployments d JOIN instances i ON i.id = d.instance_id
+        `SELECT d.*, i.name AS instance_name, i.environment AS instance_env FROM deployments d JOIN instances i ON i.id = d.instance_id
+          ${status === 'pending' ? "WHERE d.status = 'pending_approval'" : ''}
           ORDER BY d.created_at DESC LIMIT $1`, [limit]);
-    return c.json({ deployments: rows.map((d) => ({ ...deploymentView(d, false), instance: d.instance_name })) });
+    return c.json({ deployments: rows.map((d) => ({ ...deploymentView(d, false), instance: d.instance_name, environment: (d as DeploymentRow & { instance_env?: string }).instance_env })) });
 });
 
 deployments.get('/:id', async (c) => {
@@ -121,6 +129,34 @@ deployments.get('/:id', async (c) => {
     if (!rows.length) return c.json({ error: 'Deployment not found' }, 404);
     const d = await syncDeployment(rows[0]);
     return c.json({ deployment: deploymentView(d, canOperate(c)) });
+});
+
+const decide = [requireRole('deployer'), denyDemo, rateLimit(30, 60_000, (c) => `decide:${c.get('user')!.id}`)] as const;
+
+deployments.post('/:id/approve', ...decide, async (c) => {
+    const user = c.get('user')!;
+    try {
+        const d = await approveDeployment(Number(c.req.param('id')), user);
+        await audit({ id: user.id, username: user.username }, `app.${d.action}_approved`, `${d.project} (#${d.id})`, { requestedBy: d.requested_by_name, ref: d.ref || '(default)' }, c.get('ip'));
+        return c.json({ deployment: deploymentView(d, true) });
+    } catch (err) {
+        if (err instanceof DeployError) return c.json({ error: err.message, code: err.code }, err.status);
+        throw err;
+    }
+});
+
+/** Reject someone else's request, or cancel your own. */
+deployments.post('/:id/reject', ...decide, async (c) => {
+    const user = c.get('user')!;
+    const b = await c.req.json().catch(() => ({}));
+    try {
+        const d = await rejectDeployment(Number(c.req.param('id')), user, String(b.reason ?? ''));
+        await audit({ id: user.id, username: user.username }, `app.${d.action}_${d.status}`, `${d.project} (#${d.id})`, { reason: d.decision_reason }, c.get('ip'));
+        return c.json({ deployment: deploymentView(d, true) });
+    } catch (err) {
+        if (err instanceof DeployError) return c.json({ error: err.message }, err.status);
+        throw err;
+    }
 });
 
 export default apps;

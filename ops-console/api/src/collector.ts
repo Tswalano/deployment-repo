@@ -3,7 +3,7 @@ import { aws } from './aws';
 import { db } from './db';
 import { dispatch, evaluateInstance } from './alerts';
 import { autoVerify } from './backups';
-import { syncRunning } from './deploys';
+import { expirePending, syncRunning } from './deploys';
 
 export const COLLECT_DOCUMENT = 'OpsConsole-CollectStatus';
 const FRESH_MS = 30_000;            // serve cached snapshots younger than this
@@ -183,6 +183,7 @@ export function startPoller(): NodeJS.Timeout {
     const tick = async () => {
         const { rows } = await db().query<InstanceRow>('SELECT * FROM instances');
         await syncRunning().catch(() => undefined);
+        await expirePending().catch(() => undefined);
         for (const row of rows) {
             const fresh = await freshInstance(row, true).catch(() => null);
             if (fresh) await evaluateInstance(fresh).catch((err) => console.error('alert rules failed:', (err as Error).message));

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, AppDetailData, AppView, DbPoint } from '../api';
+import { api, AppDetailData, AppView, DbPoint, Deployment } from '../api';
+import { useAuth } from '../auth';
 import { ago, Alert, bytes, Dot, dur, Kpi, PageHeader, Skeleton, Sparkline } from '../components/ui';
 import { appTone } from '../health';
 import { fmtPct, pctTone, UptimeBars } from '../components/uptime';
@@ -11,6 +12,42 @@ import { LogsTab } from './app/LogsTab';
 import { ActionDialog, errMsg, Facts, RunningBanner, Section } from './app/shared';
 
 type Tab = 'overview' | 'deploy' | 'database' | 'logs';
+const when = (iso: string) => new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+function PendingCard({ d, me, onDone }: { d: Deployment; me: { username: string; canDecide: boolean }; onDone: (msg: string, ok: boolean) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const mine = d.requestedBy === me.username;
+  const act = async (fn: () => Promise<Deployment>, msg: (x: Deployment) => string) => {
+    setBusy(true);
+    try { const x = await fn(); await onDone(msg(x), true); } catch (e) { await onDone(errMsg(e), false); } finally { setBusy(false); }
+  };
+  return (
+    <div className="card mb-5 flex flex-wrap items-center gap-4 border-amber-500/40 bg-amber-500/[0.06] p-4">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-amber-500/40 text-amber-300">
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" /></svg>
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-slate-100">{d.action === 'deploy' ? 'Deploy' : 'Rollback'}{d.ref ? ` → ${d.ref}` : ''} is waiting for approval</div>
+        <div className="truncate text-xs text-slate-400">requested by {d.requestedBy} {ago(d.createdAt)}{d.expiresAt ? ` · expires ${when(d.expiresAt)}` : ''}{mine ? ' · another deployer or admin must approve it' : ''}</div>
+      </div>
+      {me.canDecide && (
+        <div className="flex shrink-0 gap-2">
+          {mine ? (
+            <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy} onClick={() => void act(() => api.rejectDeployment(d.id, ''), () => 'Request cancelled.')}>Cancel request</button>
+          ) : (
+            <>
+              <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy} onClick={() => {
+                const reason = window.prompt('Reason for rejecting (shown to the requester):', '') ?? null;
+                if (reason !== null) void act(() => api.rejectDeployment(d.id, reason), () => 'Request rejected.');
+              }}>Reject</button>
+              <button className="btn-primary px-3 py-1.5 text-xs" disabled={busy} onClick={() => void act(() => api.approveDeployment(d.id), (x) => `Approved: ${x.action} of ${x.project} started.`)}>Approve & start</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function UptimeCard({ instanceId, project }: { instanceId: number; project: string }) {
   const { data } = usePoll(() => api.appUptime(instanceId, project), 60_000, [instanceId, project]);
@@ -110,6 +147,7 @@ function OverviewTab({ view, detail }: { view: AppView; detail: AppDetailData | 
 
 export function AppDetail() {
   const params = useParams();
+  const { user } = useAuth();
   const instanceId = Number(params.id);
   const project = params.project ?? '';
   const [search, setSearch] = useSearchParams();
@@ -121,6 +159,7 @@ export function AppDetail() {
   const [fetching, setFetching] = useState(false);
   const { data, error, reload } = usePoll(() => api.appView(instanceId, project), 30_000, [instanceId, project]);
   const running = data?.deployments.find((d) => d.status === 'running') ?? null;
+  const pendingReq = data?.deployments.find((d) => d.status === 'pending_approval') ?? null;
   const op = !!data?.canOperate;
   const requested = (search.get('tab') as Tab) || 'overview';
   const tab: Tab = requested === 'logs' && !op ? 'overview' : requested;
@@ -170,14 +209,22 @@ export function AppDetail() {
         subtitle={<span className="flex items-center gap-2"><Dot tone={t} pulse={t === 'bad'} />{app.domain ?? app.service} · <span className="capitalize">{instance.environment}</span></span>}
         actions={op && (
           <>
-            <button className="btn-secondary" onClick={() => setDialog({ action: 'rollback' })} disabled={!!running}>Roll back</button>
-            <button className="btn-primary" onClick={() => setDialog({ action: 'deploy' })} disabled={!!running}>
+            <button className="btn-secondary" onClick={() => setDialog({ action: 'rollback' })} disabled={!!running || !!pendingReq}>Roll back</button>
+            <button className="btn-primary" onClick={() => setDialog({ action: 'deploy' })} disabled={!!running || !!pendingReq}>
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 19V5M5 12l7-7 7 7" /></svg>
               Deploy
             </button>
           </>
         )}
       />
+      {data.policy.freeze && (
+        <div className="mb-5 flex items-center gap-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-200">
+          <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19" /></svg>
+          <span className="min-w-0 flex-1">Deploy freeze “{data.policy.freeze.name}” until {when(data.policy.freeze.endsAt)}.{data.policy.rollbackAllowedInFreeze ? ' Rollbacks are still allowed.' : ''}</span>
+        </div>
+      )}
+      {pendingReq && <PendingCard d={pendingReq} me={{ username: user?.username ?? '', canDecide: op }}
+                                  onDone={async (text, ok) => { setNotice({ tone: ok ? 'ok' : 'bad', text }); await reload(); }} />}
       {running && <RunningBanner d={running} step={data.deploying?.step ?? null} />}
       {notice && <div className="mb-5"><Alert tone={notice.tone}>{notice.text}</Alert></div>}
       {detailError && !detail && <div className="mb-5"><Alert tone="warn">Details unavailable: {detailError}</Alert></div>}
@@ -204,11 +251,17 @@ export function AppDetail() {
 
       {dialog && (
         <ActionDialog action={dialog.action} project={app.project} instance={instance.name} initialRef={dialog.ref} note={dialog.note}
+                      isAdmin={user?.role === 'admin' && !user.isDemo}
+                      policy={{
+                        frozen: data.policy.freeze && !(dialog.action === 'rollback' && data.policy.rollbackAllowedInFreeze)
+                          ? `Deploys to ${instance.environment} are frozen (“${data.policy.freeze.name}”) until ${when(data.policy.freeze.endsAt)}.` : null,
+                        needsApproval: data.policy.needsApproval[dialog.action], ttl: data.policy.requestTtlMinutes,
+                      }}
                       onClose={() => setDialog(null)}
-                      onStart={async (ref) => {
-                        await api.startDeployment(instance.id, app.project, dialog.action, ref);
+                      onStart={async (ref, override) => {
+                        const d = await api.startDeployment(instance.id, app.project, dialog.action, ref, override);
                         setDialog(null);
-                        setNotice(null);
+                        setNotice(d.status === 'pending_approval' ? { tone: 'ok', text: 'Request sent. It starts as soon as another deployer or admin approves it.' } : null);
                         setSearch({ tab: 'deploy' }, { replace: true });
                         await reload();
                       }} />

@@ -207,6 +207,12 @@ export async function dispatch(): Promise<void> {
     }
 }
 
+/** Send a one-off message (approval requests, overrides) to every configured channel, whatever the severity setting. */
+export async function announce(subject: string, text: string, kind: string): Promise<void> {
+    const cfg = await alertSettings();
+    await send(null, kind, subject, text, cfg).catch((err) => console.error('announce failed:', (err as Error).message));
+}
+
 export async function sendTest(by: string): Promise<{ channel: string; ok: boolean; error?: string }[]> {
     const cfg = await alertSettings();
     return send(null, 'test', '[TEST] Ops Console alerts are working',
