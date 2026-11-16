@@ -53,7 +53,7 @@ function UserMenu({ pages }: { pages: Tab[] }) {
           {(['Operations', 'Administration'] as const).map((g) => {
             const items = pages.filter((t) => t.group === g);
             return items.length ? (
-              <div key={g} className="border-b border-ink-700 py-1.5">
+              <div key={g} className="border-b border-ink-700 py-1.5 md:hidden">
                 <div className="px-4 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-slate-500">{g}</div>
                 {items.map((t) => (
                   <NavLink key={t.to} to={t.to} role="menuitem" onClick={() => setOpen(false)}
@@ -73,6 +73,43 @@ function UserMenu({ pages }: { pages: Tab[] }) {
                   onClick={async () => { await logout(); navigate('/login'); }}>
             Sign out
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Navbar dropdown for a group of pages (Operations, Administration). */
+function NavGroup({ label, items }: { label: string; items: Tab[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { pathname } = useLocation();
+  const active = items.some((t) => pathname === t.to || pathname.startsWith(`${t.to}/`));
+  useEffect(() => { setOpen(false); }, [pathname]);
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+  }, []);
+  if (!items.length) return null;
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
+              className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${active
+                ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:border-ink-500 hover:text-slate-200'}`}>
+        {label}
+        <svg viewBox="0 0 24 24" className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
+      </button>
+      {open && (
+        <div role="menu" className="absolute left-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-xl border border-ink-600 bg-ink-850 py-1.5 shadow-2xl shadow-black/50">
+          {items.map((t) => (
+            <NavLink key={t.to} to={t.to} role="menuitem"
+                     className={({ isActive }) => `flex items-center gap-2.5 px-4 py-2 text-sm ${isActive ? 'bg-ink-800 text-white' : 'text-slate-300 hover:bg-ink-800 hover:text-white'}`}>
+              <span className="text-slate-500">{t.icon}</span>{t.label}
+            </NavLink>
+          ))}
         </div>
       )}
     </div>
@@ -135,6 +172,8 @@ export function Layout() {
               {t.icon}{t.label}{badge(t)}
             </NavLink>
           ))}
+          <NavGroup label="Operations" items={tabs.filter((t) => t.group === 'Operations')} />
+          <NavGroup label="Administration" items={tabs.filter((t) => t.group === 'Administration')} />
         </nav>
       </header>
 
