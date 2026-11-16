@@ -1,0 +1,36 @@
+# Ops Console (API + web UI) — managed by deployment-repo (systemd/ops-console.service)
+# Secrets: SSM /apps/ops-console/* (DATABASE_URL) loaded by app-secrets@ops-console.service
+[Unit]
+Description=Ops Console (accounts, instances, deployments)
+Wants=network-online.target
+Requires=app-secrets@ops-console.service
+After=network-online.target postgresql.service app-secrets@ops-console.service
+
+[Service]
+Type=simple
+User=opsconsole
+Group=opsconsole
+WorkingDirectory=/opt/ops-console/api
+Environment=NODE_ENV=production PORT=9200 HOST=127.0.0.1 WEB_DIST=../web/dist
+Environment=COOKIE_SECURE=true ALLOWED_ORIGINS=https://ops.glenify.studio,http://localhost:9200 TRUST_PROXY=true
+EnvironmentFile=/run/app-secrets/ops-console.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+# --- hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=192M
+
+[Install]
+WantedBy=multi-user.target

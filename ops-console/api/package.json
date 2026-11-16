@@ -1,0 +1,25 @@
+{
+  "name": "ops-console-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ops Console API: auth, users, roles, sessions, audit log (Phase 1)",
+  "main": "dist/server.js",
+  "engines": { "node": ">=18.14.1" },
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/server.js",
+    "migrate": "node dist/cli.js migrate",
+    "test": "tsc -p . && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "1.19.19",
+    "hono": "4.13.18",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/pg": "^8.11.0",
+    "embedded-postgres": "18.6.0-beta.19",
+    "typescript": "~5.5.4"
+  }
+}
