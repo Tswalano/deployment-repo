@@ -1,4 +1,6 @@
 import { DescribeInstancesCommand, EC2Client } from '@aws-sdk/client-ec2';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { DescribeInstanceInformationCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient } from '@aws-sdk/client-ssm';
 
 /** Everything the console needs from AWS, behind an interface so tests can use a fake. */
@@ -6,11 +8,13 @@ export interface AwsProvider {
     describeInstance(region: string, id: string): Promise<Ec2Info | null>;
     ssmOnline(region: string, id: string): Promise<boolean>;
     /** Run one of the console's fixed SSM documents (no free-form commands) and return stdout. */
-    runDocument(region: string, id: string, document: string, parameters?: Record<string, string[]>): Promise<string>;
+    runDocument(region: string, id: string, document: string, parameters?: Record<string, string[]>, timeoutMs?: number): Promise<string>;
     /** Start a fixed document without waiting (long jobs such as deploys); returns the command id. */
     sendDocument(region: string, id: string, document: string, parameters: Record<string, string[]>): Promise<string>;
     /** Current state of a started command; null while SSM hasn't registered it yet. */
     getInvocation(region: string, id: string, commandId: string): Promise<Invocation | null>;
+    /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
+    presignGet(region: string, bucket: string, key: string, seconds: number, filename: string): Promise<string>;
 }
 
 export interface Invocation {
@@ -34,6 +38,8 @@ const ec2: Record<string, EC2Client> = {};
 const ssm: Record<string, SSMClient> = {};
 const ec2c = (r: string) => (ec2[r] ??= new EC2Client({ region: r }));
 const ssmc = (r: string) => (ssm[r] ??= new SSMClient({ region: r }));
+const s3: Record<string, S3Client> = {};
+const s3c = (r: string) => (s3[r] ??= new S3Client({ region: r }));
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 export const realAws: AwsProvider = {
@@ -75,9 +81,14 @@ export const realAws: AwsProvider = {
             throw err;
         }
     },
-    async runDocument(region, id, document, parameters) {
+    async presignGet(region, bucket, key, seconds, filename) {
+        return getSignedUrl(s3c(region), new GetObjectCommand({
+            Bucket: bucket, Key: key, ResponseContentDisposition: `attachment; filename="${filename.replace(/[^A-Za-z0-9_.-]/g, '')}"`,
+        }), { expiresIn: seconds });
+    },
+    async runDocument(region, id, document, parameters, timeoutMs = 45_000) {
         const commandId = await this.sendDocument(region, id, document, parameters ?? {});
-        const deadline = Date.now() + 45_000;
+        const deadline = Date.now() + timeoutMs;
         await sleep(1200);
         while (Date.now() < deadline) {
             const inv = await this.getInvocation(region, id, commandId);

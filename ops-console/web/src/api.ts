@@ -143,6 +143,18 @@ export interface UptimeApp {
 }
 export interface UptimePoint { at: string; checks: number; ok: number; avgMs: number | null; maxMs: number | null }
 
+export interface BackupVerification {
+  id: number; db: string; file: string; ok: boolean; tables: number | null; rows: number | null; liveTables: number | null; liveRows: number | null;
+  seconds: number | null; error: string | null; trigger: 'auto' | 'manual'; requestedBy: string | null; at: string;
+}
+export interface InstanceBackups {
+  instanceId: number; instance: string; ok: boolean; error?: string; location?: string; diskFree?: number;
+  timer?: { next: string | null; last: string | null; running: boolean };
+  lastRun?: { at: string; ok: boolean; keepDays: number; totalBytes: number; items: { name: string; ok: boolean; file?: string; bytes?: number; seconds?: number }[] } | null;
+  files?: { db: string; file: string; bytes: number; at: string }[];
+  verifications: BackupVerification[];
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -200,6 +212,12 @@ export const api = {
   uptime: () => call<{ apps: UptimeApp[] }>('GET', '/api/uptime').then((r) => r.apps),
   appUptime: (instanceId: number, project: string) =>
     call<{ summary: UptimeApp; series: UptimePoint[]; incidents: Alert[] }>('GET', `/api/uptime/${instanceId}/${encodeURIComponent(project)}`),
+  backups: (refresh = false) => call<{ instances: InstanceBackups[]; downloads: boolean }>('GET', `/api/backups${refresh ? '?refresh=1' : ''}`),
+  runBackup: (instanceId: number) => call<{ seconds: number }>('POST', `/api/backups/${instanceId}/run`),
+  verifyBackup: (instanceId: number, db: string, file: string) =>
+    call<{ verification: BackupVerification }>('POST', `/api/backups/${instanceId}/verify`, { db, file }).then((r) => r.verification),
+  downloadBackup: (instanceId: number, db: string, file: string) =>
+    call<{ url: string; expiresAt: string; bytes: number; sha256: string }>('POST', `/api/backups/${instanceId}/download`, { db, file }),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 

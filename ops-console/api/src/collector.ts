@@ -2,6 +2,7 @@ import { gunzipSync } from 'zlib';
 import { aws } from './aws';
 import { db } from './db';
 import { dispatch, evaluateInstance } from './alerts';
+import { autoVerify } from './backups';
 import { syncRunning } from './deploys';
 
 export const COLLECT_DOCUMENT = 'OpsConsole-CollectStatus';
@@ -55,7 +56,7 @@ export interface Snapshot {
         idleInTransaction: number | null; oldestXactS: number | null; waitingLocks: number | null;
     } | null;
     certificates: Array<{ domain: string; daysLeft: number | null }>;
-    backups: { at: string; ok: boolean } | null;
+    backups: { at: string; ok: boolean; items?: { name: string; file: string | null; bytes: number | null; ok: boolean }[] } | null;
     deploying: { project: string; step: string; actor: string; state: string } | null;
     deployEvents: Array<{ project: string; action: string; status: string; at: string; durationS: number; actor: string; fromSha: string; toSha: string; trigger: string | null; runUrl: string | null }>;
     runningServices?: number;
@@ -89,7 +90,7 @@ export function normalise(raw: { source: string; data: any }): Snapshot {
             };
         }),
         services: (d.services ?? []).map((s: any) => ({ unit: s.unit, active: s.active, memory: s.memory ?? null })),
-        databases: (d.database?.databases ?? []).filter((x: any) => x.name !== 'postgres')
+        databases: (d.database?.databases ?? []).filter((x: any) => x.name !== 'postgres' && !String(x.name).startsWith('opsverify_'))
             .map((x: any) => ({
                 name: x.name, size: x.size, tables: x.tables ?? null, connections: x.connections ?? 0,
                 xactCommit: x.xact_commit ?? null, xactRollback: x.xact_rollback ?? null, blksHit: x.blks_hit ?? null,
@@ -103,7 +104,10 @@ export function normalise(raw: { source: string; data: any }): Snapshot {
             waitingLocks: d.database.waiting_locks ?? null,
         } : null,
         certificates: (d.certificates ?? []).map((c: any) => ({ domain: c.domain, daysLeft: c.days_left ?? null })),
-        backups: d.backups ? { at: d.backups.at, ok: !!d.backups.ok } : null,
+        backups: d.backups ? {
+            at: d.backups.at, ok: !!d.backups.ok,
+            items: (d.backups.items ?? []).map((x: any) => ({ name: x.name, file: x.file ?? null, bytes: x.bytes ?? null, ok: !!x.ok })),
+        } : null,
         deploying: d.deploying ? { project: d.deploying.project, step: d.deploying.step, actor: d.deploying.actor, state: d.deploying.state } : null,
         deployEvents: (d.deploy_events ?? []).map((e: any) => ({
             project: e.project, action: e.action, status: e.status, at: e.finished_at, durationS: e.duration_s,
@@ -182,6 +186,7 @@ export function startPoller(): NodeJS.Timeout {
         for (const row of rows) {
             const fresh = await freshInstance(row, true).catch(() => null);
             if (fresh) await evaluateInstance(fresh).catch((err) => console.error('alert rules failed:', (err as Error).message));
+            if (fresh) await autoVerify(fresh).catch((err) => console.error('backup auto-verify failed:', (err as Error).message));
         }
         await dispatch().catch((err) => console.error('alert dispatch failed:', (err as Error).message));
         await db().query("DELETE FROM instance_samples WHERE at < now() - interval '7 days'").catch(() => undefined);

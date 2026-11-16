@@ -8,6 +8,7 @@ import { Activity } from './pages/Activity';
 import { Alerts } from './pages/Alerts';
 import { AppDetail } from './pages/AppDetail';
 import { Audit } from './pages/Audit';
+import { Backups } from './pages/Backups';
 import { InstanceDetail } from './pages/InstanceDetail';
 import { Instances } from './pages/Instances';
 import { Login } from './pages/Login';
@@ -36,6 +37,7 @@ function App() {
         <Route path="instances/:id/apps/:project" element={<AppDetail />} />
         <Route path="activity" element={<Activity />} />
         <Route path="alerts" element={<Alerts />} />
+        <Route path="backups" element={<Backups />} />
         <Route path="account" element={<Account />} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />

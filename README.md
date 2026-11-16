@@ -191,6 +191,17 @@ New values never appear on a command line or in output. Provider keys (Paystack,
   `./infra/ops-alarms/setup.sh <email>` creates an SNS topic and a CloudWatch alarm on EC2 status checks
   (missing data while the instance is stopped counts as OK).
 
+
+### Backups page (Ops Console)
+- **Backups** lists every nightly dump per database (names, sizes, times; never contents), the last run, the next
+  scheduled run and restore-test results. Deployers/admins can **Back up now** and **Test restore**.
+- A restore test (`OpsConsole-BackupAction action=verify`) restores the dump into a throwaway `opsverify_*` database,
+  counts tables and rows, compares with live and drops it. The newest dump of every database is restore-tested
+  automatically after each nightly run; a dump that can't be restored raises a critical alert. Nothing ever restores
+  over a live database.
+- Admins can **Download** a dump: the instance uploads it to a private, encrypted, TLS-only S3 bucket
+  (`./infra/ops-console-s3/setup.sh`; objects expire after 1 day) and the browser gets a 5-minute link. Logged.
+
 ## Repository layout
 
 ```
