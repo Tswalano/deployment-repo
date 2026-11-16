@@ -3,6 +3,7 @@ import { audit } from '../audit';
 import { aws } from '../aws';
 import { COLLECT_DOCUMENT, freshInstance, InstanceRow } from '../collector';
 import { db } from '../db';
+import { dbSeries } from '../insights';
 import { denyDemo, Env, requireRole } from '../middleware';
 
 const instances = new Hono<Env>();
@@ -79,7 +80,7 @@ instances.get('/:id', async (c) => {
         `SELECT at, mem_pct AS "memPct", disk_pct AS "diskPct", load1, swap_pct AS "swapPct",
                 apps_healthy AS "appsHealthy", apps_total AS "appsTotal"
            FROM instance_samples WHERE instance_id = $1 AND at > now() - interval '24 hours' ORDER BY at`, [id]);
-    return c.json({ instance: view(row), samples });
+    return c.json({ instance: view(row), samples, dbSeries: await dbSeries(id) });
 });
 
 // ------------------------------------------------------------------ admin: add / rename / remove

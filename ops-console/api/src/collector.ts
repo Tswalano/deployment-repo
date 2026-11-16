@@ -44,11 +44,19 @@ export interface Snapshot {
         lastDeploy: { at: string; status: string; durationS: number; actor: string } | null;
     }>;
     services: Array<{ unit: string; active: string; memory: number | null }>;
-    databases: Array<{ name: string; size: number; tables: number | null; connections: number }>;
+    databases: Array<{
+        name: string; size: number; tables: number | null; connections: number;
+        xactCommit: number | null; xactRollback: number | null; blksHit: number | null; blksRead: number | null; deadlocks: number | null;
+    }>;
+    dbServer: {
+        version: string; startedAt: string | null; maxConnections: number | null; sharedBuffers: string | null;
+        connectionsByState: Record<string, number>; cacheHitPct: number | null; longRunningQueries: number | null;
+        idleInTransaction: number | null; oldestXactS: number | null; waitingLocks: number | null;
+    } | null;
     certificates: Array<{ domain: string; daysLeft: number | null }>;
     backups: { at: string; ok: boolean } | null;
     deploying: { project: string; step: string; actor: string; state: string } | null;
-    deployEvents: Array<{ project: string; action: string; status: string; at: string; durationS: number; actor: string; fromSha: string; toSha: string }>;
+    deployEvents: Array<{ project: string; action: string; status: string; at: string; durationS: number; actor: string; fromSha: string; toSha: string; trigger: string | null; runUrl: string | null }>;
     runningServices?: number;
 }
 
@@ -81,13 +89,26 @@ export function normalise(raw: { source: string; data: any }): Snapshot {
         }),
         services: (d.services ?? []).map((s: any) => ({ unit: s.unit, active: s.active, memory: s.memory ?? null })),
         databases: (d.database?.databases ?? []).filter((x: any) => x.name !== 'postgres')
-            .map((x: any) => ({ name: x.name, size: x.size, tables: x.tables ?? null, connections: x.connections ?? 0 })),
+            .map((x: any) => ({
+                name: x.name, size: x.size, tables: x.tables ?? null, connections: x.connections ?? 0,
+                xactCommit: x.xact_commit ?? null, xactRollback: x.xact_rollback ?? null, blksHit: x.blks_hit ?? null,
+                blksRead: x.blks_read ?? null, deadlocks: x.deadlocks ?? null,
+            })),
+        dbServer: d.database?.ok ? {
+            version: d.database.version, startedAt: d.database.started_at ?? null, maxConnections: d.database.max_connections ?? null,
+            sharedBuffers: d.database.shared_buffers ?? null, connectionsByState: d.database.connections_by_state ?? {},
+            cacheHitPct: d.database.cache_hit_pct ?? null, longRunningQueries: d.database.long_running_queries ?? null,
+            idleInTransaction: d.database.idle_in_transaction ?? null, oldestXactS: d.database.oldest_xact_s ?? null,
+            waitingLocks: d.database.waiting_locks ?? null,
+        } : null,
         certificates: (d.certificates ?? []).map((c: any) => ({ domain: c.domain, daysLeft: c.days_left ?? null })),
         backups: d.backups ? { at: d.backups.at, ok: !!d.backups.ok } : null,
         deploying: d.deploying ? { project: d.deploying.project, step: d.deploying.step, actor: d.deploying.actor, state: d.deploying.state } : null,
         deployEvents: (d.deploy_events ?? []).map((e: any) => ({
             project: e.project, action: e.action, status: e.status, at: e.finished_at, durationS: e.duration_s,
             actor: e.actor, fromSha: (e.from_sha || '').slice(0, 8), toSha: (e.to_sha || '').slice(0, 8),
+            trigger: e.trigger ?? null,
+            runUrl: typeof e.run_url === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+/.test(e.run_url) ? e.run_url : null,
         })),
     };
     if (raw.source !== 'agent') snap.runningServices = d.running_services;
@@ -139,6 +160,12 @@ async function maybeSample(instanceId: number, s: Snapshot): Promise<void> {
         [instanceId, pct(s.host.memory.used, s.host.memory.total), pct(s.host.swap.used, s.host.swap.total),
             pct(s.host.disk.used, s.host.disk.total), s.host.load[0] ?? null,
             s.apps.filter((a) => a.healthy).length, s.apps.length]);
+    for (const d of s.databases) {
+        await db().query(
+            `INSERT INTO db_samples (instance_id, db, size, connections, xact_commit, xact_rollback, blks_hit, blks_read, deadlocks)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [instanceId, d.name, d.size, d.connections, d.xactCommit, d.xactRollback, d.blksHit, d.blksRead, d.deadlocks]);
+    }
 }
 
 export function startPoller(): NodeJS.Timeout {
@@ -147,6 +174,7 @@ export function startPoller(): NodeJS.Timeout {
         await syncRunning().catch(() => undefined);
         for (const row of rows) await freshInstance(row, true).catch(() => undefined);
         await db().query("DELETE FROM instance_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
+        await db().query("DELETE FROM db_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
     };
     setTimeout(() => void tick().catch(() => undefined), 10_000).unref();
     const t = setInterval(() => void tick().catch(() => undefined), POLL_EVERY_MS);

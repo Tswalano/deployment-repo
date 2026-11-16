@@ -1,10 +1,9 @@
-import { gunzipSync } from 'zlib';
 import { aws } from './aws';
 import { InstanceRow } from './collector';
 import { db } from './db';
+import { forgetDetail } from './insights';
 
 export const DEPLOY_DOCUMENT = 'OpsConsole-Deploy';
-export const LOGS_DOCUMENT = 'OpsConsole-AppLogs';
 
 export const PROJECT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 export const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
@@ -108,6 +107,7 @@ export async function syncDeployment(d: DeploymentRow): Promise<DeploymentRow> {
     const done = await finish(d.id, inv.status, inv.detail, output);
     // the instance's snapshot is now stale (new SHA, deploy events): fetch again on the next read
     await db().query('UPDATE instances SET last_fetched_at = NULL WHERE id = $1', [d.instance_id]);
+    forgetDetail(d.instance_id, d.project);
     return done;
 }
 
@@ -122,11 +122,4 @@ export async function syncRunning(instanceId?: number): Promise<void> {
     const { rows } = await db().query<DeploymentRow>(
         `SELECT * FROM deployments WHERE status = 'running' ${instanceId ? 'AND instance_id = $1' : ''}`, instanceId ? [instanceId] : []);
     for (const d of rows) await syncDeployment(d).catch(() => undefined);
-}
-
-export async function fetchLogs(inst: InstanceRow, project: string, lines: number): Promise<string> {
-    if (!PROJECT_RE.test(project)) throw new DeployError('Invalid project.');
-    const n = Math.max(10, Math.min(500, Math.round(lines) || 200));
-    const out = await aws().runDocument(inst.region, inst.aws_instance_id, LOGS_DOCUMENT, { project: [project], lines: [String(n)] });
-    return gunzipSync(Buffer.from(out.trim(), 'base64')).toString('utf8');
 }
