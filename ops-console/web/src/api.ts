@@ -37,7 +37,7 @@ export interface AppStatus {
   warnings24h: number; errors24h: number;
   lastDeploy: { at: string; status: string; durationS: number; actor: string } | null;
 }
-export interface DeployEvent { project: string; action: string; status: string; at: string; durationS: number; actor: string; fromSha: string; toSha: string; instance?: string }
+export interface DeployEvent { project: string; action: string; status: string; at: string; durationS: number; actor: string; fromSha: string; toSha: string; trigger?: string | null; runUrl?: string | null; instance?: string }
 export interface Snapshot {
   source: 'agent' | 'basic';
   collectedAt: string;
@@ -48,7 +48,12 @@ export interface Snapshot {
   };
   apps: AppStatus[];
   services: { unit: string; active: string; memory: number | null }[];
-  databases: { name: string; size: number; tables: number | null; connections: number }[];
+  databases: { name: string; size: number; tables: number | null; connections: number; xactCommit?: number | null; deadlocks?: number | null }[];
+  dbServer?: {
+    version: string; startedAt: string | null; maxConnections: number | null; sharedBuffers: string | null;
+    connectionsByState: Record<string, number>; cacheHitPct: number | null; longRunningQueries: number | null;
+    idleInTransaction: number | null; oldestXactS: number | null; waitingLocks: number | null;
+  } | null;
   certificates: { domain: string; daysLeft: number | null }[];
   backups: { at: string; ok: boolean } | null;
   deploying: { project: string; step: string; actor: string; state: string } | null;
@@ -86,6 +91,36 @@ export interface AppView {
   canOperate: boolean;
 }
 
+export interface DbPoint { at: string; size: number | null; connections: number | null; tps: number | null; cacheHitPct: number | null; deadlocks: number | null }
+export interface Commit { sha: string; subject: string; author: string; date: string }
+export interface AppDetailData {
+  branch: string;
+  deploySummary: { deploys7d: number; successRate7d: number | null; medianDurationS: number | null } | null;
+  unit: { active: string; sub?: string; result?: string; restarts: number | null; memory: number | null; tasks: number | null; cpuSeconds: number | null;
+          startedAt: string | null; uptimeSeconds: number | null; enabled: string | null; user?: string | null; unitFile?: string | null;
+          workingDir?: string | null; env?: { name: string; value: string | null }[] };
+  health: { url?: string; code: number | null; ms: number | null; contentType: string | null; body?: string | null };
+  git: { sha: string | null; subject: string | null; author: string | null; date: string | null; tracking: string | null; behind: number | null;
+         lastFetch: string | null; commits: Commit[]; upstream: Commit[]; dirty: string[] | number };
+  warnings24h: { count: number; errors: number } | null;
+  config: Record<string, string> | null;
+  fetchError: string | null;
+  database: null | { ok: false; error: string } | {
+    ok: true; name: string; size: number; blocked: number | null; statsReset: string | null; migrationsApplied: number | null;
+    stats: { xact_commit?: number; xact_rollback?: number; deadlocks?: number; temp_files?: number; temp_bytes?: number; cache_hit_pct?: number;
+             tup_inserted?: number; tup_updated?: number; tup_deleted?: number; tup_fetched?: number };
+    tableCount: number; rows: number; deadRows: number;
+    activeQueries: { pid: number; state: string; seconds: number; wait: string | null; app?: string; user?: string }[];
+    connectionsByState: Record<string, number>;
+    tables?: { table: string; rows: number | null; dead: number; size: number; indexSize: number; seqScans: number; idxScans: number;
+               inserts: number; updates: number; deletes: number; lastVacuum: string | null; lastAnalyze: string | null }[];
+    unusedIndexes?: { index: string; table: string; size: number }[];
+    migrationsTable?: string | null;
+  };
+}
+export interface LogEntry { ts: number; level: 'error' | 'warning' | 'info' | 'debug'; source: string; message: string }
+export interface LogsResult { entries: LogEntry[]; byLevel: Record<string, number>; source: string; truncated: boolean; fetchedAt: string }
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -121,7 +156,7 @@ export const api = {
   overview: () => call<Overview>('GET', '/api/instances/overview'),
   instances: () => call<{ instances: Instance[] }>('GET', '/api/instances').then((r) => r.instances),
   instance: (id: number, refresh = false) =>
-    call<{ instance: Instance; samples: Sample[] }>('GET', `/api/instances/${id}${refresh ? '?refresh=1' : ''}`),
+    call<{ instance: Instance; samples: Sample[]; dbSeries: Record<string, DbPoint[]> }>('GET', `/api/instances/${id}${refresh ? '?refresh=1' : ''}`),
   addInstance: (b: { awsInstanceId: string; region: string; name: string; environment: string }) =>
     call<{ instance: Instance }>('POST', '/api/instances', b).then((r) => r.instance),
   updateInstance: (id: number, b: { name?: string; environment?: string }) =>
@@ -131,8 +166,10 @@ export const api = {
   startDeployment: (id: number, project: string, action: 'deploy' | 'rollback', ref: string) =>
     call<{ deployment: Deployment }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/${action}`, { ref }).then((r) => r.deployment),
   deployment: (id: number) => call<{ deployment: Deployment }>('GET', `/api/deployments/${id}`).then((r) => r.deployment),
-  appLogs: (id: number, project: string, lines: number) =>
-    call<{ lines: string[]; fetchedAt: string }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/logs?lines=${lines}`),
+  appDetail: (id: number, project: string, fetch = false) =>
+    call<{ detail: AppDetailData; dbSeries: DbPoint[]; fetchedAt: string }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/detail${fetch ? '?fetch=1' : ''}`),
+  appLogs: (id: number, project: string, o: { lines: number; level: string; since: string; q: string }) =>
+    call<LogsResult>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/logs?${new URLSearchParams({ lines: String(o.lines), level: o.level, since: o.since, q: o.q })}`),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 

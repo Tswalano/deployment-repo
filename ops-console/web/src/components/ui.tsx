@@ -75,7 +75,7 @@ export function Sparkline({ values, tone = 'info', max = 100, height = 64 }: { v
   const stroke = { ok: '#34d399', warn: '#fbbf24', bad: '#fb7185', info: '#60a5fa', mute: '#64748b' }[tone];
   const id = `spark${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   if (values.length < 2) {
-    return <div className="grid place-items-center text-2xs text-slate-600" style={{ height }}>collecting history…</div>;
+    return <div className="grid place-items-center text-2xs text-slate-600" style={{ height }}>{height >= 40 ? 'collecting history…' : '—'}</div>;
   }
   const w = 300, h = height, top = Math.max(max, ...values);
   const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 4 - (v / top) * (h - 10)] as const);

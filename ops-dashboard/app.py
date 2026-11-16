@@ -310,12 +310,19 @@ def database():
     if not v:
         return {"ok": False, "error": "cannot connect as %s (check PGPASSWORD / pg_hba)" % PG_USER}
     version, started, maxconn, shared = v[0]
+    stats = {r[0]: r[1:] for r in psql(
+        "select datname, xact_commit, xact_rollback, blks_hit, blks_read, deadlocks, temp_bytes, conflicts "
+        "from pg_stat_database where datname is not null")}
     dbs = []
     for name, size, conns in psql(
         "select d.datname, pg_database_size(d.datname), "
         "(select count(*) from pg_stat_activity a where a.datname=d.datname) "
         "from pg_database d where not d.datistemplate order by 1"):
         info = {"name": name, "size": int(size), "connections": int(conns)}
+        st = stats.get(name)
+        if st:
+            info.update(dict(zip(("xact_commit", "xact_rollback", "blks_hit", "blks_read", "deadlocks", "temp_bytes", "conflicts"),
+                                 (int(x or 0) for x in st))))
         if name != "postgres":
             t = psql("select count(*), coalesce(sum(n_live_tup),0), "
                      "count(*) filter (where n_live_tup = 0 and last_analyze is null and last_autoanalyze is null) "
@@ -327,6 +334,13 @@ def database():
             info["largest"] = [{"table": r[0], "rows": int(r[1])} for r in big]
         dbs.append(info)
     states = {s or "background": int(c) for s, c in psql("select state, count(*) from pg_stat_activity group by 1")}
+    hit = psql("select coalesce(sum(blks_hit),0), coalesce(sum(blks_read),0) from pg_stat_database")
+    h, r = (int(hit[0][0]), int(hit[0][1])) if hit else (0, 0)
+    act = psql("select count(*) filter (where state = 'active' and now() - query_start > interval '60 seconds'), "
+               "count(*) filter (where state = 'idle in transaction' and now() - state_change > interval '60 seconds'), "
+               "coalesce(extract(epoch from max(now() - xact_start) filter (where backend_type = 'client backend')), 0)::int "
+               "from pg_stat_activity where pid <> pg_backend_pid()")
+    waiting = psql("select count(*) from pg_locks where not granted")
     return {
         "ok": True,
         "version": version.split(" on ")[0],
@@ -334,6 +348,11 @@ def database():
         "max_connections": int(maxconn),
         "shared_buffers": shared,
         "connections_by_state": states,
+        "cache_hit_pct": round(h * 100.0 / (h + r), 2) if h + r else None,
+        "long_running_queries": int(act[0][0]) if act else None,
+        "idle_in_transaction": int(act[0][1]) if act else None,
+        "oldest_xact_s": int(act[0][2]) if act else None,
+        "waiting_locks": int(waiting[0][0]) if waiting else None,
         "databases": dbs,
     }
 
@@ -469,7 +488,31 @@ def db_detail(dbname):
                            "where datname = current_database() and pid <> pg_backend_pid()", db=dbname)]
     migr = next((t for t in tables if re.search(r"(__drizzle_migrations|_prisma_migrations)$", t["table"])), None)
     stats_reset = psql("select coalesce(stats_reset::text,'') from pg_stat_database where datname = current_database()", db=dbname)
+    st = psql("select xact_commit, xact_rollback, blks_hit, blks_read, deadlocks, temp_files, temp_bytes, "
+              "tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted "
+              "from pg_stat_database where datname = current_database()", db=dbname)
+    keys = ("xact_commit", "xact_rollback", "blks_hit", "blks_read", "deadlocks", "temp_files", "temp_bytes",
+            "tup_returned", "tup_fetched", "tup_inserted", "tup_updated", "tup_deleted")
+    stats = dict(zip(keys, (int(x or 0) for x in st[0]))) if st else {}
+    if stats.get("blks_hit", 0) + stats.get("blks_read", 0):
+        stats["cache_hit_pct"] = round(stats["blks_hit"] * 100.0 / (stats["blks_hit"] + stats["blks_read"]), 2)
+    # Running statements: timing and state only. The SQL text is never read (it can hold personal data).
+    long_q = [{"pid": int(r[0]), "state": r[1] or "", "seconds": int(float(r[2] or 0)), "wait": r[3] or None,
+               "app": r[4] or "", "user": r[5] or ""}
+              for r in psql("select pid, state, extract(epoch from now() - coalesce(query_start, state_change)), "
+                            "coalesce(wait_event_type||':'||wait_event,''), application_name, usename "
+                            "from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() "
+                            "and state <> 'idle' order by 3 desc limit 10", db=dbname)]
+    unused = [{"index": r[0], "table": r[1], "size": int(r[2])}
+              for r in psql("select s.indexrelname, s.relname, pg_relation_size(s.indexrelid) from pg_stat_user_indexes s "
+                            "join pg_index i on i.indexrelid = s.indexrelid "
+                            "where s.idx_scan = 0 and not i.indisunique and not i.indisprimary "
+                            "order by 3 desc limit 10", db=dbname)]
+    blocked = psql("select count(*) from pg_locks l join pg_database d on d.oid = l.database "
+                   "where not l.granted and d.datname = current_database()", db=dbname)
     return {"ok": True, "name": dbname, "size": int(size[0][0]), "tables": tables, "connections": conns,
+            "stats": stats, "active_queries": long_q, "unused_indexes": unused,
+            "blocked": int(blocked[0][0]) if blocked else None,
             "stats_reset": (stats_reset[0][0] or None) if stats_reset else None,
             "migrations_applied": migr["rows"] if migr else None,
             "migrations_table": migr["table"] if migr else None}

@@ -34,6 +34,20 @@ const agentStatus = (healthyApps = 2) => ({
     deploying: null,
     deploy_events: [{ project: 'alpha', action: 'deploy', status: 'success', finished_at: '2026-11-16T10:00:00Z', duration_s: 20, actor: 'ci', from_sha: '1111111111', to_sha: '2222222222' }],
 });
+const logsBlob = zlib.gzipSync(JSON.stringify({ entries: [
+    { ts: 1, level: 'info', source: 'node', message: 'started' }, { ts: 2, level: 'info', source: 'node', message: 'listening' }],
+    by_level: { info: 2 }, source: 'agent', truncated: false })).toString('base64');
+const detailFixture = {
+    branch: 'main', deploy_summary: { deploys_7d: 3, success_rate_7d: 100, median_duration_s: 40 },
+    unit: { active: 'active', restarts: 0, memory: 5e7, cpu_seconds: 12.5, user: 'ec2-user', unit_file: '/etc/systemd/system/alpha.service', env: [{ name: 'PORT', value: '3000' }] },
+    health: { url: 'http://127.0.0.1:3000/health', code: 200, ms: 4, body: '{"db":"ok"}' },
+    git: { sha: 'abc12345', behind: 2, upstream_commits: [{ sha: 'fff11111', subject: 'feat: new', author: 'dev', date: '2026-11-16' }], commits: [], dirty_files: ['src/x.ts'] },
+    config: { SOURCE_DIR: '/opt/apps/alpha' },
+    database: { ok: true, name: 'alpha', size: 9e6, stats: { cache_hit_pct: 99.5 }, blocked: 0,
+        tables: [{ table: 'public.loans', rows: 40, dead: 2 }, { table: 'public.users', rows: 10, dead: 0 }],
+        connections: [{ state: 'idle', user: 'alpha', app: 'node' }], active_queries: [{ pid: 9, state: 'active', seconds: 3, user: 'alpha', app: 'node' }],
+        unused_indexes: [{ index: 'ix', table: 'loans', size: 8192 }] },
+};
 const encode = (obj) => zlib.gzipSync(Buffer.from(JSON.stringify(obj))).toString('base64');
 
 // ---- fake AWS
@@ -48,13 +62,14 @@ const fake = {
     async describeInstance(_region, id) { const i = this.instances[id]; return i ? { ...i } : null; },
     async ssmOnline(_region, id) { return !!this.instances[id]?.online; },
     async runDocument(_region, _id, document) {
-        assert.ok(['OpsConsole-CollectStatus', 'OpsConsole-AppLogs'].includes(document), 'only fixed documents are run');
+        assert.ok(['OpsConsole-CollectStatus', 'OpsConsole-AppLogs', 'OpsConsole-AppDetail'].includes(document), 'only fixed documents are run');
         this.runs += 1;
-        if (document === 'OpsConsole-AppLogs') return zlib.gzipSync('2026-11-16T10:00:00 started\n2026-11-16T10:00:01 listening\n').toString('base64');
+        if (document === 'OpsConsole-AppLogs') return logsBlob;
+        if (document === 'OpsConsole-AppDetail') { this.detailCalls.push(arguments[3]); return zlib.gzipSync(JSON.stringify(detailFixture)).toString('base64'); }
         if (this.failNext) { this.failNext = false; throw new Error('SSM command TimedOut'); }
         return encode({ source: 'agent', data: agentStatus(this.healthy) });
     },
-    commands: {}, nextId: 0, sendFails: false,
+    commands: {}, nextId: 0, sendFails: false, detailCalls: [],
     async sendDocument(_region, id, document, parameters) {
         if (this.sendFails) throw new Error('AccessDenied');
         const cid = `cmd-${++this.nextId}`;
@@ -188,11 +203,54 @@ test('an SSM send failure does not leave a stuck running deployment', async () =
     await a.get('/api/deployments');
 });
 
-test('logs: deployer/admin only, audited', async () => {
+test('logs: deployer/admin only, filters validated, audited', async () => {
     const d = await signedIn('deployer');
-    const r = await d.get(`/api/instances/${instId}/apps/alpha/logs?lines=50`);
+    const r = await d.get(`/api/instances/${instId}/apps/alpha/logs?lines=50&level=error&since=1h&q=GET%20%2Fapi`);
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json.lines, ['2026-11-16T10:00:00 started', '2026-11-16T10:00:01 listening']);
+    assert.deepEqual(r.json.entries.map((e) => e.message), ['started', 'listening']);
+    for (const bad of ['level=fatal', 'since=99y', "q=%27%3Bid", 'q=%24(id)', 'q=a%22b']) {
+        assert.equal((await d.get(`/api/instances/${instId}/apps/alpha/logs?${bad}`)).status, 400, bad);
+    }
     const actions = (await (await signedIn('admin')).get('/api/audit')).json.entries.map((e) => e.action);
     for (const x of ['app.deploy', 'app.rollback', 'app.logs']) assert.ok(actions.includes(x), x);
+});
+
+test('app detail: viewers get metrics only; operators get tables, config and git fetch', async () => {
+    const v = await signedIn('viewer');
+    const rv = await v.get(`/api/instances/${instId}/apps/alpha/detail?fetch=1`);
+    assert.equal(rv.status, 200);
+    const dv = rv.json.detail;
+    assert.equal(dv.git.behind, 2);
+    assert.equal(dv.database.tableCount, 2);
+    assert.equal(dv.database.rows, 50);
+    assert.equal(dv.database.tables, undefined, 'no table names for viewers');
+    assert.equal(dv.database.activeQueries[0].user, undefined);
+    assert.equal(dv.config, null);
+    assert.equal(dv.health.body, undefined);
+    assert.equal(dv.unit.env, undefined);
+    assert.equal(dv.git.dirty, 1, 'viewers see a count, not file names');
+    assert.deepEqual(fake.detailCalls.at(-1), { project: ['alpha'], fetch: ['no'] }, 'viewer cannot trigger git fetch');
+
+    const a = await signedIn('admin');
+    const calls = fake.detailCalls.length;
+    const da = (await a.get(`/api/instances/${instId}/apps/alpha/detail`)).json.detail;
+    assert.equal(fake.detailCalls.length, calls, 'served from the 30s cache');
+    assert.equal(da.database.tables[0].table, 'public.loans');
+    assert.equal(da.config.SOURCE_DIR, '/opt/apps/alpha');
+    await a.get(`/api/instances/${instId}/apps/alpha/detail?fetch=1`);
+    assert.deepEqual(fake.detailCalls.at(-1), { project: ['alpha'], fetch: ['yes'] });
+});
+
+test('database series: rates from counters, resets ignored', async () => {
+    const q = (sql, args) => dist('db').db().query(sql, args);
+    await q('DELETE FROM db_samples');
+    const ins = (mins, commit, hit, read) => q(`INSERT INTO db_samples (instance_id, db, at, size, connections, xact_commit, xact_rollback, blks_hit, blks_read, deadlocks)
+        VALUES ($1, 'alpha', now() - make_interval(mins => $2), 100, 2, $3, 0, $4, $5, 0)`, [instId, mins, commit, hit, read]);
+    await ins(15, 1000, 900, 100); await ins(10, 1600, 1890, 110); await ins(5, 10, 10, 0);
+    const pts = (await dist('insights').dbSeries(instId, 24, 'alpha')).alpha;
+    assert.equal(pts.length, 3);
+    assert.equal(pts[0].tps, null);
+    assert.equal(pts[1].tps, 2);              // 600 commits / 300 s
+    assert.equal(pts[1].cacheHitPct, 99);     // 990 hits / 1000 blocks
+    assert.equal(pts[2].tps, null, 'counter reset is not a negative rate');
 });

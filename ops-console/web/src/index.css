@@ -36,11 +36,11 @@
   .pill-mute { @apply pill border-ink-600 bg-ink-800 text-slate-400; }
 
   /* Tables: fixed layout, never scroll; long text ends in an ellipsis (full value in title). */
-  .tbl { @apply w-full table-fixed border-collapse text-sm; }
+  .tbl { @apply w-full table-fixed border-collapse text-sm text-slate-300; }
   .tbl th { text-align: left; }
   .tbl th.text-right { text-align: right; }
   .tbl th { @apply truncate border-b border-ink-700 px-3 py-2.5 text-2xs font-semibold uppercase tracking-[0.1em] text-slate-500; }
-  .tbl td { @apply truncate border-b border-ink-800 px-3 py-2.5 text-slate-300; }
+  .tbl td { @apply truncate border-b border-ink-800 px-3 py-2.5; }   /* colour inherited from .tbl so cell utilities win */
   .tbl tbody tr { @apply transition-colors hover:bg-ink-850; }
   .tbl tbody tr:last-child td { @apply border-b-0; }
 }

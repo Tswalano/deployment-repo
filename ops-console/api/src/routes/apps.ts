@@ -2,7 +2,8 @@ import { Context, Hono } from 'hono';
 import { audit } from '../audit';
 import { freshInstance, InstanceRow } from '../collector';
 import { db } from '../db';
-import { DeployError, deploymentView, DeploymentRow, fetchLogs, PROJECT_RE, startDeployment, syncDeployment, syncRunning } from '../deploys';
+import { DeployError, deploymentView, DeploymentRow, PROJECT_RE, startDeployment, syncDeployment, syncRunning } from '../deploys';
+import { appDetail, dbSeries, fetchLogs, shapeDetail } from '../insights';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
 
 /** Per-app views and actions, mounted under /api/instances/:id/apps/:project. */
@@ -63,15 +64,39 @@ for (const action of ['deploy', 'rollback'] as const) {
     });
 }
 
-apps.get('/:id/apps/:project/logs', requireRole('deployer'), denyDemo, rateLimit(20, 60_000, (c) => `logs:${c.get('user')!.id}`), async (c) => {
+/** Full detail from the instance's agent: unit, health, git (incl. commits waiting on origin), DB metrics. */
+apps.get('/:id/apps/:project/detail', async (c) => {
     const r = await load(c);
     if (r instanceof Response) return r;
     if (!r.inst.last_status?.apps.some((a) => a.project === r.project)) return c.json({ error: 'App not found' }, 404);
+    const operator = canOperate(c);
+    const fetch = c.req.query('fetch') === '1' && operator;      // git fetch only for deployers/admins
     try {
-        const text = await fetchLogs(r.inst, r.project, Number(c.req.query('lines') || 200));
+        const { data, fetchedAt } = await appDetail(r.inst, r.project, fetch);
+        const shaped = shapeDetail(data, operator);
+        const series = shaped.database?.ok && 'name' in shaped.database
+            ? (await dbSeries(r.inst.id, 24, shaped.database.name))[shaped.database.name] ?? [] : [];
+        return c.json({ detail: shaped, dbSeries: series, fetchedAt });
+    } catch (err) {
+        if (err instanceof DeployError) return c.json({ error: err.message }, err.status);
+        return c.json({ error: `Couldn't load details: ${(err as Error).message.slice(0, 160)}` }, 502);
+    }
+});
+
+apps.get('/:id/apps/:project/logs', requireRole('deployer'), denyDemo, rateLimit(30, 60_000, (c) => `logs:${c.get('user')!.id}`), async (c) => {
+    const r = await load(c);
+    if (r instanceof Response) return r;
+    if (!r.inst.last_status?.apps.some((a) => a.project === r.project)) return c.json({ error: 'App not found' }, 404);
+    const o = {
+        lines: Number(c.req.query('lines') || 200), level: c.req.query('level') || 'all',
+        since: c.req.query('since') || '24h', q: (c.req.query('q') || '').trim(),
+    };
+    try {
+        const logs = await fetchLogs(r.inst, r.project, o);
         const user = c.get('user')!;
-        await audit({ id: user.id, username: user.username }, 'app.logs', `${r.project} on ${r.inst.name}`, {}, c.get('ip'));
-        return c.json({ lines: text.split('\n').filter(Boolean), fetchedAt: new Date().toISOString() });
+        await audit({ id: user.id, username: user.username }, 'app.logs', `${r.project} on ${r.inst.name}`,
+            { level: o.level, since: o.since, q: o.q || undefined }, c.get('ip'));
+        return c.json({ ...logs, fetchedAt: new Date().toISOString() });
     } catch (err) {
         if (err instanceof DeployError) return c.json({ error: err.message }, err.status);
         return c.json({ error: `Couldn't fetch logs: ${(err as Error).message.slice(0, 160)}` }, 502);

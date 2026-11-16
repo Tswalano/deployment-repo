@@ -48,10 +48,18 @@ DEPLOY_PARAMS='{
 }'
 LOGS_PARAMS='{
   "project": {"type": "String", "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
-  "lines":   {"type": "String", "default": "200", "allowedPattern": "^[0-9]{2,3}$"}
+  "lines":   {"type": "String", "default": "200", "allowedPattern": "^[0-9]{2,4}$"},
+  "level":   {"type": "String", "default": "all", "allowedValues": ["all", "warning", "error"]},
+  "since":   {"type": "String", "default": "24h", "allowedValues": ["15m", "1h", "6h", "24h", "7d", "boot"]},
+  "q":       {"type": "String", "default": "", "allowedPattern": "^[A-Za-z0-9 ._:/@#=-]{0,60}$"}
+}'
+DETAIL_PARAMS='{
+  "project": {"type": "String", "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
+  "fetch":   {"type": "String", "default": "no", "allowedValues": ["no", "yes"]}
 }'
 
 echo "→ SSM documents in $REGION"
 upsert OpsConsole-CollectStatus collect-status.sh "Ops Console: read-only status snapshot (no parameters)" 60
 upsert OpsConsole-Deploy deploy-app.sh "Ops Console: deploy or roll back one project via server/pipeline.sh" 1800 "$DEPLOY_PARAMS"
-upsert OpsConsole-AppLogs app-logs.sh "Ops Console: recent journal lines of one project (secrets masked)" 60 "$LOGS_PARAMS"
+upsert OpsConsole-AppLogs app-logs.sh "Ops Console: filtered log entries of one project (secrets masked)" 60 "$LOGS_PARAMS"
+upsert OpsConsole-AppDetail app-detail.sh "Ops Console: read-only detail of one project (unit, health, git, deploys, database)" 60 "$DETAIL_PARAMS"

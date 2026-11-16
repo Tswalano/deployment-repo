@@ -25,6 +25,8 @@ export function ActivityList({ events, showInstance = true }: { events: DeployEv
               </div>
               <div className="truncate text-xs text-slate-500">
                 {showInstance && e.instance ? `${e.instance} · ` : ''}{e.actor} · {st.label}{e.durationS ? ` · ${dur(e.durationS)}` : ''}
+                {e.runUrl ? <> · <a href={e.runUrl} target="_blank" rel="noreferrer noopener" className="text-indigo-300 hover:underline">GitHub Actions ↗</a></>
+                  : e.trigger === 'ops-console' ? ' · console' : ''}
               </div>
             </div>
             <span className="num shrink-0 pt-0.5 text-2xs text-slate-500" title={e.at}>{ago(e.at)}</span>

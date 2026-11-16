@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, AppStatus } from '../api';
+import { api, AppStatus, DbPoint, Snapshot } from '../api';
 import { useAuth } from '../auth';
 import { ActivityList } from '../components/ActivityList';
 import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, Skeleton, Sparkline } from '../components/ui';
+import { Facts } from './app/shared';
 import { appTone } from '../health';
 import { usePoll } from '../usePoll';
 
-const toneText = { ok: 'text-emerald-300', warn: 'text-amber-300', bad: 'text-rose-300', info: 'text-indigo-300', mute: 'text-slate-400' };
 
 function AppRow({ a, instanceId }: { a: AppStatus; instanceId: number }) {
   const t = appTone(a);
@@ -17,7 +17,7 @@ function AppRow({ a, instanceId }: { a: AppStatus; instanceId: number }) {
         <div className="flex items-center gap-2"><Dot tone={t} /><Link to={`/instances/${instanceId}/apps/${a.project}`} className="truncate font-medium text-slate-100 hover:text-indigo-300 hover:underline">{a.project}</Link></div>
         <div className="truncate pl-3.5 text-xs text-slate-500">{a.domain ?? a.service}</div>
       </td>
-      <td className={toneText[t]}>{a.healthy ? `HTTP ${a.healthCode} · ${a.healthMs} ms` : `Down · ${a.healthCode ?? 'no response'}`}</td>
+      <td className={a.healthy ? 'text-emerald-300' : 'text-rose-300'}>{a.healthy ? `HTTP ${a.healthCode} · ${a.healthMs} ms` : `Down · ${a.healthCode ?? 'no response'}`}</td>
       <td className="num hidden lg:table-cell">{bytes(a.memory)}</td>
       <td className="hidden xl:table-cell">{dur(a.uptimeSeconds)} · {a.restarts ?? 0} restarts</td>
       <td className="hidden md:table-cell" title={a.subject ?? ''}><span className="num text-xs text-slate-400">{a.sha ?? '—'}</span> <span className="text-slate-400">{a.subject ?? ''}</span></td>
@@ -26,6 +26,61 @@ function AppRow({ a, instanceId }: { a: AppStatus; instanceId: number }) {
         {a.errors24h ? <span className="pill-bad">{a.errors24h} err</span> : a.warnings24h ? <span className="pill-warn">{a.warnings24h} warn</span> : <span className="pill-ok">clean</span>}
       </td>
     </tr>
+  );
+}
+
+function DbServer({ s, series }: { s: Snapshot; series: Record<string, DbPoint[]> }) {
+  const v = s.dbServer;
+  const conns = v ? Object.values(v.connectionsByState).reduce((a, b) => a + b, 0) : 0;
+  const latest = (db: string, k: 'tps' | 'cacheHitPct') => {
+    const pts = (series[db] ?? []).map((p) => p[k]).filter((x): x is number => x != null);
+    return pts.length ? pts[pts.length - 1] : null;
+  };
+  const tpsSeries = (db: string) => (series[db] ?? []).map((p) => p.tps).filter((x): x is number => x != null);
+  return (
+    <section className="card overflow-hidden p-0">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 py-4">
+        <h2 className="font-medium text-slate-100">Databases</h2>
+        {v && <span className="truncate text-xs text-slate-500" title={v.version}>{v.version} · up {v.startedAt ? ago(v.startedAt).replace(' ago', '') : '—'}</span>}
+      </div>
+      {v && (
+        <div className="grid gap-6 border-y border-ink-800 px-5 py-4 lg:grid-cols-2">
+          <div>
+            <div className="flex items-baseline justify-between text-xs"><span className="text-slate-400">Connections</span><span className="num text-slate-200">{conns} / {v.maxConnections ?? '—'}</span></div>
+            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-ink-700">
+              {Object.entries(v.connectionsByState).map(([k, n], i) => (
+                <div key={k} title={`${n} ${k}`} className={['bg-sky-400', 'bg-indigo-400', 'bg-amber-400', 'bg-emerald-400', 'bg-rose-400'][i % 5]} style={{ width: `${(n / (v.maxConnections || conns || 1)) * 100}%` }} />
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-4 text-2xs text-slate-500">{Object.entries(v.connectionsByState).map(([k, n]) => <span key={k}>{n} {k}</span>)}</div>
+          </div>
+          <Facts rows={[
+            ['Cache hit', v.cacheHitPct != null ? `${v.cacheHitPct.toFixed(2)}%` : '—'],
+            ['Long-running (>60s)', String(v.longRunningQueries ?? '—')],
+            ['Idle in transaction', String(v.idleInTransaction ?? '—')],
+            ['Waiting locks', String(v.waitingLocks ?? '—')],
+            ['Shared buffers', v.sharedBuffers ?? '—'],
+          ]} />
+        </div>
+      )}
+      {s.databases.length === 0 ? <p className="px-5 py-4 text-sm text-slate-500">None reported.</p> : (
+        <table className="tbl">
+          <thead><tr><th>Database</th><th className="w-[15%] text-right">Size</th><th className="hidden w-[12%] text-right xl:table-cell">Tables</th>
+            <th className="w-[12%] text-right">Conns</th><th className="w-[13%] text-right">tx/s</th><th className="hidden w-[20%] xl:table-cell">24h</th></tr></thead>
+          <tbody>{s.databases.map((d) => {
+            const tps = latest(d.name, 'tps');
+            return (
+              <tr key={d.name}>
+                <td className="num" title={d.name}>{d.name}</td><td className="num text-right">{bytes(d.size)}</td>
+                <td className="num hidden text-right xl:table-cell">{d.tables ?? '—'}</td><td className="num text-right">{d.connections}</td>
+                <td className="num text-right">{tps == null ? '—' : tps.toFixed(2)}</td>
+                <td className="hidden py-1 xl:table-cell"><Sparkline values={tpsSeries(d.name)} tone="info" max={Math.max(0.5, ...tpsSeries(d.name))} height={24} /></td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
+      )}
+    </section>
   );
 }
 
@@ -94,17 +149,7 @@ export function InstanceDetail() {
 
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
             <div className="hidden min-w-0 space-y-5 md:block">
-              <section className="card overflow-hidden p-0">
-                <h2 className="px-5 py-4 font-medium text-slate-100">Databases</h2>
-                {s.databases.length === 0 ? <p className="px-5 pb-5 text-sm text-slate-500">None reported.</p> : (
-                  <table className="tbl">
-                    <thead><tr><th>Database</th><th className="w-[18%] text-right">Size</th><th className="w-[16%] text-right">Tables</th><th className="w-[18%] text-right">Connections</th></tr></thead>
-                    <tbody>{s.databases.map((d) => (
-                      <tr key={d.name}><td className="num" title={d.name}>{d.name}</td><td className="num text-right">{bytes(d.size)}</td><td className="num text-right">{d.tables ?? '—'}</td><td className="num text-right">{d.connections}</td></tr>
-                    ))}</tbody>
-                  </table>
-                )}
-              </section>
+              <DbServer s={s} series={data!.dbSeries} />
               <section className="card">
                 <h2 className="font-medium text-slate-100">Services, certificates & backups</h2>
                 <div className="mt-4 grid gap-6 sm:grid-cols-3">
