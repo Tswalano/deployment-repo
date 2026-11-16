@@ -27,7 +27,8 @@ export const loadSession: MiddlewareHandler<Env> = async (c, next) => {
 export const checkOrigin: MiddlewareHandler<Env> = async (c, next) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
         const origin = c.req.header('origin');
-        if (!origin || !config.allowedOrigins.includes(origin)) {
+        const loopback = config.allowLoopbackOrigins && !!origin && /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/.test(origin);
+        if (!origin || (!config.allowedOrigins.includes(origin) && !loopback)) {
             return c.json({ error: 'Origin not allowed' }, 403);
         }
     }
