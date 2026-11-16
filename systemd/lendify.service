@@ -11,6 +11,9 @@ Type=simple
 User=ec2-user
 WorkingDirectory=/home/ec2-user/lendify
 Environment=PORT=8088 NODE_ENV=production
+# Email via Amazon SES using the instance role (no SMTP credentials). Needs the
+# send-email-as-lendify IAM policy (scripts/setup-aws-iam.sh) and SES production access.
+Environment=EMAIL_TRANSPORT=ses SES_FROM_EMAIL=lendify@glenify.studio SES_REGION=af-south-1
 EnvironmentFile=/run/app-secrets/lendify.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure
