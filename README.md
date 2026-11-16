@@ -143,11 +143,9 @@ done
 **View it** in one of these ways:
 - **Tunnel (nothing public):** `ssh -L 9100:127.0.0.1:9100 ec2-user@<host>`, then open <http://localhost:9100>. With SSM instead:
   `aws ssm start-session --target <instance-id> --document-name AWS-StartPortForwardingSession --parameters portNumber=9100,localPortNumber=9100`
-- **Public with a password:**
-  1. Add an `A` record `ops.glenify.studio → <Elastic IP>`.
-  2. Run `./deploy.sh ops-dashboard expose ops.glenify.studio`. This sets up nginx, basic auth and a Let's Encrypt certificate.
-  3. Log in as user `ops`. Get the password with
-     `aws ssm get-parameter --name /apps/ops-dashboard-auth/PASSWORD --with-decryption --query Parameter.Value --output text`
+- **Publicly:** `ops.glenify.studio` now serves the **Ops Console** (below), not this dashboard. The dashboard stays
+  localhost-only as the status agent the console reads through SSM. Don't run `./deploy.sh ops-dashboard expose` for that
+  domain again: it would put the old basic-auth vhost back in front of the console.
 
 ---
 
