@@ -4,7 +4,7 @@ This replaces the read-only Python ops dashboard with a proper application. It's
 frontend with its own **login and user database**, it can manage **multiple EC2 instances**, and it's
 safe to show on the portfolio.
 
-Status: **agreed, being built in phases.** Decisions: public demo uses the `viewer` role, logs are hidden from viewers, domain is `ops.glenify.studio`.
+Status: **Phases 1–3 live at https://ops.glenify.studio** (served by `./deploy.sh ops-console expose ops.glenify.studio`). Decisions: public demo uses the `viewer` role, logs are hidden from viewers, domain is `ops.glenify.studio`.
 
 ---
 

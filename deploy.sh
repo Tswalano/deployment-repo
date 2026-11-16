@@ -12,6 +12,7 @@
 #   ./deploy.sh secrets-cutover all            (one-time: move secrets to SSM)
 #   ./deploy.sh ops-dashboard install          (read-only status page on 127.0.0.1:9100)
 #   ./deploy.sh ops-console install            (Ops Console app on 127.0.0.1:9200; see scripts/setup-ops-console.sh)
+#   ./deploy.sh ops-console expose ops.glenify.studio   (public HTTPS for the console; retires the old dashboard vhost)
 #   ./deploy.sh ops-dashboard expose ops.glenify.studio
 #
 # Connection (env vars, or put them in a git-ignored .deploy.env):

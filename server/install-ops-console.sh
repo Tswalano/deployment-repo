@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # install-ops-console.sh: runs ON the server (as ec2-user with sudo). Idempotent.
-#   install-ops-console.sh install     build + DB + service (+ demo account)
+#   install-ops-console.sh install          build + DB + service (+ demo account)
+#   install-ops-console.sh expose <domain>  serve it publicly over HTTPS (replaces the old ops-dashboard vhost)
 #
 # Needs SSM /apps/ops-console/DATABASE_URL (postgresql://opsconsole:<pw>@127.0.0.1:5432/opsconsole),
 # created by scripts/setup-ops-console.sh on your laptop.
@@ -64,7 +65,37 @@ SQL
   sudo bash -c 'set -a; . /run/app-secrets/ops-console.env; set +a; cd /opt/ops-console/api && exec node dist/cli.js ensure-demo'
 }
 
+expose() {
+  local domain="${1:?usage: expose <domain>}"
+  [[ "$domain" =~ ^[a-z0-9.-]+$ ]] || die "bad domain"
+  local me resolved
+  me="$(curl -fsS -m 3 https://checkip.amazonaws.com)"
+  resolved="$(getent hosts "$domain" | awk '{print $1}' | head -1 || true)"
+  [[ "$resolved" == "$me" ]] || die "$domain resolves to '${resolved:-nothing}', not this host. Add the DNS A record first."
+  curl -fsS -m 3 http://127.0.0.1:9200/api/health >/dev/null || die "the console isn't running; run 'install' first"
+
+  log "nginx vhost → 127.0.0.1:9200"
+  local retired=/etc/nginx/retired; sudo install -d -m 0755 "$retired"
+  local old; old="$(sudo grep -l "server_name $domain;" /etc/nginx/conf.d/*.conf 2>/dev/null | grep -v '/ops-console.conf$' || true)"
+  for f in $old; do sudo mv "$f" "$retired/$(basename "$f").$(date +%Y%m%d%H%M%S)"; log "retired $f → $retired/"; done
+  sed "s/__OPS_DOMAIN__/$domain/" "$ROOT/templates/nginx-ops-console.conf" | sudo tee /etc/nginx/conf.d/ops-console.conf >/dev/null
+  if ! sudo nginx -t 2>/dev/null; then
+    sudo nginx -t || true
+    sudo rm -f /etc/nginx/conf.d/ops-console.conf
+    for f in $old; do sudo cp "$(ls -1t "$retired/$(basename "$f")".* | head -1)" "$f"; done
+    die "nginx config test failed; previous vhost restored"
+  fi
+  sudo systemctl reload nginx
+
+  log "TLS certificate (reuses the existing one if present)"
+  sudo certbot --nginx -d "$domain" --non-interactive --agree-tos --redirect --reinstall --register-unsafely-without-email \
+    || sudo certbot --nginx -d "$domain" --non-interactive --redirect --reinstall
+  sudo nginx -t && sudo systemctl reload nginx
+  ok "https://$domain → Ops Console (sign in, or 'Try the read-only demo')"
+}
+
 case "${1:-}" in
   install) install ;;
-  *) echo "usage: install-ops-console.sh install" >&2; exit 1 ;;
+  expose)  shift; expose "$@" ;;
+  *) echo "usage: install-ops-console.sh install | expose <domain>" >&2; exit 1 ;;
 esac
