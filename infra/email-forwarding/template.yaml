@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Inbound email for glenify.studio (af-south-1): SES receives *@glenify.studio, stores the raw
+  message in S3 (30-day retention) and a Lambda forwards it to a private inbox kept in SSM.
+  The MX record and receipt-rule-set activation are done by deploy.sh.
+
+Parameters:
+  Domain:
+    Type: String
+    Default: glenify.studio
+  RuleSetName:
+    Type: String
+    Default: glenify-inbound
+  ForwardToParam:
+    Type: String
+    Default: /mail/glenify.studio/FORWARD_TO
+    Description: SSM parameter (SecureString) holding the destination inbox
+
+Resources:
+  InboundBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-inbound-mail
+            Status: Enabled
+            ExpirationInDays: 30
+
+  InboundBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref InboundBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowSESPuts
+            Effect: Allow
+            Principal: { Service: ses.amazonaws.com }
+            Action: s3:PutObject
+            Resource: !Sub '${InboundBucket.Arn}/inbound/*'
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${RuleSetName}:receipt-rule/*'
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt InboundBucket.Arn, !Sub '${InboundBucket.Arn}/*']
+            Condition: { Bool: { aws:SecureTransport: 'false' } }
+
+  ForwarderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: forward-mail
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${InboundBucket.Arn}/inbound/*'
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ForwardToParam}'
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: '*'
+                Condition: { StringEquals: { kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com' } }
+              - Effect: Allow        # send only as an address on our own domain
+                Action: [ses:SendEmail, ses:SendRawEmail]
+                Resource: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*'
+                Condition:
+                  StringLike: { ses:FromAddress: !Sub '*@${Domain}' }
+
+  Forwarder:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: glenify-mail-forwarder
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt ForwarderRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      ReservedConcurrentExecutions: 5
+      Environment:
+        Variables:
+          BUCKET: !Ref InboundBucket
+          PREFIX: inbound/
+          FORWARD_TO_PARAM: !Ref ForwardToParam
+          SEND_REGION: !Ref AWS::Region
+          DOMAIN: !Ref Domain
+      Code:
+        ZipFile: |
+          # placeholder: deploy.sh uploads forwarder.py
+          def handler(event, context):
+              raise RuntimeError("not deployed yet")
+
+  ForwarderInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Forwarder
+      Action: lambda:InvokeFunction
+      Principal: ses.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/${RuleSetName}:receipt-rule/*'
+
+  RuleSet:
+    Type: AWS::SES::ReceiptRuleSet
+    Properties:
+      RuleSetName: !Ref RuleSetName
+
+  ForwardRule:
+    Type: AWS::SES::ReceiptRule
+    DependsOn: [InboundBucketPolicy, ForwarderInvokePermission]
+    Properties:
+      RuleSetName: !Ref RuleSet
+      Rule:
+        Name: forward-all
+        Enabled: true
+        ScanEnabled: true
+        TlsPolicy: Optional
+        Recipients: [!Ref Domain]
+        Actions:
+          - S3Action:
+              BucketName: !Ref InboundBucket
+              ObjectKeyPrefix: inbound/
+          - LambdaAction:
+              FunctionArn: !GetAtt Forwarder.Arn
+              InvocationType: Event
+
+Outputs:
+  BucketName:
+    Value: !Ref InboundBucket
+  RuleSetName:
+    Value: !Ref RuleSet
+  MxRecord:
+    Value: !Sub '10 inbound-smtp.${AWS::Region}.amazonaws.com'
