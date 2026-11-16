@@ -1,6 +1,7 @@
 import { gunzipSync } from 'zlib';
 import { aws } from './aws';
 import { db } from './db';
+import { syncRunning } from './deploys';
 
 export const COLLECT_DOCUMENT = 'OpsConsole-CollectStatus';
 const FRESH_MS = 30_000;            // serve cached snapshots younger than this
@@ -143,6 +144,7 @@ async function maybeSample(instanceId: number, s: Snapshot): Promise<void> {
 export function startPoller(): NodeJS.Timeout {
     const tick = async () => {
         const { rows } = await db().query<InstanceRow>('SELECT * FROM instances');
+        await syncRunning().catch(() => undefined);
         for (const row of rows) await freshInstance(row, true).catch(() => undefined);
         await db().query("DELETE FROM instance_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
     };

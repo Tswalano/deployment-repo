@@ -9,12 +9,12 @@ import { usePoll } from '../usePoll';
 
 const toneText = { ok: 'text-emerald-300', warn: 'text-amber-300', bad: 'text-rose-300', info: 'text-indigo-300', mute: 'text-slate-400' };
 
-function AppRow({ a }: { a: AppStatus }) {
+function AppRow({ a, instanceId }: { a: AppStatus; instanceId: number }) {
   const t = appTone(a);
   return (
     <tr>
       <td title={a.domain ?? a.project}>
-        <div className="flex items-center gap-2"><Dot tone={t} /><span className="truncate font-medium text-slate-100">{a.project}</span></div>
+        <div className="flex items-center gap-2"><Dot tone={t} /><Link to={`/instances/${instanceId}/apps/${a.project}`} className="truncate font-medium text-slate-100 hover:text-indigo-300 hover:underline">{a.project}</Link></div>
         <div className="truncate pl-3.5 text-xs text-slate-500">{a.domain ?? a.service}</div>
       </td>
       <td className={toneText[t]}>{a.healthy ? `HTTP ${a.healthCode} · ${a.healthMs} ms` : `Down · ${a.healthCode ?? 'no response'}`}</td>
@@ -87,7 +87,7 @@ export function InstanceDetail() {
                   <th className="hidden md:table-cell">Running version</th><th className="hidden w-[15%] lg:table-cell">Last deploy</th>
                   <th className="w-[26%] text-right md:w-[11%]">24h</th>
                 </tr></thead>
-                <tbody>{s.apps.map((a) => <AppRow key={a.project} a={a} />)}</tbody>
+                <tbody>{s.apps.map((a) => <AppRow key={a.project} a={a} instanceId={i.id} />)}</tbody>
               </table>
             )}
           </section>

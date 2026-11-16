@@ -16,11 +16,14 @@ const LABELS: Record<string, string> = {
   'instance.add': 'Added instance',
   'instance.update': 'Updated instance',
   'instance.remove': 'Removed instance',
+  'app.deploy': 'Started deploy',
+  'app.rollback': 'Started rollback',
+  'app.logs': 'Viewed logs',
 };
 
 const tone = (action: string) =>
   /failed|locked/.test(action) ? 'text-rose-300'
-    : action.startsWith('user.') ? 'text-violet-300' : action.startsWith('instance.') ? 'text-sky-300' : '';
+    : action.startsWith('user.') ? 'text-violet-300' : action.startsWith('instance.') ? 'text-sky-300' : action.startsWith('app.') ? 'text-amber-300' : '';
 
 export function Audit() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);

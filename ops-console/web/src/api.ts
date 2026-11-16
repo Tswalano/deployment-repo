@@ -70,6 +70,22 @@ export interface Overview {
   activity: DeployEvent[];
 }
 
+export interface Deployment {
+  id: number; instanceId: number; project: string; action: 'deploy' | 'rollback'; ref: string; requestedBy: string;
+  status: 'running' | 'success' | 'failed'; ssmStatus: string | null; createdAt: string; finishedAt: string | null;
+  output?: string | null; instance?: string;
+}
+export interface AppView {
+  instance: { id: number; name: string; awsInstanceId: string; region: string; environment: string; lastOkAt: string | null; lastError: string | null };
+  app: AppStatus;
+  database: Snapshot['databases'][number] | null;
+  certificate: Snapshot['certificates'][number] | null;
+  deploying: Snapshot['deploying'];
+  events: DeployEvent[];
+  deployments: Deployment[];
+  canOperate: boolean;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -111,6 +127,12 @@ export const api = {
   updateInstance: (id: number, b: { name?: string; environment?: string }) =>
     call<{ instance: Instance }>('PATCH', `/api/instances/${id}`, b).then((r) => r.instance),
   removeInstance: (id: number) => call('DELETE', `/api/instances/${id}`),
+  appView: (id: number, project: string) => call<AppView>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}`),
+  startDeployment: (id: number, project: string, action: 'deploy' | 'rollback', ref: string) =>
+    call<{ deployment: Deployment }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/${action}`, { ref }).then((r) => r.deployment),
+  deployment: (id: number) => call<{ deployment: Deployment }>('GET', `/api/deployments/${id}`).then((r) => r.deployment),
+  appLogs: (id: number, project: string, lines: number) =>
+    call<{ lines: string[]; fetchedAt: string }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/logs?lines=${lines}`),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 

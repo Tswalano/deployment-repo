@@ -7,7 +7,20 @@ export interface AwsProvider {
     ssmOnline(region: string, id: string): Promise<boolean>;
     /** Run one of the console's fixed SSM documents (no free-form commands) and return stdout. */
     runDocument(region: string, id: string, document: string, parameters?: Record<string, string[]>): Promise<string>;
+    /** Start a fixed document without waiting (long jobs such as deploys); returns the command id. */
+    sendDocument(region: string, id: string, document: string, parameters: Record<string, string[]>): Promise<string>;
+    /** Current state of a started command; null while SSM hasn't registered it yet. */
+    getInvocation(region: string, id: string, commandId: string): Promise<Invocation | null>;
 }
+
+export interface Invocation {
+    status: 'running' | 'success' | 'failed';
+    detail: string;          // SSM's own status, e.g. InProgress, TimedOut
+    stdout: string;
+    stderr: string;
+}
+
+const TERMINAL_FAILED = ['Failed', 'Cancelled', 'TimedOut', 'Cancelling', 'DeliveryTimedOut', 'ExecutionTimedOut', 'Undeliverable', 'Terminated'];
 
 export interface Ec2Info {
     name: string | null;
@@ -43,26 +56,33 @@ export const realAws: AwsProvider = {
         const out = await ssmc(region).send(new DescribeInstanceInformationCommand({ Filters: [{ Key: 'InstanceIds', Values: [id] }] }));
         return out.InstanceInformationList?.[0]?.PingStatus === 'Online';
     },
-    async runDocument(region, id, document, parameters) {
-        const client = ssmc(region);
-        const sent = await client.send(new SendCommandCommand({
-            InstanceIds: [id], DocumentName: document, Parameters: parameters, TimeoutSeconds: 60,
-            Comment: 'ops-console',
+    async sendDocument(region, id, document, parameters) {
+        const sent = await ssmc(region).send(new SendCommandCommand({
+            InstanceIds: [id], DocumentName: document, Parameters: parameters, TimeoutSeconds: 60, Comment: 'ops-console',
         }));
         const commandId = sent.Command?.CommandId;
         if (!commandId) throw new Error('SSM did not return a command id');
+        return commandId;
+    },
+    async getInvocation(region, id, commandId) {
+        try {
+            const inv = await ssmc(region).send(new GetCommandInvocationCommand({ CommandId: commandId, InstanceId: id }));
+            const detail = inv.Status ?? 'Pending';
+            const status = detail === 'Success' ? 'success' : TERMINAL_FAILED.includes(detail) ? 'failed' : 'running';
+            return { status, detail, stdout: inv.StandardOutputContent ?? '', stderr: inv.StandardErrorContent ?? '' };
+        } catch (err) {
+            if ((err as { name?: string }).name === 'InvocationDoesNotExist') return null;
+            throw err;
+        }
+    },
+    async runDocument(region, id, document, parameters) {
+        const commandId = await this.sendDocument(region, id, document, parameters ?? {});
         const deadline = Date.now() + 45_000;
         await sleep(1200);
         while (Date.now() < deadline) {
-            try {
-                const inv = await client.send(new GetCommandInvocationCommand({ CommandId: commandId, InstanceId: id }));
-                if (inv.Status === 'Success') return inv.StandardOutputContent ?? '';
-                if (['Failed', 'Cancelled', 'TimedOut', 'Cancelling'].includes(inv.Status ?? '')) {
-                    throw new Error(`SSM command ${inv.Status}: ${(inv.StandardErrorContent || '').slice(0, 200)}`);
-                }
-            } catch (err) {
-                if ((err as { name?: string }).name !== 'InvocationDoesNotExist') throw err;   // not registered yet
-            }
+            const inv = await this.getInvocation(region, id, commandId);
+            if (inv?.status === 'success') return inv.stdout;
+            if (inv?.status === 'failed') throw new Error(`SSM command ${inv.detail}: ${inv.stderr.slice(0, 200)}`);
             await sleep(1500);
         }
         throw new Error('SSM command timed out');
