@@ -6,21 +6,25 @@ set -Eeuo pipefail
 cd "$(dirname "$0")"
 REGION="${1:-${AWS_REGION:-af-south-1}}"
 
-doc_json() { # doc_json <script-file> <description>
-  python3 -I - "$1" "$2" <<'PY'
+doc_json() { # doc_json <script-file> <description> <timeout-seconds> [parameters-json]
+  python3 -I - "$1" "$2" "$3" "${4:-}" <<'PY'
 import json, sys
 lines = open(sys.argv[1]).read().splitlines()
-print(json.dumps({
+doc = {
   "schemaVersion": "2.2",
   "description": sys.argv[2],
   "mainSteps": [{"action": "aws:runShellScript", "name": "run",
-                 "inputs": {"timeoutSeconds": "60", "runCommand": lines}}],
-}))
+                 "inputs": {"timeoutSeconds": sys.argv[3], "runCommand": lines}}],
+}
+params = json.loads(sys.argv[4] or "{}")
+if params:
+    doc["parameters"] = params
+print(json.dumps(doc))
 PY
 }
 
-upsert() { # upsert <name> <script> <description>
-  local name=$1 content; content="$(doc_json "$2" "$3")"
+upsert() { # upsert <name> <script> <description> <timeout-seconds> [parameters-json]
+  local name=$1 content; content="$(doc_json "$2" "$3" "$4" "${5:-}")"
   if aws ssm describe-document --region "$REGION" --name "$name" >/dev/null 2>&1; then
     local v
     v="$(aws ssm update-document --region "$REGION" --name "$name" --content "$content" --document-version '$LATEST' \
@@ -34,5 +38,20 @@ upsert() { # upsert <name> <script> <description>
   fi
 }
 
+# Every parameter is pinned by allowedPattern/allowedValues (the scripts re-check them):
+# no quotes, spaces or shell metacharacters can reach the command line.
+DEPLOY_PARAMS='{
+  "action":  {"type": "String", "allowedValues": ["deploy", "rollback"]},
+  "project": {"type": "String", "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
+  "ref":     {"type": "String", "default": "", "allowedPattern": "^$|^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$"},
+  "actor":   {"type": "String", "allowedPattern": "^[A-Za-z0-9._@:-]{1,64}$"}
+}'
+LOGS_PARAMS='{
+  "project": {"type": "String", "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
+  "lines":   {"type": "String", "default": "200", "allowedPattern": "^[0-9]{2,3}$"}
+}'
+
 echo "→ SSM documents in $REGION"
-upsert OpsConsole-CollectStatus collect-status.sh "Ops Console: read-only status snapshot (no parameters)"
+upsert OpsConsole-CollectStatus collect-status.sh "Ops Console: read-only status snapshot (no parameters)" 60
+upsert OpsConsole-Deploy deploy-app.sh "Ops Console: deploy or roll back one project via server/pipeline.sh" 1800 "$DEPLOY_PARAMS"
+upsert OpsConsole-AppLogs app-logs.sh "Ops Console: recent journal lines of one project (secrets masked)" 60 "$LOGS_PARAMS"
