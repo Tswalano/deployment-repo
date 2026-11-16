@@ -8,6 +8,7 @@ import { Activity } from './pages/Activity';
 import { Alerts } from './pages/Alerts';
 import { AppDetail } from './pages/AppDetail';
 import { Audit } from './pages/Audit';
+import { Costs } from './pages/Costs';
 import { Backups } from './pages/Backups';
 import { InstanceDetail } from './pages/InstanceDetail';
 import { Instances } from './pages/Instances';
@@ -40,6 +41,7 @@ function App() {
         <Route path="alerts" element={<Alerts />} />
         <Route path="backups" element={<Backups />} />
         <Route path="secrets" element={<Secrets />} />
+        <Route path="costs" element={<Costs />} />
         <Route path="account" element={<Account />} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />

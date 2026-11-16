@@ -174,6 +174,17 @@ export interface InstanceBackups {
   verifications: BackupVerification[];
 }
 
+export interface Schedule {
+  name: string; group: string; action: 'start' | 'stop' | 'unknown'; instanceIds: string[]; expression: string; timezone: string;
+  enabled: boolean; next: string | null; time: string | null; days: number[] | null; editable: boolean; skip: { until: string; by: string } | null;
+}
+export interface CostSummary {
+  fetchedAt: string; currency: string; monthToDate: number; lastMonth: number; lastMonthSamePeriod: number; forecast: number; forecastSource: 'aws' | 'linear';
+  daily: { day: string; total: number }[]; services: { name: string; monthToDate: number; lastMonth: number }[];
+  period: { monthStart: string; today: string; daysInMonth: number };
+}
+export interface CostSettings { monthlyBudget: number | null; zarRate: number | null }
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -249,6 +260,13 @@ export const api = {
     call<{ ok: boolean; updated: string[]; restarted: string[]; dryRun?: boolean }>('POST', `/api/instances/${instanceId}/secrets/rotate`, { kind, target, confirm }),
   updateSecret: (instanceId: number, service: string, key: string, value: string) =>
     call<{ ok: boolean; name: string; dryRun: boolean }>('PUT', `/api/instances/${instanceId}/secrets/value`, { service, key, value }),
+  schedule: (id: number) => call<{ schedules: Schedule[] }>('GET', `/api/instances/${id}/schedule`).then((r) => r.schedules),
+  editSchedule: (id: number, name: string, b: { time?: string; days?: number[]; enabled?: boolean }) =>
+    call<{ schedules: Schedule[] }>('PUT', `/api/instances/${id}/schedule/${encodeURIComponent(name)}`, b),
+  skipStop: (id: number, name: string) => call<{ schedules: Schedule[]; until: string }>('POST', `/api/instances/${id}/schedule/${encodeURIComponent(name)}/skip`),
+  costs: () => call<{ summary: CostSummary; settings: CostSettings }>('GET', '/api/costs'),
+  refreshCosts: () => call<{ summary: CostSummary; settings: CostSettings; fetched: boolean }>('POST', '/api/costs/refresh'),
+  saveCostSettings: (b: { monthlyBudget: string | number | null; zarRate: string | number | null }) => call<{ settings: CostSettings }>('PUT', '/api/costs/settings', b),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 

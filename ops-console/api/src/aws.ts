@@ -1,5 +1,9 @@
 import { DescribeInstancesCommand, EC2Client, RebootInstancesCommand, StartInstancesCommand, StopInstancesCommand, TerminateInstancesCommand } from '@aws-sdk/client-ec2';
+import { CostExplorerClient, GetCostAndUsageCommand, GetCostForecastCommand } from '@aws-sdk/client-cost-explorer';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetScheduleCommand, ListSchedulesCommand, SchedulerClient, UpdateScheduleCommand } from '@aws-sdk/client-scheduler';
+import type { RawCostRow } from './costs';
+import type { RawSchedule } from './schedule';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { DescribeDocumentCommand, DescribeInstanceInformationCommand, DescribeParametersCommand, GetParameterCommand, PutParameterCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient } from '@aws-sdk/client-ssm';
 
@@ -21,6 +25,13 @@ export interface AwsProvider {
     listParameters?(region: string, path: string): Promise<ParamMeta[]>;
     getParameter?(region: string, name: string): Promise<string | null>;
     putParameter?(region: string, name: string, value: string): Promise<void>;
+    listSchedules?(region: string): Promise<RawSchedule[]>;
+    /** Change a schedule's expression and/or state, keeping its target, role and everything else as they are. */
+    updateSchedule?(region: string, group: string, name: string, patch: { expression?: string; state?: 'ENABLED' | 'DISABLED' }): Promise<void>;
+    /** Daily unblended cost per service, [start, end) as YYYY-MM-DD (Cost Explorer; USD 0.01 per request). */
+    costRows?(start: string, end: string): Promise<RawCostRow[]>;
+    /** Forecast unblended cost for [start, end) (one request). */
+    costForecast?(start: string, end: string): Promise<number | null>;
     /** The EC2 instance this console runs on (IMDSv2), or null when not on EC2. */
     selfInstanceId?(): Promise<string | null>;
     /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
@@ -51,6 +62,10 @@ const ec2: Record<string, EC2Client> = {};
 const ssm: Record<string, SSMClient> = {};
 const ec2c = (r: string) => (ec2[r] ??= new EC2Client({ region: r }));
 const ssmc = (r: string) => (ssm[r] ??= new SSMClient({ region: r }));
+const sched: Record<string, SchedulerClient> = {};
+const schedc = (r: string) => (sched[r] ??= new SchedulerClient({ region: r }));
+let ce: CostExplorerClient | null = null;
+const cec = () => (ce ??= new CostExplorerClient({ region: 'us-east-1' }));   // Cost Explorer's only endpoint
 const s3: Record<string, S3Client> = {};
 const s3c = (r: string) => (s3[r] ??= new S3Client({ region: r }));
 let selfId: string | null | undefined;
@@ -130,6 +145,52 @@ export const realAws: AwsProvider = {
     async putParameter(region, name, value) {
         await ssmc(region).send(new PutParameterCommand({ Name: name, Value: value, Type: 'SecureString', Overwrite: true }))
             .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+    },
+    async listSchedules(region) {
+        const out: RawSchedule[] = [];
+        let next: string | undefined;
+        do {
+            const r = await schedc(region).send(new ListSchedulesCommand({ NextToken: next, MaxResults: 100 }))
+                .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+            for (const s of r.Schedules ?? []) {
+                const d = await schedc(region).send(new GetScheduleCommand({ Name: s.Name, GroupName: s.GroupName }));
+                out.push({ name: d.Name!, group: d.GroupName ?? 'default', expression: d.ScheduleExpression ?? '', timezone: d.ScheduleExpressionTimezone ?? 'UTC',
+                    state: (d.State as 'ENABLED' | 'DISABLED') ?? 'ENABLED', targetArn: d.Target?.Arn ?? '', input: d.Target?.Input ?? null, description: d.Description ?? null });
+            }
+            next = r.NextToken;
+        } while (next);
+        return out;
+    },
+    async updateSchedule(region, group, name, patch) {
+        const d = await schedc(region).send(new GetScheduleCommand({ Name: name, GroupName: group }));
+        await schedc(region).send(new UpdateScheduleCommand({
+            Name: d.Name!, GroupName: d.GroupName, Description: d.Description, KmsKeyArn: d.KmsKeyArn,
+            ScheduleExpression: patch.expression ?? d.ScheduleExpression!, ScheduleExpressionTimezone: d.ScheduleExpressionTimezone,
+            StartDate: d.StartDate, EndDate: d.EndDate, State: patch.state ?? d.State, ActionAfterCompletion: d.ActionAfterCompletion,
+            FlexibleTimeWindow: d.FlexibleTimeWindow!, Target: d.Target!,
+        })).catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+    },
+    async costRows(start, end) {
+        const rows: RawCostRow[] = [];
+        let token: string | undefined;
+        do {
+            const r = await cec().send(new GetCostAndUsageCommand({
+                TimePeriod: { Start: start, End: end }, Granularity: 'DAILY', Metrics: ['UnblendedCost'],
+                GroupBy: [{ Type: 'DIMENSION', Key: 'SERVICE' }], NextPageToken: token,
+            })).catch((err) => { throw new Error(awsErrorMessage(err, 'us-east-1')); });
+            for (const day of r.ResultsByTime ?? []) {
+                for (const g of day.Groups ?? []) {
+                    const m = g.Metrics?.UnblendedCost;
+                    rows.push({ day: day.TimePeriod!.Start!, service: g.Keys?.[0] ?? 'Other', amount: Number(m?.Amount ?? 0), unit: m?.Unit ?? 'USD' });
+                }
+            }
+            token = r.NextPageToken;
+        } while (token);
+        return rows;
+    },
+    async costForecast(start, end) {
+        const r = await cec().send(new GetCostForecastCommand({ TimePeriod: { Start: start, End: end }, Metric: 'UNBLENDED_COST', Granularity: 'MONTHLY' }));
+        return r.Total?.Amount ? Number(r.Total.Amount) : null;
     },
     async selfInstanceId() {
         if (selfId !== undefined) return selfId;

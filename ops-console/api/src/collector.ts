@@ -3,6 +3,8 @@ import { aws } from './aws';
 import { db } from './db';
 import { dispatch, evaluateInstance } from './alerts';
 import { autoVerify } from './backups';
+import { refreshCosts } from './costs';
+import { reenableExpiredSkips } from './schedule';
 import { expirePending, syncRunning } from './deploys';
 
 export const COLLECT_DOCUMENT = 'OpsConsole-CollectStatus';
@@ -192,6 +194,8 @@ export function startPoller(): NodeJS.Timeout {
         const { rows } = await db().query<InstanceRow>('SELECT * FROM instances');
         await syncRunning().catch(() => undefined);
         await expirePending().catch(() => undefined);
+        await reenableExpiredSkips().catch((err) => console.error('schedule re-enable failed:', (err as Error).message));
+        await refreshCosts('auto').catch(() => undefined);   // at most once every 20h
         for (const row of rows) {
             const fresh = await freshInstance(row, true).catch(() => null);
             if (fresh) await evaluateInstance(fresh).catch((err) => console.error('alert rules failed:', (err as Error).message));

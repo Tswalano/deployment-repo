@@ -26,6 +26,8 @@ const LABELS: Record<string, string> = {
   'backup.verify': 'Restore-tested a backup',
   'backup.download': 'Downloaded a backup',
   'policy.update': 'Changed deploy policy',
+  'schedule.update': 'Changed a schedule', 'schedule.skip': 'Skipped tonight’s stop',
+  'costs.refresh': 'Refreshed costs', 'costs.settings': 'Changed cost settings',
   'secret.rotate': 'Rotated a secret', 'secret.update': 'Replaced a secret value',
   'instance.start': 'Started instance', 'instance.stop': 'Stopped instance', 'instance.reboot': 'Rebooted instance', 'instance.terminate': 'Terminated instance',
   'app.deploy_requested': 'Requested deploy', 'app.rollback_requested': 'Requested rollback',
