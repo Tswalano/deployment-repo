@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
+import { dryRun } from './aws';
 import { db } from './db';
 import { checkOrigin, denyDemo, Env, loadSession, requireRole } from './middleware';
 import alerts, { uptime } from './routes/alerts';
@@ -24,7 +25,7 @@ export function createApp() {
 
     app.get('/api/health', async (c) => {
         await db().query('SELECT 1');
-        return c.json({ status: 'ok' });
+        return c.json(dryRun ? { status: 'ok', mode: 'local-dry-run' } : { status: 'ok' });
     });
 
     app.use('/api/*', loadSession, checkOrigin);

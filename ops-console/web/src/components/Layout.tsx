@@ -67,6 +67,8 @@ export function Layout() {
   const { pathname } = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   const [alerts, setAlerts] = useState({ open: 0, critical: 0 });
+  const [localMode, setLocalMode] = useState(false);
+  useEffect(() => { fetch('/api/health').then((r) => r.json()).then((h) => setLocalMode(h.mode === 'local-dry-run')).catch(() => undefined); }, []);
   useEffect(() => {
     if (!user) return;
     const load = () => api.alerts('open').then((r) => setAlerts(r.counts)).catch(() => undefined);
@@ -82,6 +84,11 @@ export function Layout() {
 
   return (
     <div className="min-h-screen pb-20 md:pb-0">
+      {localMode && (
+        <div className="border-b border-fuchsia-500/30 bg-fuchsia-500/10 px-4 py-2 text-center text-xs text-fuchsia-200">
+          Local test mode: live data from AWS, but deploys and “Back up now” are simulated and notifications are only logged.
+        </div>
+      )}
       {user.isDemo && (
         <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-200">
           Read-only demo — you can look at everything; nothing you do changes anything.

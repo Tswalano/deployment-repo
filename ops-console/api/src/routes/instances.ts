@@ -113,6 +113,9 @@ instances.post('/', ...adminOnly, async (c) => {
         return c.json({ error: `Tag the instance with ops-console = managed first (EC2 console → Tags). The console may only manage tagged instances.` }, 400);
     }
     if (info.state !== 'running') return c.json({ error: `The instance is ${info.state}. Start it, then add it.` }, 400);
+    if (aws().documentsReady && !(await aws().documentsReady!(region).catch(() => true))) {
+        return c.json({ error: `The Ops Console isn't set up in ${region} yet: its SSM documents are regional. Run infra/ops-console-ssm/deploy.sh ${region}, then add the instance again.` }, 400);
+    }
     if (!(await aws().ssmOnline(region, awsId).catch(() => false))) {
         return c.json({ error: 'SSM can\'t reach the instance. It needs the SSM agent and an instance profile with AmazonSSMManagedInstanceCore.' }, 400);
     }
