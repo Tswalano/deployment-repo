@@ -4,6 +4,7 @@ import { ActivityList } from '../components/ActivityList';
 import { InstanceCard } from '../components/InstanceCard';
 import { ago, Alert, bytes, Cells, Eyebrow, Kpi, PageHeader, Skeleton, Sparkline, Tone } from '../components/ui';
 import { appTone } from '../health';
+import { UptimeTable } from '../components/uptime';
 import { usePoll } from '../usePoll';
 
 
@@ -126,6 +127,7 @@ function Capacity({ data }: { data: OverviewData }) {
 
 export function Overview() {
   const { data, error, loading, reload } = usePoll(api.overview, 30_000);
+  const { data: uptime } = usePoll(api.uptime, 60_000);
   const k = data?.kpis;
   const score = k && k.appsTotal ? Math.round((k.appsHealthy / k.appsTotal) * 1000) / 10 : null;
   const scoreTone: Tone = score == null ? 'mute' : score >= 99 ? 'ok' : score >= 75 ? 'warn' : 'bad';
@@ -145,6 +147,14 @@ export function Overview() {
         </button>}
       />
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
+      {data && data.alerts.open > 0 && (
+        <Link to="/alerts" className={`mb-5 flex items-center gap-3 rounded-xl border px-4 py-3 text-sm transition hover:brightness-125 ${data.alerts.critical
+          ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>
+          <span className={`h-2 w-2 shrink-0 animate-pulse rounded-full motion-reduce:animate-none ${data.alerts.critical ? 'bg-rose-400' : 'bg-amber-400'}`} />
+          <span className="min-w-0 flex-1 truncate">{data.alerts.open} open alert{data.alerts.open === 1 ? '' : 's'}{data.alerts.critical ? `, ${data.alerts.critical} critical` : ''}</span>
+          <span className="shrink-0 text-xs opacity-80">View →</span>
+        </Link>
+      )}
 
       {!data ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[104px]" />)}</div>
@@ -161,12 +171,19 @@ export function Overview() {
             <Kpi label="Instances" tone={k!.instancesOnline === k!.instances ? 'ok' : 'warn'} value={`${k!.instancesOnline}/${k!.instances}`} unit="online" />
             <Kpi label="Warnings 24h" tone={k!.warnings24h ? 'warn' : 'ok'} value={k!.warnings24h} unit="log lines" />
             <Kpi label="Errors 24h" tone={k!.errors24h ? 'bad' : 'ok'} value={k!.errors24h} unit="log lines" className="hidden sm:block" />
-            <Kpi label="Databases" tone="info" value={k!.databases} unit={k!.certificatesExpiringSoon ? `${k!.certificatesExpiringSoon} cert renewing` : 'all certs OK'} className="hidden sm:block" />
+            <Kpi label="Open alerts" tone={data.alerts.critical ? 'bad' : data.alerts.open ? 'warn' : 'ok'} value={data.alerts.open} unit={data.alerts.critical ? `${data.alerts.critical} critical` : data.alerts.open ? 'warnings' : 'all clear'} className="hidden sm:block" />
           </div>
 
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="min-w-0 space-y-5">
               <ServiceHealth instances={data.instances} />
+              <section className="card">
+                <div className="mb-4 flex items-baseline justify-between gap-3">
+                  <h2 className="font-medium text-slate-100">Uptime <span className="ml-1 text-sm font-normal text-slate-500">public endpoints, checked every minute</span></h2>
+                  <span className="hidden text-xs text-slate-500 md:inline">90 days</span>
+                </div>
+                {uptime ? <UptimeTable apps={uptime} /> : <Skeleton className="h-24" />}
+              </section>
               <div className="hidden gap-5 sm:grid sm:grid-cols-3">
                 <MetricCard title="Memory utilization" value={k!.memPct?.toFixed(1) ?? '—'} unit="%" values={mem} tone="info" />
                 <MetricCard title="Disk usage" value={k!.diskPct?.toFixed(1) ?? '—'} unit="%" values={disk} tone="ok" />

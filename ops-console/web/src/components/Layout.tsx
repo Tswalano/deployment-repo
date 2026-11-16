@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { ROLE_INFO } from '../api';
+import { api, ROLE_INFO } from '../api';
 import { useAuth } from '../auth';
 
 type Tab = { to: string; label: string; end?: boolean; admin?: boolean; mobile?: boolean; icon: JSX.Element };
@@ -14,6 +14,7 @@ const TABS: Tab[] = [
   { to: '/', label: 'Overview', end: true, mobile: true, icon: <Icon d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /> },
   { to: '/instances', label: 'Instances', mobile: true, icon: <Icon d="M4 6h16M4 12h16M4 18h16M7 6v0M7 12v0M7 18v0" /> },
   { to: '/activity', label: 'Activity', mobile: true, icon: <Icon d="M3 12h4l3-8 4 16 3-8h4" /> },
+  { to: '/alerts', label: 'Alerts', mobile: true, icon: <Icon d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /> },
   { to: '/users', label: 'Users', admin: true, icon: <Icon d="M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 19v-1a4 4 0 0 0-3-3.9M16 2.1a4 4 0 0 1 0 7.8" /> },
   { to: '/audit', label: 'Audit log', admin: true, icon: <Icon d="M9 12h6M9 16h6M9 8h2M6 3h9l5 5v13H6z" /> },
   { to: '/settings', label: 'Settings', admin: true, icon: <Icon d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /> },
@@ -64,8 +65,19 @@ export function Layout() {
   const { user } = useAuth();
   const { pathname } = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  const [alerts, setAlerts] = useState({ open: 0, critical: 0 });
+  useEffect(() => {
+    if (!user) return;
+    const load = () => api.alerts('open').then((r) => setAlerts(r.counts)).catch(() => undefined);
+    void load();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 60_000);
+    return () => clearInterval(t);
+  }, [user, pathname]);
   if (!user) return null;
   const tabs = TABS.filter((t) => !t.admin || user.role === 'admin');
+  const badge = (t: Tab) => t.to === '/alerts' && alerts.open > 0 && (
+    <span className={`num ml-0.5 rounded-full px-1.5 text-2xs font-semibold ${alerts.critical ? 'bg-rose-500 text-white' : 'bg-amber-400 text-ink-950'}`}>{alerts.open}</span>
+  );
 
   return (
     <div className="min-h-screen pb-20 md:pb-0">
@@ -95,7 +107,7 @@ export function Layout() {
                      className={({ isActive }) => `-mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors ${isActive
                        ? 'border-indigo-400 font-medium text-slate-100'
                        : 'border-transparent text-slate-400 hover:border-ink-500 hover:text-slate-200'}`}>
-              {t.icon}{t.label}
+              {t.icon}{t.label}{badge(t)}
             </NavLink>
           ))}
         </nav>
@@ -106,11 +118,12 @@ export function Layout() {
       </main>
 
       {/* Phones: only the views that make sense on a small screen */}
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
         {TABS.filter((t) => t.mobile).map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end}
-                   className={({ isActive }) => `flex flex-col items-center gap-1 py-2.5 text-2xs font-medium ${isActive ? 'text-indigo-300' : 'text-slate-500'}`}>
+                   className={({ isActive }) => `relative flex flex-col items-center gap-1 py-2.5 text-2xs font-medium ${isActive ? 'text-indigo-300' : 'text-slate-500'}`}>
             {t.icon}{t.label}
+            {t.to === '/alerts' && alerts.open > 0 && <span className={`absolute right-[calc(50%-1.1rem)] top-1.5 h-2 w-2 rounded-full ${alerts.critical ? 'bg-rose-500' : 'bg-amber-400'}`} />}
           </NavLink>
         ))}
       </nav>

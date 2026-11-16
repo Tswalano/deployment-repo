@@ -179,6 +179,18 @@ New values never appear on a command line or in output. Provider keys (Paystack,
 
 ---
 
+
+### Alerts and uptime (Ops Console)
+- The console probes each app's **public** health URL (`https://<DOMAIN><path of HEALTH_URL>`) every minute and keeps
+  30 days of raw checks plus daily roll-ups (~13 months) for the 90-day uptime bars.
+- Alert rules: app down (N failed checks), slow (p95), instance unreachable via SSM, disk, memory, TLS certificate,
+  backup failed/stale, deploy failed or auto-rolled-back, stuck database sessions. Thresholds and recipients live in
+  **Settings → Alerts & notifications** (admin). Email goes through SES as `ops@glenify.studio`
+  (IAM: `infra/iam/instance-send-email-ops.json`); Slack/Discord webhooks are optional.
+- The console runs on the instance it watches, so a hung instance is covered externally:
+  `./infra/ops-alarms/setup.sh <email>` creates an SNS topic and a CloudWatch alarm on EC2 status checks
+  (missing data while the instance is stopped counts as OK).
+
 ## Repository layout
 
 ```

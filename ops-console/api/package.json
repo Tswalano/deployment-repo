@@ -18,7 +18,8 @@
     "hono": "4.13.18",
     "pg": "8.23.1",
     "@aws-sdk/client-ec2": "3.967.0",
-    "@aws-sdk/client-ssm": "3.967.0"
+    "@aws-sdk/client-ssm": "3.967.0",
+    "@aws-sdk/client-sesv2": "3.967.0"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",

@@ -1,6 +1,7 @@
 import { gunzipSync } from 'zlib';
 import { aws } from './aws';
 import { db } from './db';
+import { dispatch, evaluateInstance } from './alerts';
 import { syncRunning } from './deploys';
 
 export const COLLECT_DOCUMENT = 'OpsConsole-CollectStatus';
@@ -37,7 +38,7 @@ export interface Snapshot {
         az?: string;
     };
     apps: Array<{
-        project: string; domain: string | null; service: string; active: string; healthy: boolean;
+        project: string; domain: string | null; healthPath?: string | null; service: string; active: string; healthy: boolean;
         healthCode: number | null; healthMs: number | null; memory: number | null; restarts: number | null;
         uptimeSeconds: number | null; sha: string | null; subject: string | null; db: string | null;
         warnings24h: number; errors24h: number;
@@ -78,7 +79,7 @@ export function normalise(raw: { source: string; data: any }): Snapshot {
             const code = p.health?.code ?? null;
             const ls = p.deploy_summary?.last_success;
             return {
-                project: p.project, domain: p.domain ?? null, service: p.service, active: p.unit?.active ?? 'unknown',
+                project: p.project, domain: p.domain ?? null, healthPath: healthPathOf(p.health_url), service: p.service, active: p.unit?.active ?? 'unknown',
                 healthy: p.unit?.active === 'active' && code >= 200 && code < 300,
                 healthCode: code, healthMs: p.health?.ms ?? null, memory: p.unit?.memory ?? null,
                 restarts: p.unit?.restarts ?? null, uptimeSeconds: p.unit?.uptime_seconds ?? null,
@@ -113,6 +114,12 @@ export function normalise(raw: { source: string; data: any }): Snapshot {
     };
     if (raw.source !== 'agent') snap.runningServices = d.running_services;
     return snap;
+}
+
+/** Path part of the app's local health URL, e.g. http://127.0.0.1:3000/health → /health. */
+function healthPathOf(url: unknown): string | null {
+    if (typeof url !== 'string') return null;
+    try { return new URL(url).pathname || '/'; } catch { return null; }
 }
 
 export function decodeOutput(stdout: string): { source: string; data: unknown } {
@@ -172,7 +179,11 @@ export function startPoller(): NodeJS.Timeout {
     const tick = async () => {
         const { rows } = await db().query<InstanceRow>('SELECT * FROM instances');
         await syncRunning().catch(() => undefined);
-        for (const row of rows) await freshInstance(row, true).catch(() => undefined);
+        for (const row of rows) {
+            const fresh = await freshInstance(row, true).catch(() => null);
+            if (fresh) await evaluateInstance(fresh).catch((err) => console.error('alert rules failed:', (err as Error).message));
+        }
+        await dispatch().catch((err) => console.error('alert dispatch failed:', (err as Error).message));
         await db().query("DELETE FROM instance_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
         await db().query("DELETE FROM db_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
     };

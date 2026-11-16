@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { createApp } from './app';
 import { startPoller } from './collector';
+import { startUptime } from './uptime';
 import { config } from './config';
 import { migrate } from './migrate';
 import { purgeExpiredSessions } from './sessions';
@@ -24,6 +25,7 @@ async function main() {
     }
 
     startPoller();
+    startUptime();
     setInterval(() => purgeExpiredSessions().catch(() => undefined), 60 * 60 * 1000).unref();
     serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) =>
         console.log(`ops-console listening on http://${info.address}:${info.port}`));

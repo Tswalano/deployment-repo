@@ -48,7 +48,11 @@ instances.get('/overview', async (c) => {
     const activity = list.flatMap((r) => (r.last_status?.deployEvents ?? []).map((e) => ({ ...e, instance: r.name })))
         .sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 12);
 
+    const { rows: [alertCounts] } = await db().query(
+        `SELECT count(*) FILTER (WHERE resolved_at IS NULL)::int AS open,
+                count(*) FILTER (WHERE resolved_at IS NULL AND severity = 'critical')::int AS critical FROM alerts`);
     return c.json({
+        alerts: alertCounts,
         generatedAt: new Date().toISOString(),
         kpis: {
             instances: list.length,
