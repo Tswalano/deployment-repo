@@ -4,6 +4,7 @@
 #
 #   ops-console/dev/local.sh            build once, serve on http://localhost:9300
 #   ops-console/dev/local.sh --watch    rebuild on every change: http://localhost:5173 (hot reload)
+#   ops-console/dev/local.sh --password admin   choose a local login's password (server must be running)
 #
 # - Live data: talks to the real instance through SSM with your AWS CLI credentials.
 # - Local database (ops-console/.local, git-ignored) with test logins; see ops-console/.local/credentials.txt
@@ -17,6 +18,12 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"; STATE="$ROOT/.local"; mkdir -p "$STATE"
 API_PORT="${OPS_LOCAL_PORT:-9300}"
 WATCH=0; [[ "${1:-}" == --watch ]] && WATCH=1
+if [[ "${1:-}" == --password ]]; then   # local.sh --password <user>: choose a local test login's password
+  u="${2:?usage: local.sh --password <admin|deployer|viewer>}"
+  read -r -s -p "New local password for $u: " p1; echo; read -r -s -p "Repeat: " p2; echo
+  [[ "$p1" == "$p2" ]] || { echo "✘ passwords differ"; exit 1; }
+  printf '%s' "$p1" | node dev/set-password.cjs "$u"; exit $?
+fi
 aws sts get-caller-identity >/dev/null 2>&1 || { echo "✘ AWS CLI has no working credentials (needed for live data)"; exit 1; }
 for port in "${OPS_LOCAL_PG_PORT:-55432}" "$API_PORT" 5173; do
   if ss -ltn 2>/dev/null | grep -q ":$port "; then echo "✘ port $port is already in use (another local.sh still running?)"; exit 1; fi

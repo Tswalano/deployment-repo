@@ -1,7 +1,7 @@
-import { DescribeInstancesCommand, EC2Client } from '@aws-sdk/client-ec2';
+import { DescribeInstancesCommand, EC2Client, RebootInstancesCommand, StartInstancesCommand, StopInstancesCommand, TerminateInstancesCommand } from '@aws-sdk/client-ec2';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { DescribeDocumentCommand, DescribeInstanceInformationCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { DescribeDocumentCommand, DescribeInstanceInformationCommand, DescribeParametersCommand, GetParameterCommand, PutParameterCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient } from '@aws-sdk/client-ssm';
 
 /** Everything the console needs from AWS, behind an interface so tests can use a fake. */
 export interface AwsProvider {
@@ -15,9 +15,20 @@ export interface AwsProvider {
     sendDocument(region: string, id: string, document: string, parameters: Record<string, string[]>): Promise<string>;
     /** Current state of a started command; null while SSM hasn't registered it yet. */
     getInvocation(region: string, id: string, commandId: string): Promise<Invocation | null>;
+    /** Start / stop / reboot / terminate. dryRun asks EC2 whether it *would* be allowed, changing nothing. */
+    powerAction?(region: string, id: string, action: PowerAction, dryRun: boolean): Promise<void>;
+    /** Parameter names/metadata under a path (DescribeParameters: never values). */
+    listParameters?(region: string, path: string): Promise<ParamMeta[]>;
+    getParameter?(region: string, name: string): Promise<string | null>;
+    putParameter?(region: string, name: string, value: string): Promise<void>;
+    /** The EC2 instance this console runs on (IMDSv2), or null when not on EC2. */
+    selfInstanceId?(): Promise<string | null>;
     /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
     presignGet(region: string, bucket: string, key: string, seconds: number, filename: string): Promise<string>;
 }
+
+export interface ParamMeta { name: string; type: string; version: number; lastModified: string | null; lastModifiedBy: string | null }
+export type PowerAction = 'start' | 'stop' | 'reboot' | 'terminate';
 
 export interface Invocation {
     status: 'running' | 'success' | 'failed';
@@ -42,6 +53,7 @@ const ec2c = (r: string) => (ec2[r] ??= new EC2Client({ region: r }));
 const ssmc = (r: string) => (ssm[r] ??= new SSMClient({ region: r }));
 const s3: Record<string, S3Client> = {};
 const s3c = (r: string) => (s3[r] ??= new S3Client({ region: r }));
+let selfId: string | null | undefined;
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 /** Turn AWS SDK errors into something a person can act on (some arrive with the message "Unknown"). */
@@ -74,6 +86,59 @@ export const realAws: AwsProvider = {
     async ssmOnline(region, id) {
         const out = await ssmc(region).send(new DescribeInstanceInformationCommand({ Filters: [{ Key: 'InstanceIds', Values: [id] }] }));
         return out.InstanceInformationList?.[0]?.PingStatus === 'Online';
+    },
+    async powerAction(region, id, action, dryRun) {
+        const input = { InstanceIds: [id], DryRun: dryRun };
+        const cmd = action === 'start' ? new StartInstancesCommand(input) : action === 'stop' ? new StopInstancesCommand(input)
+            : action === 'reboot' ? new RebootInstancesCommand(input) : new TerminateInstancesCommand(input);
+        try {
+            await ec2c(region).send(cmd as never);
+        } catch (err) {
+            const name = (err as { name?: string }).name;
+            if (dryRun && name === 'DryRunOperation') return;   // "would have succeeded"
+            if (name === 'OperationNotPermitted') throw new Error('AWS refused: termination protection is on for this instance (disable it in the EC2 console first).');
+            if (name === 'IncorrectInstanceState') throw new Error(`The instance isn't in a state that allows "${action}" right now.`);
+            if (name === 'UnauthorizedOperation') throw new Error(`Not permitted: the console may only ${action} instances tagged ops-console=managed.`);
+            throw new Error(awsErrorMessage(err, region));
+        }
+    },
+    async listParameters(region, path) {
+        const out: ParamMeta[] = [];
+        let next: string | undefined;
+        do {
+            const r = await ssmc(region).send(new DescribeParametersCommand({
+                ParameterFilters: [{ Key: 'Path', Option: 'Recursive', Values: [path] }], MaxResults: 50, NextToken: next,
+            })).catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+            for (const p of r.Parameters ?? []) {
+                out.push({ name: p.Name!, type: p.Type ?? 'String', version: p.Version ?? 1,
+                    lastModified: p.LastModifiedDate ? p.LastModifiedDate.toISOString() : null,
+                    lastModifiedBy: p.LastModifiedUser ? p.LastModifiedUser.split(/[:/]/).pop() ?? null : null });
+            }
+            next = r.NextToken;
+        } while (next);
+        return out;
+    },
+    async getParameter(region, name) {
+        try {
+            const r = await ssmc(region).send(new GetParameterCommand({ Name: name, WithDecryption: true }));
+            return r.Parameter?.Value ?? null;
+        } catch (err) {
+            if ((err as { name?: string }).name === 'ParameterNotFound') return null;
+            throw new Error(awsErrorMessage(err, region));
+        }
+    },
+    async putParameter(region, name, value) {
+        await ssmc(region).send(new PutParameterCommand({ Name: name, Value: value, Type: 'SecureString', Overwrite: true }))
+            .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+    },
+    async selfInstanceId() {
+        if (selfId !== undefined) return selfId;
+        try {
+            const token = await (await fetch('http://169.254.169.254/latest/api/token', { method: 'PUT', headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '60' }, signal: AbortSignal.timeout(1000) })).text();
+            const id = await (await fetch('http://169.254.169.254/latest/meta-data/instance-id', { headers: { 'X-aws-ec2-metadata-token': token }, signal: AbortSignal.timeout(1000) })).text();
+            selfId = /^i-[0-9a-f]+$/.test(id) ? id : null;
+        } catch { selfId = null; }
+        return selfId;
     },
     async documentsReady(region) {
         try {
@@ -115,7 +180,7 @@ export const realAws: AwsProvider = {
         while (Date.now() < deadline) {
             const inv = await this.getInvocation(region, id, commandId);
             if (inv?.status === 'success') return inv.stdout;
-            if (inv?.status === 'failed') throw new Error(`SSM command ${inv.detail}: ${inv.stderr.slice(0, 200)}`);
+            if (inv?.status === 'failed') throw new Error(`SSM command ${inv.detail}: ${(inv.stderr || inv.stdout).slice(-500)}`);
             await sleep(1500);
         }
         throw new Error('SSM command timed out');
@@ -145,7 +210,14 @@ const dryAware: AwsProvider = {
             ? { status: 'running', detail: 'InProgress', stdout: '', stderr: '' }
             : { status: 'success', detail: 'Success', stdout: s.text, stderr: '' };
     },
+    async powerAction(region, id, action) {
+        return realAws.powerAction!(region, id, action, true);
+    },
+    async putParameter() { /* local test mode: never write secrets */ },
     async runDocument(region, id, document, parameters, timeoutMs) {
+        if (document === 'OpsConsole-RotateSecret') {
+            return JSON.stringify({ ok: true, kind: parameters?.kind?.[0], target: parameters?.target?.[0], dryRun: true, updated: [], restarted: [], health: {} });
+        }
         if (document === 'OpsConsole-BackupAction' && parameters?.action?.[0] === 'run') {
             return JSON.stringify({ ok: true, seconds: 0, status: { at: new Date().toISOString(), ok: true, dryRun: true } });
         }

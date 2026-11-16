@@ -71,4 +71,9 @@ BACKUP_PARAMS='{
 }'
 upsert OpsConsole-Backups backups-list.sh "Ops Console: read-only inventory of database backups (no parameters)" 60
 upsert OpsConsole-BackupAction backup-action.sh "Ops Console: run a backup, restore-test a dump into a throwaway DB, or export one for download" 600 "$BACKUP_PARAMS"
+ROTATE_PARAMS='{
+  "kind":   {"type": "String", "allowedValues": ["db-password", "jwt", "reload"]},
+  "target": {"type": "String", "allowedPattern": "^[a-z_][a-z0-9_-]{0,30}$"}
+}'
+upsert OpsConsole-RotateSecret rotate-secret.sh "Ops Console: rotate a DB password or JWT secret, or reload an app's secrets, with automatic restore" 600 "$ROTATE_PARAMS"
 upsert OpsConsole-AppDetail app-detail.sh "Ops Console: read-only detail of one project (unit, health, git, deploys, database)" 60 "$DETAIL_PARAMS"

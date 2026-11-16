@@ -63,6 +63,7 @@ export interface Snapshot {
 export interface Instance {
   id: number; name: string; awsInstanceId: string; region: string; environment: string;
   createdAt: string; lastFetchedAt: string | null; lastOkAt: string | null; lastError: string | null;
+  ec2State?: string | null; ec2StateAt?: string | null; isConsoleHost?: boolean;
   status: Snapshot | null;
 }
 export interface Sample { instanceId?: number; at: string; memPct: number | null; diskPct: number | null; load1: number | null; swapPct: number | null; appsHealthy: number | null; appsTotal: number | null }
@@ -208,7 +209,9 @@ export const api = {
   overview: () => call<Overview>('GET', '/api/instances/overview'),
   instances: () => call<{ instances: Instance[] }>('GET', '/api/instances').then((r) => r.instances),
   instance: (id: number, refresh = false) =>
-    call<{ instance: Instance; samples: Sample[]; dbSeries: Record<string, DbPoint[]> }>('GET', `/api/instances/${id}${refresh ? '?refresh=1' : ''}`),
+    call<{ instance: Instance; samples: Sample[]; dbSeries: Record<string, DbPoint[]>; powerDryRun: boolean }>('GET', `/api/instances/${id}${refresh ? '?refresh=1' : ''}`),
+  power: (id: number, action: 'start' | 'reboot' | 'stop' | 'terminate', b: { confirm?: string; reason?: string }) =>
+    call<{ ok: boolean; message: string; state: string | null; dryRun: boolean }>('POST', `/api/instances/${id}/power`, { action, ...b }),
   addInstance: (b: { awsInstanceId: string; region: string; name: string; environment: string }) =>
     call<{ instance: Instance }>('POST', '/api/instances', b).then((r) => r.instance),
   updateInstance: (id: number, b: { name?: string; environment?: string }) =>
@@ -241,6 +244,11 @@ export const api = {
     call<{ verification: BackupVerification }>('POST', `/api/backups/${instanceId}/verify`, { db, file }).then((r) => r.verification),
   downloadBackup: (instanceId: number, db: string, file: string) =>
     call<{ url: string; expiresAt: string; bytes: number; sha256: string }>('POST', `/api/backups/${instanceId}/download`, { db, file }),
+  secrets: (instanceId: number) => call<unknown>('GET', `/api/instances/${instanceId}/secrets`),
+  rotateSecret: (instanceId: number, kind: 'db-password' | 'jwt', target: string, confirm: string) =>
+    call<{ ok: boolean; updated: string[]; restarted: string[]; dryRun?: boolean }>('POST', `/api/instances/${instanceId}/secrets/rotate`, { kind, target, confirm }),
+  updateSecret: (instanceId: number, service: string, key: string, value: string) =>
+    call<{ ok: boolean; name: string; dryRun: boolean }>('PUT', `/api/instances/${instanceId}/secrets/value`, { service, key, value }),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 

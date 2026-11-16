@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { audit } from '../audit';
-import { aws } from '../aws';
+import { announce } from '../alerts';
+import { aws, dryRun, PowerAction } from '../aws';
 import { COLLECT_DOCUMENT, freshInstance, InstanceRow } from '../collector';
 import { db } from '../db';
 import { dbSeries } from '../insights';
-import { denyDemo, Env, requireRole } from '../middleware';
+import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
 
 const instances = new Hono<Env>();
 instances.use('*', requireRole('viewer'));
@@ -17,6 +18,7 @@ function view(r: InstanceRow) {
     return {
         id: r.id, name: r.name, awsInstanceId: r.aws_instance_id, region: r.region, environment: r.environment,
         createdAt: r.created_at, lastFetchedAt: r.last_fetched_at, lastOkAt: r.last_ok_at, lastError: r.last_error,
+        ec2State: r.ec2_state ?? null, ec2StateAt: r.ec2_state_at ?? null,
         status: r.last_status,
     };
 }
@@ -84,7 +86,8 @@ instances.get('/:id', async (c) => {
         `SELECT at, mem_pct AS "memPct", disk_pct AS "diskPct", load1, swap_pct AS "swapPct",
                 apps_healthy AS "appsHealthy", apps_total AS "appsTotal"
            FROM instance_samples WHERE instance_id = $1 AND at > now() - interval '24 hours' ORDER BY at`, [id]);
-    return c.json({ instance: view(row), samples, dbSeries: await dbSeries(id) });
+    const self = await aws().selfInstanceId?.().catch(() => null);
+    return c.json({ instance: { ...view(row), isConsoleHost: !!self && self === row.aws_instance_id }, samples, dbSeries: await dbSeries(id), powerDryRun: dryRun });
 });
 
 // ------------------------------------------------------------------ admin: add / rename / remove
@@ -151,6 +154,49 @@ instances.delete('/:id', ...adminOnly, async (c) => {
     if (!rows.length) return c.json({ error: 'Instance not found' }, 404);
     await audit({ id: c.get('user')!.id, username: c.get('user')!.username }, 'instance.remove', `${rows[0].name} (${rows[0].aws_instance_id})`, {}, c.get('ip'));
     return c.json({ ok: true });
+});
+
+// ------------------------------------------------------------------ power: start / reboot / stop / terminate
+const POWER_ROLE: Record<PowerAction, 'deployer' | 'admin'> = { start: 'deployer', reboot: 'deployer', stop: 'admin', terminate: 'admin' };
+const PAST: Record<PowerAction, string> = { start: 'started', reboot: 'rebooted', stop: 'stopped', terminate: 'terminated' };
+
+instances.post('/:id/power', requireRole('deployer'), denyDemo, rateLimit(10, 10 * 60_000, (c) => `power:${c.get('user')!.id}`), async (c) => {
+    const user = c.get('user')!;
+    const b = await c.req.json().catch(() => ({}));
+    const action = String(b.action ?? '') as PowerAction;
+    if (!(action in POWER_ROLE)) return c.json({ error: 'Unknown action.' }, 400);
+    if (POWER_ROLE[action] === 'admin' && user.role !== 'admin') return c.json({ error: `Only admins can ${action} an instance.` }, 403);
+    const { rows } = await db().query<InstanceRow>('SELECT * FROM instances WHERE id = $1', [Number(c.req.param('id'))]);
+    const inst = rows[0];
+    if (!inst) return c.json({ error: 'Instance not found' }, 404);
+    if ((action === 'stop' || action === 'terminate') && String(b.confirm ?? '') !== inst.name) {
+        return c.json({ error: `Type the instance name (${inst.name}) to confirm.` }, 400);
+    }
+    const reason = String(b.reason ?? '').trim().slice(0, 300);
+    if (action === 'terminate' && reason.length < 10) return c.json({ error: 'Give a reason of at least 10 characters for terminating.' }, 400);
+    const self = await aws().selfInstanceId?.().catch(() => null);
+    if (self && self === inst.aws_instance_id && (action === 'stop' || action === 'terminate')) {
+        return c.json({ error: `The Ops Console runs on ${inst.name}: ${action === 'stop' ? 'stopping' : 'terminating'} it would take the console down, and it couldn't bring it back. Use the EC2 console for this one.` }, 409);
+    }
+    if (!aws().powerAction) return c.json({ error: 'Power actions are not available.' }, 501);
+    try {
+        const info = await aws().describeInstance(inst.region, inst.aws_instance_id);
+        if (!info) return c.json({ error: 'The instance no longer exists in AWS.' }, 409);
+        if (!info.managedTag) return c.json({ error: 'The instance is no longer tagged ops-console=managed.' }, 409);
+        await aws().powerAction!(inst.region, inst.aws_instance_id, action, false);
+    } catch (err) {
+        return c.json({ error: (err as Error).message.slice(0, 300) }, 400);
+    }
+    const next = { start: 'pending', stop: 'stopping', reboot: 'running', terminate: 'shutting-down' }[action];
+    await db().query('UPDATE instances SET ec2_state = $2, ec2_state_at = now(), last_fetched_at = NULL WHERE id = $1', [inst.id, dryRun ? inst.ec2_state : next]);
+    await audit({ id: user.id, username: user.username }, `instance.${action}`, `${inst.name} (${inst.aws_instance_id})`,
+        { region: inst.region, reason: reason || undefined, dryRun: dryRun || undefined }, c.get('ip'));
+    if (action !== 'start') {
+        await announce(`[POWER] ${inst.name} ${dryRun ? `would be ${PAST[action]} (dry run)` : PAST[action]} by ${user.username}`,
+            `${user.username} ${action === 'terminate' ? 'terminated' : PAST[action]} ${inst.name} (${inst.aws_instance_id}, ${inst.region}).${reason ? `\n\nReason: ${reason}` : ''}`, 'power');
+    }
+    return c.json({ ok: true, action, dryRun, state: dryRun ? inst.ec2_state : next,
+        message: dryRun ? `Dry run: AWS confirms ${user.username} may ${action} ${inst.name}. Nothing was changed (local test mode).` : `${inst.name}: ${action} requested.` });
 });
 
 export default instances;

@@ -162,7 +162,7 @@ export function AppDetail() {
   const pendingReq = data?.deployments.find((d) => d.status === 'pending_approval') ?? null;
   const op = !!data?.canOperate;
   const requested = (search.get('tab') as Tab) || 'overview';
-  const tab: Tab = requested === 'logs' && !op ? 'overview' : requested;
+  const tab: Tab = requested;
 
   const loadDetail = useCallback(async (fetch = false) => {
     if (fetch) setFetching(true);
@@ -197,7 +197,7 @@ export function AppDetail() {
   if (!data) return <div className="space-y-3"><Skeleton className="h-12 w-72" /><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   const { app, instance } = data;
   const t = appTone(app);
-  const tabs: [Tab, string, boolean][] = [['overview', 'Overview', true], ['deploy', 'Deploy', true], ['database', 'Database', !!app.db], ['logs', 'Logs', op]];
+  const tabs: [Tab, string, boolean][] = [['overview', 'Overview', true], ['deploy', 'Deploy', true], ['database', 'Database', !!app.db], ['logs', 'Logs', true]];
 
   return (
     <div>
@@ -247,6 +247,12 @@ export function AppDetail() {
       )}
       {tab === 'database' && <DatabaseTab detail={detail} series={series} operator={op} />}
       {tab === 'logs' && op && <div className="hidden md:block"><LogsTab instanceId={instance.id} project={app.project} /></div>}
+      {tab === 'logs' && !op && (
+        <div className="card hidden text-sm md:block">
+          <p className="font-medium text-slate-200">Logs are available to deployers and admins</p>
+          <p className="mt-1 text-slate-500">Application logs can contain customer data, so they're hidden from viewers and the public demo. Sign in as a deployer or admin to read, filter, search and download them.</p>
+        </div>
+      )}
       {tab === 'logs' && <p className="card text-sm text-slate-500 md:hidden">Logs are available on larger screens.</p>}
 
       {dialog && (

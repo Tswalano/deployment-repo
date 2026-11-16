@@ -29,7 +29,9 @@ export function InstanceCard({ instance: i }: { instance: Instance }) {
         <Meter label="Mem" value={s ? pct(s.host.memory.used, s.host.memory.total) : null} />
         <Meter label="Disk" value={s ? pct(s.host.disk.used, s.host.disk.total) : null} />
       </div>
-      {unreachable && <p className="mt-3 truncate text-2xs text-rose-300" title={i.lastError ?? ''}>Unreachable · last OK {ago(i.lastOkAt)}</p>}
+      {unreachable && (i.ec2State && i.ec2State !== 'running'
+        ? <p className="mt-3 truncate text-2xs text-amber-300">Instance {i.ec2State} · last OK {ago(i.lastOkAt)}</p>
+        : <p className="mt-3 truncate text-2xs text-rose-300" title={i.lastError ?? ''}>Unreachable · last OK {ago(i.lastOkAt)}</p>)}
     </Link>
   );
 }

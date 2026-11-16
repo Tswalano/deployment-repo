@@ -13,6 +13,7 @@ import { InstanceDetail } from './pages/InstanceDetail';
 import { Instances } from './pages/Instances';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
+import { Secrets } from './pages/Secrets';
 import { Settings } from './pages/Settings';
 import { Users } from './pages/Users';
 import type { Role } from './api';
@@ -38,6 +39,7 @@ function App() {
         <Route path="activity" element={<Activity />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="backups" element={<Backups />} />
+        <Route path="secrets" element={<Secrets />} />
         <Route path="account" element={<Account />} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />

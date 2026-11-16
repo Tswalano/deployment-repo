@@ -5,6 +5,7 @@ import { useAuth } from '../auth';
 import { ActivityList } from '../components/ActivityList';
 import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, Skeleton, Sparkline } from '../components/ui';
 import { Facts } from './app/shared';
+import { PowerControls, stateTone } from '../components/PowerControls';
 import { appTone } from '../health';
 import { usePoll } from '../usePoll';
 
@@ -98,6 +99,7 @@ export function InstanceDetail() {
     try { setData(await api.instance(id, true)); } finally { setRefreshing(false); }
   }
 
+  const [powerMsg, setPowerMsg] = useState<string | null>(null);
   if (error && !data) return <Alert>{error}</Alert>;
   if (!i) return <div className="space-y-3"><Skeleton className="h-12 w-72" /><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
 
@@ -110,13 +112,20 @@ export function InstanceDetail() {
         title={i.name}
         subtitle={<span title={`${i.awsInstanceId} · ${i.region}`}>{i.awsInstanceId} · {s?.host.instanceType ?? 'EC2'} · {s?.host.az ?? i.region} · <span className="capitalize">{i.environment}</span> · snapshot {ago(i.lastOkAt)}</span>}
         actions={canRefresh && (
+          <>
+          <span className={`${stateTone(i.ec2State ?? (s ? 'running' : null))} hidden sm:inline-flex`}>{i.ec2State ?? (s ? 'running' : 'unknown')}</span>
+          <PowerControls instance={i} isConsoleHost={!!i.isConsoleHost} dryRun={!!data?.powerDryRun} onDone={(m) => { setPowerMsg(m); void refresh(); }} />
           <button className="btn-secondary" onClick={() => void refresh()} disabled={refreshing}>
             <svg viewBox="0 0 24 24" className={`h-4 w-4 ${refreshing ? 'animate-spin motion-reduce:animate-none' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5" /></svg>
             <span className="hidden sm:inline">{refreshing ? 'Fetching via SSM…' : 'Refresh now'}</span>
           </button>
+          </>
         )}
       />
-      {i.lastError && <div className="mb-4"><Alert tone="warn">Last fetch failed ({i.lastError}). Showing the snapshot from {ago(i.lastOkAt)}.</Alert></div>}
+      {powerMsg && <div className="mb-4"><Alert tone="ok">{powerMsg}</Alert></div>}
+      {i.lastError && i.ec2State && i.ec2State !== 'running' ? (
+        <div className="mb-4"><Alert tone="warn">This instance is {i.ec2State}{i.ec2StateAt ? ` (since ${ago(i.ec2StateAt)})` : ''}. Showing the last snapshot from {ago(i.lastOkAt)}.</Alert></div>
+      ) : i.lastError && <div className="mb-4"><Alert tone="warn">Last fetch failed ({i.lastError}). Showing the snapshot from {ago(i.lastOkAt)}.</Alert></div>}
       {!s ? <div className="card text-sm text-slate-500">No snapshot yet.</div> : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
