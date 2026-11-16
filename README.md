@@ -212,6 +212,24 @@ New values never appear on a command line or in output. Provider keys (Paystack,
 - Break glass: an admin can override a freeze or skip approval with a written reason. It is audited and sent to
   the alert channels. With approvals on and a single admin, this is how that admin deploys.
 
+
+### Testing the Ops Console locally (before deploying)
+```bash
+ops-console/dev/local.sh --watch     # http://localhost:5173, rebuilds on every change
+ops-console/dev/local.sh             # one build, http://localhost:9300
+```
+Live data from the real instances (SSM, with your AWS CLI credentials; every region is searched for instances tagged
+`ops-console=managed`), a local database in `ops-console/.local/` (git-ignored) and test logins in
+`ops-console/.local/credentials.txt` (admin / deployer / viewer). **Deploys, rollbacks and "Back up now" are simulated**
+and alert emails/webhooks are only printed (`OPS_DRY_RUN=1`, `ALERTS_DRY_RUN=1`); restore tests and downloads are real
+because they never touch live data. Delete `ops-console/.local` to start over.
+
+### Adding an instance in another region
+SSM documents are regional: run `infra/ops-console-ssm/deploy.sh <region>` once per region before adding instances
+there (the console refuses to add one until they exist). The instance needs the SSM agent, an instance profile with
+AmazonSSMManagedInstanceCore + the console's policy, and the tag `ops-console=managed`. Instances without the
+per-instance agent (127.0.0.1:9100) report host metrics only.
+
 ## Repository layout
 
 ```

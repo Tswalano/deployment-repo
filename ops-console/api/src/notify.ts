@@ -30,7 +30,12 @@ export const realTransport: Transport = {
     },
 };
 
-let transport: Transport = realTransport;
+/** Local test mode (ALERTS_DRY_RUN=1): print notifications instead of sending them. */
+const logTransport: Transport = {
+    async email(to, subject, text) { console.log(`[alerts dry-run] email to ${to.length} recipient(s): ${subject}\n${text}\n`); },
+    async webhook(_url, text) { console.log(`[alerts dry-run] webhook: ${text.split('\n')[0]}`); },
+};
+let transport: Transport = process.env.ALERTS_DRY_RUN === '1' ? logTransport : realTransport;
 export const notifier = () => transport;
 export function setTransport(t: Transport): void {
     transport = t;

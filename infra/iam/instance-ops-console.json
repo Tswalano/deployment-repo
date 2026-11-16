@@ -19,6 +19,12 @@
       "Effect": "Allow",
       "Action": ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation", "ec2:DescribeInstances"],
       "Resource": "*"
+    },
+    {
+      "Sid": "CheckOwnDocumentsExist",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeDocument",
+      "Resource": "arn:aws:ssm:*:${ACCOUNT_ID}:document/OpsConsole-*"
     }
   ]
 }

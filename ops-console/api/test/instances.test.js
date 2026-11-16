@@ -47,6 +47,7 @@ const fake = {
     runs: 0, failNext: false, healthy: 2,
     async describeInstance(_region, id) { const i = this.instances[id]; return i ? { ...i } : null; },
     async ssmOnline(_region, id) { return !!this.instances[id]?.online; },
+    async documentsReady(region) { return region !== 'eu-west-1'; },
     async runDocument(_region, _id, document) {
         assert.equal(document, 'OpsConsole-CollectStatus', 'only the fixed document is ever run');
         this.runs += 1;
@@ -107,6 +108,7 @@ test('adding validates format, existence, tag, state and SSM reachability', asyn
     assert.match((await add('i-0bbbbbbbbbbbbbbb2')).json.error, /ops-console = managed/);
     assert.match((await add('i-0ccccccccccccccc3')).json.error, /stopped/);
     assert.match((await add('i-0ddddddddddddddd4')).json.error, /SSM/);
+    assert.match((await add('i-0aaaaaaaaaaaaaaa1', 'eu-west-1')).json.error, /isn't set up in eu-west-1.*deploy\.sh eu-west-1/, 'documents are regional');
 });
 
 test('adding a valid instance fetches a normalised snapshot without log lines', async () => {
