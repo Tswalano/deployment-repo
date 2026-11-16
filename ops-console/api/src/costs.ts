@@ -10,7 +10,7 @@ export interface CostSettings { monthlyBudget: number | null; zarRate: number | 
 export interface CostSummary {
     fetchedAt: string; currency: string;
     monthToDate: number; lastMonth: number; lastMonthSamePeriod: number; forecast: number; forecastSource: 'aws' | 'linear';
-    daily: { day: string; total: number }[];
+    daily: { day: string; total: number; top?: { name: string; amount: number }[] }[];
     services: { name: string; monthToDate: number; lastMonth: number }[];
     period: { monthStart: string; today: string; daysInMonth: number };
 }
@@ -38,8 +38,12 @@ export function summarise(rows: RawCostRow[], forecastRemainder: number | null, 
     const samePeriodEnd = ymd(new Date(Date.UTC(lastStart.getUTCFullYear(), lastStart.getUTCMonth(), dayOfMonth)));
     let mtd = 0, last = 0, lastSame = 0;
     const byDay = new Map<string, number>(), svc = new Map<string, { m: number; l: number }>();
+    const daySvc = new Map<string, Map<string, number>>();
     for (const r of rows) {
         byDay.set(r.day, (byDay.get(r.day) ?? 0) + r.amount);
+        const ds = daySvc.get(r.day) ?? new Map<string, number>();
+        ds.set(r.service, (ds.get(r.service) ?? 0) + r.amount);
+        daySvc.set(r.day, ds);
         const e = svc.get(r.service) ?? { m: 0, l: 0 };
         if (r.day >= ms) { mtd += r.amount; e.m += r.amount; }
         else if (r.day >= ls) { last += r.amount; e.l += r.amount; if (r.day < samePeriodEnd) lastSame += r.amount; }
@@ -56,7 +60,11 @@ export function summarise(rows: RawCostRow[], forecastRemainder: number | null, 
         currency: rows[0]?.unit ?? 'USD',
         monthToDate: round(mtd), lastMonth: round(last), lastMonthSamePeriod: round(lastSame),
         forecast: round(forecastRemainder != null ? mtd + forecastRemainder : linear), forecastSource: forecastRemainder != null ? 'aws' : 'linear',
-        daily: [...byDay.entries()].sort().map(([day, total]) => ({ day, total: round(total) })),
+        daily: [...byDay.entries()].sort().map(([day, total]) => ({
+            day, total: round(total),
+            top: [...(daySvc.get(day) ?? new Map()).entries()].filter(([, a]) => a >= 0.005).sort((a, b) => b[1] - a[1]).slice(0, 4)
+                .map(([name, amount]) => ({ name, amount: round(amount) })),
+        })),
         services: top,
         period: { monthStart: ms, today: ymd(now), daysInMonth },
     };

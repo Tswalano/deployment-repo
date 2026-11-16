@@ -180,7 +180,7 @@ export interface Schedule {
 }
 export interface CostSummary {
   fetchedAt: string; currency: string; monthToDate: number; lastMonth: number; lastMonthSamePeriod: number; forecast: number; forecastSource: 'aws' | 'linear';
-  daily: { day: string; total: number }[]; services: { name: string; monthToDate: number; lastMonth: number }[];
+  daily: { day: string; total: number; top?: { name: string; amount: number }[] }[]; services: { name: string; monthToDate: number; lastMonth: number }[];
   period: { monthStart: string; today: string; daysInMonth: number };
 }
 export interface CostSettings { monthlyBudget: number | null; zarRate: number | null }
