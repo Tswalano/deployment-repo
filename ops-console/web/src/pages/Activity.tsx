@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { ActivityList } from '../components/ActivityList';
 import { ago, Alert, dur, PageHeader, Skeleton } from '../components/ui';
@@ -8,10 +9,25 @@ const STATUS = { success: 'pill-ok', failed: 'pill-bad', rolled_back: 'pill-warn
 export function Activity() {
   const { data, error } = usePoll(api.overview, 30_000);
   const events = data?.activity ?? [];
+  const { data: pending } = usePoll(api.pendingDeployments, 30_000);
   return (
     <div>
       <PageHeader title="Activity" subtitle="Deployments across all instances, newest first" />
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
+      {pending && pending.length > 0 && (
+        <section className="card mb-5 border-amber-500/30 p-0">
+          <h2 className="px-5 pt-4 font-medium text-slate-100">Waiting for approval</h2>
+          <ul className="divide-y divide-ink-800 px-5 pb-2">
+            {pending.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center gap-3 py-3">
+                <span className="pill-warn">{d.action}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-slate-200">{d.project}{d.ref ? ` → ${d.ref}` : ''} <span className="text-slate-500">on {d.instance} ({d.environment}) · by {d.requestedBy} {ago(d.createdAt)}</span></span>
+                <Link to={`/instances/${d.instanceId}/apps/${d.project}?tab=deploy`} className="btn-secondary px-3 py-1 text-xs">Review</Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {!data ? <Skeleton className="h-72" /> : (
         <>
           {/* phones: compact list */}

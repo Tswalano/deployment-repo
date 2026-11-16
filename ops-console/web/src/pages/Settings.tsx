@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api, ApiError, Instance } from '../api';
 import { Alert, DesktopOnly, Dot, PageHeader, ago } from '../components/ui';
 import { AlertSettingsForm } from '../components/AlertSettingsForm';
+import { DeployPolicyForm } from '../components/DeployPolicyForm';
 import { usePoll } from '../usePoll';
 
 const REGIONS = ['af-south-1', 'eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'ap-southeast-1'];
@@ -74,8 +75,9 @@ export function Settings() {
   const { data, error, reload } = usePoll(api.instances, 60_000);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
-    if (window.location.hash !== '#alerts') return;
-    const t = setTimeout(() => document.getElementById('alerts')?.scrollIntoView({ behavior: 'smooth' }), 400);
+    const id = window.location.hash.slice(1);
+    if (!['alerts', 'policy'].includes(id)) return;
+    const t = setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }), 400);
     return () => clearTimeout(t);
   }, []);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -140,6 +142,7 @@ export function Settings() {
             </tbody>
           </table>
         </section>
+        <DeployPolicyForm />
         <AlertSettingsForm />
       </div>
     </div>

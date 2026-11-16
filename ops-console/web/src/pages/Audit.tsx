@@ -25,11 +25,17 @@ const LABELS: Record<string, string> = {
   'backup.run': 'Ran a backup',
   'backup.verify': 'Restore-tested a backup',
   'backup.download': 'Downloaded a backup',
+  'policy.update': 'Changed deploy policy',
+  'app.deploy_requested': 'Requested deploy', 'app.rollback_requested': 'Requested rollback',
+  'app.deploy_approved': 'Approved deploy', 'app.rollback_approved': 'Approved rollback',
+  'app.deploy_rejected': 'Rejected deploy', 'app.rollback_rejected': 'Rejected rollback',
+  'app.deploy_cancelled': 'Cancelled deploy request', 'app.rollback_cancelled': 'Cancelled rollback request',
+  'app.deploy_override': 'Deployed with override', 'app.rollback_override': 'Rolled back with override',
 };
 
 const tone = (action: string) =>
   /failed|locked/.test(action) ? 'text-rose-300'
-    : action.startsWith('user.') ? 'text-violet-300' : action.startsWith('instance.') ? 'text-sky-300' : action.startsWith('app.') ? 'text-amber-300' : action.startsWith('alert.') ? 'text-rose-300' : action === 'backup.download' ? 'text-amber-300' : '';
+    : action.startsWith('user.') ? 'text-violet-300' : action.startsWith('instance.') ? 'text-sky-300' : action.startsWith('app.') ? 'text-amber-300' : action.startsWith('alert.') ? 'text-rose-300' : action === 'backup.download' || action.endsWith('_override') ? 'text-amber-300' : action === 'policy.update' ? 'text-violet-300' : '';
 
 export function Audit() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
