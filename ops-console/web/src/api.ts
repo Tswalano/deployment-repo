@@ -73,6 +73,7 @@ export interface Overview {
   instances: Instance[];
   samples: Sample[];
   activity: DeployEvent[];
+  alerts: AlertCounts;
 }
 
 export interface Deployment {
@@ -120,6 +121,27 @@ export interface AppDetailData {
 }
 export interface LogEntry { ts: number; level: 'error' | 'warning' | 'info' | 'debug'; source: string; message: string }
 export interface LogsResult { entries: LogEntry[]; byLevel: Record<string, number>; source: string; truncated: boolean; fetchedAt: string }
+
+export type Severity = 'critical' | 'warning' | 'info';
+export interface Alert {
+  id: number; rule: string; severity: Severity; instanceId: number | null; instance: string | null; project: string | null;
+  title: string; detail: string; openedAt: string; lastSeenAt: string; resolvedAt: string | null;
+  ackedBy: string | null; ackedAt: string | null; notifyCount: number; lastNotifiedAt: string | null;
+}
+export interface AlertCounts { open: number; critical: number; week?: number }
+export interface AlertSettings {
+  recipients: string[]; webhookUrl: string; webhookSet: boolean; minSeverity: Severity; repeatHours: number;
+  thresholds: { downChecks: number; latencyMs: number; diskPct: number; memoryPct: number; certDays: number; backupHours: number };
+  recent: { channel: string; ok: boolean; error: string | null; at: string }[];
+}
+export interface UptimeApp {
+  instanceId: number; instance: string; project: string; domain: string | null; url: string | null;
+  last: { at: string; ok: boolean; status: number | null; ms: number | null } | null;
+  uptime: { h24: number | null; d7: number | null; d30: number | null; d90: number | null };
+  p95ms24h: number | null;
+  days: { day: string; checks: number; ok: number; pct: number | null }[];
+}
+export interface UptimePoint { at: string; checks: number; ok: number; avgMs: number | null; maxMs: number | null }
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -170,6 +192,14 @@ export const api = {
     call<{ detail: AppDetailData; dbSeries: DbPoint[]; fetchedAt: string }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/detail${fetch ? '?fetch=1' : ''}`),
   appLogs: (id: number, project: string, o: { lines: number; level: string; since: string; q: string }) =>
     call<LogsResult>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/logs?${new URLSearchParams({ lines: String(o.lines), level: o.level, since: o.since, q: o.q })}`),
+  alerts: (state: 'open' | 'all' = 'all') => call<{ alerts: Alert[]; counts: AlertCounts }>('GET', `/api/alerts?state=${state}&limit=100`),
+  ackAlert: (id: number) => call('POST', `/api/alerts/${id}/ack`),
+  alertSettings: () => call<{ settings: AlertSettings }>('GET', '/api/alerts/settings').then((r) => r.settings),
+  saveAlertSettings: (b: Partial<AlertSettings>) => call<{ settings: AlertSettings }>('PUT', '/api/alerts/settings', b).then((r) => r.settings),
+  testAlerts: () => call<{ results: { channel: string; ok: boolean; error?: string }[] }>('POST', '/api/alerts/test').then((r) => r.results),
+  uptime: () => call<{ apps: UptimeApp[] }>('GET', '/api/uptime').then((r) => r.apps),
+  appUptime: (instanceId: number, project: string) =>
+    call<{ summary: UptimeApp; series: UptimePoint[]; incidents: Alert[] }>('GET', `/api/uptime/${instanceId}/${encodeURIComponent(project)}`),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 

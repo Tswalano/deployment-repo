@@ -27,6 +27,7 @@ exists lendify-instance-role || aws iam create-role --role-name lendify-instance
 aws iam put-role-policy --role-name lendify-instance-role --policy-name read-app-secrets --policy-document "$(render instance-read-app-secrets.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name send-email-as-lendify --policy-document "$(render instance-send-email.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-ssm --policy-document "$(render instance-ops-console.json)"
+aws iam put-role-policy --role-name lendify-instance-role --policy-name send-email-as-ops --policy-document "$(render instance-send-email-ops.json)"
 aws ec2 create-tags --region "$REGION" --resources "$INSTANCE_ID" --tags Key=ops-console,Value=managed
 aws iam attach-role-policy --role-name lendify-instance-role --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 aws iam get-instance-profile --instance-profile-name lendify-instance-profile >/dev/null 2>&1 || {

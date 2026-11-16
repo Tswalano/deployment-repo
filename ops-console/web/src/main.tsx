@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './auth';
 import { Layout } from './components/Layout';
 import { Account } from './pages/Account';
 import { Activity } from './pages/Activity';
+import { Alerts } from './pages/Alerts';
 import { AppDetail } from './pages/AppDetail';
 import { Audit } from './pages/Audit';
 import { InstanceDetail } from './pages/InstanceDetail';
@@ -34,6 +35,7 @@ function App() {
         <Route path="instances/:id" element={<InstanceDetail />} />
         <Route path="instances/:id/apps/:project" element={<AppDetail />} />
         <Route path="activity" element={<Activity />} />
+        <Route path="alerts" element={<Alerts />} />
         <Route path="account" element={<Account />} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />

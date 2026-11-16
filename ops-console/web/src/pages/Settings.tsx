@@ -1,6 +1,7 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { api, ApiError, Instance } from '../api';
 import { Alert, DesktopOnly, Dot, PageHeader, ago } from '../components/ui';
+import { AlertSettingsForm } from '../components/AlertSettingsForm';
 import { usePoll } from '../usePoll';
 
 const REGIONS = ['af-south-1', 'eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'ap-southeast-1'];
@@ -72,6 +73,11 @@ function AddInstance({ onAdded }: { onAdded: (i: Instance) => void }) {
 export function Settings() {
   const { data, error, reload } = usePoll(api.instances, 60_000);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (window.location.hash !== '#alerts') return;
+    const t = setTimeout(() => document.getElementById('alerts')?.scrollIntoView({ behavior: 'smooth' }), 400);
+    return () => clearTimeout(t);
+  }, []);
   const [actionError, setActionError] = useState<string | null>(null);
 
   async function act(fn: () => Promise<unknown>, done: string) {
@@ -88,8 +94,8 @@ export function Settings() {
 
   return (
     <div>
-      <PageHeader title="Settings" subtitle="Instances the console monitors through AWS Systems Manager" />
-      <DesktopOnly title="Instance management" />
+      <PageHeader title="Settings" subtitle="Monitored instances, alerting and notifications" />
+      <DesktopOnly title="Settings" />
       <div className="hidden space-y-5 md:block">
         <AddInstance onAdded={(i) => { setNotice(`${i.name} added${i.lastError ? `, but the first snapshot failed: ${i.lastError}` : '.'}`); void reload(); }} />
         {notice && <Alert tone="ok">{notice}</Alert>}
@@ -134,6 +140,7 @@ export function Settings() {
             </tbody>
           </table>
         </section>
+        <AlertSettingsForm />
       </div>
     </div>
   );

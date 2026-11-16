@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, AppDetailData, AppView, DbPoint } from '../api';
-import { ago, Alert, bytes, Dot, dur, Kpi, PageHeader, Skeleton } from '../components/ui';
+import { ago, Alert, bytes, Dot, dur, Kpi, PageHeader, Skeleton, Sparkline } from '../components/ui';
 import { appTone } from '../health';
+import { fmtPct, pctTone, UptimeBars } from '../components/uptime';
 import { usePoll } from '../usePoll';
 import { DatabaseTab } from './app/DatabaseTab';
 import { DeployTab } from './app/DeployTab';
@@ -10,6 +11,43 @@ import { LogsTab } from './app/LogsTab';
 import { ActionDialog, errMsg, Facts, RunningBanner, Section } from './app/shared';
 
 type Tab = 'overview' | 'deploy' | 'database' | 'logs';
+
+function UptimeCard({ instanceId, project }: { instanceId: number; project: string }) {
+  const { data } = usePoll(() => api.appUptime(instanceId, project), 60_000, [instanceId, project]);
+  if (!data) return null;
+  const { summary: s, series, incidents } = data;
+  const lat = series.map((p) => p.avgMs).filter((x): x is number => x != null);
+  return (
+    <section className="card">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="min-w-0"><h2 className="font-medium text-slate-100">Uptime</h2><p className="truncate text-xs text-slate-500">{s.url ?? 'no public endpoint'} · every minute</p></div>
+        <div className="flex gap-5 text-xs">
+          {([['24h', s.uptime.h24], ['7d', s.uptime.d7], ['30d', s.uptime.d30], ['90d', s.uptime.d90]] as const).map(([k, v]) => (
+            <div key={k} className="text-right"><div className="text-slate-500">{k}</div><div className={`num text-sm ${pctTone(v)}`}>{fmtPct(v)}</div></div>
+          ))}
+        </div>
+      </div>
+      <div className="mt-4"><UptimeBars days={s.days} count={90} /></div>
+      <div className="mt-5 grid gap-5 md:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="hidden md:block">
+          <div className="mb-1 flex items-baseline justify-between text-xs"><span className="text-slate-500">Response time · 24h (10-min average)</span><span className="num text-slate-300">p95 {s.p95ms24h != null ? `${s.p95ms24h} ms` : '—'}</span></div>
+          <Sparkline values={lat} tone="info" max={Math.max(200, ...lat)} height={56} />
+        </div>
+        <div className="min-w-0">
+          <div className="eyebrow mb-2">Incidents</div>
+          {incidents.length === 0 ? <p className="text-sm text-slate-500">None recorded.</p> : (
+            <ul className="space-y-1.5 text-sm">{incidents.slice(0, 5).map((a) => (
+              <li key={a.id} className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-2"><span className={`h-1.5 w-1.5 shrink-0 rounded-full ${a.resolvedAt ? 'bg-slate-500' : 'bg-rose-400'}`} /><span className="truncate text-slate-300" title={a.detail}>{a.rule === 'app_slow' ? 'Slow' : 'Down'} {ago(a.openedAt)}</span></span>
+                <span className="num shrink-0 text-xs text-slate-500">{a.resolvedAt ? dur((new Date(a.resolvedAt).getTime() - new Date(a.openedAt).getTime()) / 1000) : 'ongoing'}</span>
+              </li>
+            ))}</ul>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function OverviewTab({ view, detail }: { view: AppView; detail: AppDetailData | null }) {
   const { app } = view;
@@ -36,6 +74,8 @@ function OverviewTab({ view, detail }: { view: AppView; detail: AppDetailData | 
           {view.certificate && <span className="hidden sm:inline">TLS renews in {view.certificate.daysLeft}d</span>}
         </div>
       </section>
+
+      {app.domain && <UptimeCard instanceId={view.instance.id} project={app.project} />}
 
       {!detail ? <Skeleton className="h-48" /> : (
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
