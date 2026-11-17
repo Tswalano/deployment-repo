@@ -3,10 +3,12 @@
 // Started by dev/local.sh; keeps running until Ctrl-C (it owns the database process).
 const path = require('path'), fs = require('fs'), { execFileSync } = require('child_process'), crypto = require('crypto');
 const API = path.join(__dirname, '..', 'api');
-const STATE = path.join(__dirname, '..', '.local');
+const STATE = process.env.OPS_LOCAL_STATE || path.join(__dirname, '..', '.local');
+const SAAS = process.env.OPS_LOCAL_SAAS === '1';
 const PG_PORT = Number(process.env.OPS_LOCAL_PG_PORT || 55432);
 const REGION = process.env.AWS_REGION || 'af-south-1';
-process.env.DATABASE_URL = `postgresql://postgres:local@127.0.0.1:${PG_PORT}/opsconsole`;
+// multi-customer mode: its own database, owned by a NON-superuser role (like production) so row-level security applies
+process.env.DATABASE_URL = SAAS ? `postgresql://opsconsole_app:local@127.0.0.1:${PG_PORT}/opsconsole_saas` : `postgresql://postgres:local@127.0.0.1:${PG_PORT}/opsconsole`;
 const dist = (m) => require(path.join(API, 'dist', m));
 
 let pg = null;
@@ -18,12 +20,20 @@ let pg = null;
     pg = new EmbeddedPostgres({ databaseDir: dataDir, user: 'postgres', password: 'local', port: PG_PORT, persistent: true, onLog: () => {} });
     if (fresh) await pg.initialise();
     await pg.start();
-    if (fresh) await pg.createDatabase('opsconsole');
+    if (fresh && !SAAS) await pg.createDatabase('opsconsole');
+    if (fresh && SAAS) {
+        const su = pg.getPgClient();
+        await su.connect();
+        await su.query("CREATE ROLE opsconsole_app LOGIN PASSWORD 'local' NOSUPERUSER NOBYPASSRLS");
+        await su.query('CREATE DATABASE opsconsole_saas OWNER opsconsole_app');
+        await su.end();
+    }
     const applied = await dist('migrate').migrate();
     if (applied.length) console.log('migrations applied:', applied.join(', '));
 
     const q = (sql, args) => dist('db').db().query(sql, args);
     const credFile = path.join(STATE, 'credentials.txt');
+    if (SAAS) { await dist('db').closeDb(); console.log('READY'); const stop = async () => { await pg.stop(); process.exit(0); }; process.on('SIGINT', stop); process.on('SIGTERM', stop); setInterval(() => {}, 1 << 30); return; }
     if (!fs.existsSync(credFile)) {
         const pw = () => crypto.randomBytes(9).toString('base64url');
         const users = [['admin', 'admin', pw()], ['deployer', 'deployer', pw()], ['viewer', 'viewer', pw()]];
@@ -46,7 +56,7 @@ let pg = null;
             '--query', 'Reservations[].Instances[].{id:InstanceId,name:Tags[?Key==`Name`]|[0].Value}', '--output', 'json'])
             .then((xs) => xs.map((x) => ({ ...x, region: r }))).catch(() => [])))).flat();
         for (const i of found) {
-            await q(`INSERT INTO instances (name, aws_instance_id, region, environment) VALUES ($1, $2, $3, 'production') ON CONFLICT (aws_instance_id) DO NOTHING`,
+            await q(`INSERT INTO instances (name, aws_instance_id, region, environment) VALUES ($1, $2, $3, 'production') ON CONFLICT (workspace_id, aws_instance_id) DO NOTHING`,
                 [i.name || i.id, i.id, i.region]);
         }
         console.log(`instances: ${found.map((i) => `${i.name || i.id} (${i.region})`).join(', ') || 'none tagged ops-console=managed'}`);

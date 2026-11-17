@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { api, DeployEvent, Instance, Overview as OverviewData, Sample } from '../api';
+import { useAuth } from '../auth';
 import { ActivityList } from '../components/ActivityList';
 import { InstanceCard } from '../components/InstanceCard';
 import { ago, Alert, bytes, Cells, Eyebrow, Kpi, PageHeader, Skeleton, Sparkline, Tone } from '../components/ui';
@@ -127,6 +128,7 @@ function Capacity({ data }: { data: OverviewData }) {
 }
 
 export function Overview() {
+  const { site } = useAuth();
   const { data, error, loading, reload } = usePoll(api.overview, 30_000);
   const { data: uptime } = usePoll(api.uptime, 60_000);
   const k = data?.kpis;
@@ -160,10 +162,22 @@ export function Overview() {
       {!data ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[104px]" />)}</div>
       ) : data.instances.length === 0 ? (
+        site.multiTenant ? (
+          <div className="card py-10">
+            <p className="text-center font-medium text-slate-200">Welcome to {site.productName}</p>
+            <ol className="mx-auto mt-6 max-w-lg space-y-3 text-sm">
+              <li className="flex gap-3"><span className="pill-ok">done</span><span className="text-slate-300">Create your workspace</span></li>
+              <li className="flex gap-3"><span className="pill-info">next</span><span className="text-slate-300">Connect your AWS account: a one-click, narrowly scoped access role in your account. <span className="text-slate-500">(Arriving in the next update.)</span></span></li>
+              <li className="flex gap-3"><span className="pill-mute">then</span><span className="text-slate-400">Add a server and deploy your first app from GitHub</span></li>
+              <li className="flex gap-3"><span className="pill-mute">any time</span><span className="text-slate-400"><Link to="/team" className="text-indigo-300 hover:underline">Invite your team</Link></span></li>
+            </ol>
+          </div>
+        ) : (
         <div className="card py-12 text-center">
           <p className="font-medium text-slate-200">No instances yet</p>
           <p className="mt-1 text-sm text-slate-500">An admin can add EC2 instances under <Link to="/settings" className="text-indigo-300 hover:underline">Settings</Link>.</p>
         </div>
+        )
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">

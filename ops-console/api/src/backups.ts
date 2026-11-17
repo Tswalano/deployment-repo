@@ -102,6 +102,6 @@ export async function autoVerify(inst: InstanceRow): Promise<void> {
         await verifyBackup(inst, item.name, item.file, 'auto', null).catch((err) => console.error('auto verify failed:', (err as Error).message));
     }
     await db().query(
-        `INSERT INTO settings (key, value, updated_by) VALUES ($1, $2, 'auto') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        `INSERT INTO settings (key, value, updated_by) VALUES ($1, $2, 'auto') ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
         [key, JSON.stringify({ at: b.at })]);
 }

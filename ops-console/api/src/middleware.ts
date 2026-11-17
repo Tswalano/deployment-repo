@@ -1,6 +1,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { config } from './config';
+import { withWorkspace } from './db';
 import { Role, SessionUser, sessionUser } from './sessions';
 
 export type Env = { Variables: { user: SessionUser | null; ip: string | null } };
@@ -19,8 +20,10 @@ export function clientIp(c: Context): string | null {
 /** Attach the session user (or null) and client IP to every request. */
 export const loadSession: MiddlewareHandler<Env> = async (c, next) => {
     c.set('ip', clientIp(c));
-    c.set('user', await sessionUser(getCookie(c, config.cookieName)));
-    await next();
+    const user = await sessionUser(getCookie(c, config.cookieName));
+    c.set('user', user);
+    // every query of this request runs in the user's workspace (signed out: none in multi-tenant mode)
+    await withWorkspace(user?.workspaceId ?? (config.multiTenant ? null : 1), () => next());
 };
 
 /** Whether a browser Origin may make state-changing requests (also checked on terminal WebSocket upgrades). */
@@ -46,6 +49,7 @@ export function requireRole(min: Role): MiddlewareHandler<Env> {
     return async (c, next) => {
         const user = c.get('user');
         if (!user) return c.json({ error: 'Not signed in' }, 401);
+        if (config.multiTenant && user.workspaceId == null) return c.json({ error: 'You are not a member of any workspace.', code: 'no_workspace' }, 403);
         if (RANK[user.role] < RANK[min]) return c.json({ error: 'Not allowed for your role' }, 403);
         await next();
     };

@@ -6,7 +6,14 @@ export interface Me {
   displayName: string;
   role: Role;
   isDemo: boolean;
+  email: string | null;
+  emailVerified: boolean;
+  workspaceId: number | null;
 }
+export interface SiteConfig { multiTenant: boolean; productName: string; trialDays: number }
+export interface Workspace { id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; trialEndsAt: string | null; role: Role }
+export interface TeamMember { id: number; username: string; displayName: string; email: string | null; role: Role; joinedAt: string; lastLoginAt: string | null; emailVerified: boolean }
+export interface TeamInvite { id: number; email: string; role: Role; createdAt: string; expiresAt: string }
 
 export interface User {
   id: number;
@@ -251,6 +258,23 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 }
 
 export const api = {
+  site: () => call<SiteConfig>('GET', '/api/account/config'),
+  signup: (b: { name: string; email: string; password: string; workspace: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
+  verifyEmail: (token: string) => call<{ ok: true }>('POST', '/api/account/verify', { token }),
+  resendVerification: () => call<{ ok: true }>('POST', '/api/account/resend-verification'),
+  forgotPassword: (email: string) => call<{ ok: true }>('POST', '/api/account/forgot', { email }),
+  resetOwnPassword: (token: string, password: string) => call<{ ok: true }>('POST', '/api/account/reset', { token, password }),
+  inviteInfo: (token: string) => call<{ invite: { email: string; role: Role; workspace: string; hasAccount: boolean } }>('GET', `/api/account/invites/${encodeURIComponent(token)}`).then((r) => r.invite),
+  acceptInvite: (token: string, b: { name?: string; password?: string }) => call<{ ok: true; workspaceId: number }>('POST', `/api/account/invites/${encodeURIComponent(token)}/accept`, b),
+  workspaces: () => call<{ workspaces: Workspace[]; current: number | null }>('GET', '/api/workspaces'),
+  createWorkspace: (name: string) => call<{ workspace: Workspace }>('POST', '/api/workspaces', { name }),
+  switchWorkspace: (id: number) => call<{ ok: true }>('POST', '/api/workspaces/switch', { id }),
+  renameWorkspace: (name: string) => call<{ ok: true; name: string }>('PATCH', '/api/workspaces/current', { name }),
+  team: () => call<{ members: TeamMember[]; invites: TeamInvite[] }>('GET', '/api/team'),
+  invite: (email: string, role: Role) => call<{ ok: true }>('POST', '/api/team/invites', { email, role }),
+  cancelInvite: (id: number) => call<{ ok: true }>('DELETE', `/api/team/invites/${id}`),
+  setMemberRole: (userId: number, role: Role) => call<{ ok: true }>('PATCH', `/api/team/members/${userId}`, { role }),
+  removeMember: (userId: number) => call<{ ok: true }>('DELETE', `/api/team/members/${userId}`),
   me: () => call<{ user: Me }>('GET', '/api/auth/me').then((r) => r.user),
   login: (username: string, password: string) => call('POST', '/api/auth/login', { username, password }),
   demo: () => call('POST', '/api/auth/demo', {}),

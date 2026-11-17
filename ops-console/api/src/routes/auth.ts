@@ -11,7 +11,7 @@ const auth = new Hono<Env>();
 
 const loginLimiter = rateLimit(config.loginRateLimit, config.loginRateWindowMs, (c) => `login:${c.get('ip') ?? 'unknown'}`);
 
-function startSession(c: Parameters<typeof setCookie>[0], token: string, minutes: number) {
+export function startSession(c: Parameters<typeof setCookie>[0], token: string, minutes: number) {
     setCookie(c, config.cookieName, token, {
         httpOnly: true, secure: config.cookieSecure, sameSite: 'Strict', path: '/', maxAge: minutes * 60,
     });
@@ -27,7 +27,8 @@ auth.post('/login', loginLimiter, async (c) => {
 
     const { rows } = await db().query(
         `SELECT id, username, password_hash, disabled, is_demo, failed_logins, locked_until > now() AS locked
-           FROM users WHERE lower(username) = lower($1)`, [username]);
+           FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)
+          ORDER BY lower(username) = lower($1) DESC LIMIT 1`, [username]);   // username or email
     const u = rows[0];
     const ip = c.get('ip');
 
@@ -59,7 +60,7 @@ auth.post('/login', loginLimiter, async (c) => {
 
 /** "Try the demo": a read-only viewer session without a password. */
 auth.post('/demo', loginLimiter, async (c) => {
-    if (!config.demoEnabled) return c.json({ error: 'Demo is disabled' }, 404);
+    if (!config.demoEnabled || config.multiTenant) return c.json({ error: 'Demo is disabled' }, 404);
     const { rows } = await db().query('SELECT id, username FROM users WHERE is_demo AND NOT disabled AND role = \'viewer\'');
     if (!rows.length) return c.json({ error: 'Demo is not available' }, 404);
     const ip = c.get('ip');

@@ -10,6 +10,7 @@ import { migrate } from './migrate';
 import { purgeExpiredSessions } from './sessions';
 import { attachTerminal } from './terminal';
 import { expireSshGrants } from './access';
+import { forEachWorkspace } from './db';
 import type { Server } from 'http';
 
 async function main() {
@@ -31,7 +32,7 @@ async function main() {
     startUptime();
     setInterval(() => purgeExpiredSessions().catch(() => undefined), 60 * 60 * 1000).unref();
     // temporary SSH rules close within a minute of expiring (also after a restart: the grants are in the database)
-    setInterval(() => expireSshGrants().catch((err) => console.error('closing expired SSH access failed:', (err as Error).message)), 60_000).unref();
+    setInterval(() => forEachWorkspace(async () => { await expireSshGrants(); }).catch((err) => console.error('closing expired SSH access failed:', (err as Error).message)), 60_000).unref();
     const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) =>
         console.log(`ops-console listening on http://${info.address}:${info.port}`));
     attachTerminal(server as Server);   // browser terminal (WebSocket → SSM Session Manager)

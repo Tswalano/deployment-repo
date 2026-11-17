@@ -29,7 +29,7 @@ export async function costSettings(): Promise<CostSettings> {
 }
 export async function saveCostSettings(s: CostSettings, by: string): Promise<void> {
     await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('costs', $1, $2)
-                      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`, [JSON.stringify(s), by]);
+                      ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`, [JSON.stringify(s), by]);
 }
 
 export function summarise(rows: RawCostRow[], forecastRemainder: number | null, now = new Date()): Omit<CostSummary, 'fetchedAt'> {

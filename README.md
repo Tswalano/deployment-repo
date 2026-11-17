@@ -308,6 +308,26 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
 - **Local test mode:** the terminal is a simulated shell (set `OPS_TERMINAL_REAL=1` for a real session), SSH rule
   changes are EC2 dry runs, and key changes are simulated.
 
+### Workspaces and multi-customer mode (Ops Console, Phase 12a)
+- **Workspaces:** every row of customer data has a `workspace_id`, and Postgres **row-level security** (forced, so it
+  also binds the table owner the console connects as) only shows and accepts the rows of the workspace set for the
+  request (`app.workspace_id`).
+  - `src/db.ts` sets it before every query, from the request's async context.
+  - Background jobs run once per workspace (`forEachWorkspace`).
+  - Only explicit `asSystem(...)` code sees all workspaces.
+- **Single-team console (ops.glenify.studio):** migration 015 moves all existing data into workspace 1 and nothing is
+  deleted. With `OPS_MULTI_TENANT` unset everything defaults to workspace 1, so it behaves as before.
+- **Multi-customer mode (`OPS_MULTI_TENANT=1`):**
+  - Pages: a landing page with pricing; sign-up, which creates a 14-day trial workspace with you as admin; email
+    verification; password reset; invitations; a Team page; a workspace switcher.
+  - Switched off: the global Users page and the demo.
+  - AWS: every call is refused until the workspace connects its own AWS account (Phase 12b). The host's AWS role
+    is never used for a customer.
+  - `PRODUCT_NAME` sets the name shown everywhere; `PUBLIC_URL` is used for email links.
+- **Try it locally:** `ops-console/dev/local.sh --saas --watch` serves it at http://localhost:5174. It has its own
+  database in `.local-saas`, connects as a non-superuser so isolation is really enforced, and prints emails to the
+  terminal.
+
 ## Repository layout
 
 ```

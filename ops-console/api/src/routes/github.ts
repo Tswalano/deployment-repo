@@ -33,7 +33,7 @@ github.post('/manifest', requireRole('admin'), denyDemo, async (c) => {
     const origin = c.req.header('origin') || 'https://ops.glenify.studio';
     const state = newState();
     await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('github_state', $1, $2)
-                      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+                      ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
         [JSON.stringify({ state, at: Date.now() }), c.get('user')!.username]);
     return c.json({
         action: org ? `https://github.com/organizations/${org}/settings/apps/new?state=${state}` : `https://github.com/settings/apps/new?state=${state}`,

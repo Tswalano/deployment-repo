@@ -34,7 +34,7 @@ export async function raise(c: Condition): Promise<void> {
     if (rows.length) return;
     await db().query(
         `INSERT INTO alerts (key, rule, severity, instance_id, project, title, detail) VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (key) WHERE resolved_at IS NULL DO NOTHING`,
+         ON CONFLICT (workspace_id, key) WHERE resolved_at IS NULL DO NOTHING`,
         [c.key, c.rule, c.severity, c.instanceId, c.project ?? null, c.title, c.detail]);
 }
 

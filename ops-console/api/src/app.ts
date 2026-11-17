@@ -16,6 +16,7 @@ import newapp from './routes/newapp';
 import instances from './routes/instances';
 import access, { myKeys } from './routes/access';
 import users from './routes/users';
+import { account, teamRoutes, workspaces } from './routes/accounts';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
@@ -36,6 +37,9 @@ export function createApp() {
 
     app.use('/api/*', loadSession, checkOrigin);
     app.route('/api/auth', auth);
+    app.route('/api/account', account);
+    app.route('/api/workspaces', workspaces);
+    app.route('/api/team', teamRoutes);
     app.route('/api/users', users);
     app.route('/api/instances', secrets);
     app.route('/api/instances', schedules);

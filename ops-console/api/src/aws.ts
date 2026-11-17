@@ -457,7 +457,21 @@ const dryAware: AwsProvider = {
 };
 
 let provider: AwsProvider = dryRun ? dryAware : realAws;
-export const aws = () => provider;
+
+/**
+ * Multi-tenant mode: the console's own AWS role belongs to whoever hosts it, never to a customer's workspace.
+ * Until a workspace connects its own AWS account (Phase 12b), every AWS call is refused here, at the source.
+ */
+export const NO_AWS_MESSAGE = 'Connect your AWS account first: this workspace has no AWS access yet.';
+const refuseAll = new Proxy({} as AwsProvider, {
+    get: (_t, prop) => (prop === 'then' ? undefined : async () => { throw Object.assign(new Error(NO_AWS_MESSAGE), { name: 'NoAwsAccount' }); }),
+});
+let multiTenantGuard = process.env.OPS_MULTI_TENANT === '1' || process.env.OPS_MULTI_TENANT === 'true';
+export const aws = () => (multiTenantGuard ? refuseAll : provider);
+/** Tests: switch the guard (it follows OPS_MULTI_TENANT otherwise). */
+export function setMultiTenantGuard(on: boolean): void {
+    multiTenantGuard = on;
+}
 /** Tests: swap in a fake. */
 export function setAwsProvider(p: AwsProvider): void {
     provider = p;
