@@ -1,0 +1,121 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { Context, Hono } from 'hono';
+import { audit } from '../audit';
+import { aws } from '../aws';
+import { config } from '../config';
+import { connection, connectionView, consolePrincipal, disconnect, ensureConnection, REGION_RE, STACK_NAME, verifyConnection } from '../connections';
+import { db } from '../db';
+import { DeployError } from '../deploys';
+import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
+
+/** Connect a workspace's own AWS account (multi-customer mode). Mounted at /api/aws-connection. */
+const connect = new Hono<Env>();
+connect.use('*', async (c, next) => (config.multiTenant ? next() : c.json({ error: 'Not found' }, 404)));
+const admin = [requireRole('admin'), denyDemo] as const;
+const fail = (c: Context<Env>, err: unknown) => err instanceof DeployError
+    ? c.json({ error: err.message, code: err.code }, err.status)
+    : c.json({ error: `AWS: ${(err as Error).message.slice(0, 200)}` }, 502);
+
+export const REGIONS: [string, string][] = [
+    ['af-south-1', 'Africa (Cape Town)'], ['eu-west-1', 'Europe (Ireland)'], ['eu-west-2', 'Europe (London)'], ['eu-central-1', 'Europe (Frankfurt)'],
+    ['us-east-1', 'US East (N. Virginia)'], ['us-east-2', 'US East (Ohio)'], ['us-west-2', 'US West (Oregon)'], ['ap-southeast-1', 'Asia Pacific (Singapore)'],
+    ['ap-southeast-2', 'Asia Pacific (Sydney)'], ['ap-south-1', 'Asia Pacific (Mumbai)'], ['me-central-1', 'Middle East (UAE)'], ['sa-east-1', 'South America (São Paulo)'],
+];
+const TEMPLATE = join(__dirname, '..', '..', 'assets', 'connect-aws.json');
+
+connect.get('/', requireRole('viewer'), async (c) => {
+    const conn = await ensureConnection();
+    const principal = await consolePrincipal().catch(() => null);
+    const q = new URLSearchParams({ stackName: STACK_NAME, param_ExternalId: conn.external_id, ...(principal ? { param_ConsolePrincipal: principal } : {}) });
+    const quickCreateUrl = config.connectTemplateUrl
+        ? `https://${conn.region}.console.aws.amazon.com/cloudformation/home?region=${conn.region}#/stacks/quickcreate?templateURL=${encodeURIComponent(config.connectTemplateUrl)}&${q}`
+        : null;
+    const isAdmin = c.get('user')!.role === 'admin';
+    const v = connectionView(conn)!;
+    return c.json({
+        connection: { ...v, externalId: isAdmin ? v.externalId : undefined },   // only admins set up the role
+        principal: isAdmin ? principal : undefined,
+        quickCreateUrl: isAdmin ? quickCreateUrl : null,
+        cloudFormationUrl: `https://${conn.region}.console.aws.amazon.com/cloudformation/home?region=${conn.region}#/stacks/create`,
+        regions: REGIONS,
+    });
+});
+
+/** The template with this workspace's values filled in (to upload in CloudFormation when there is no quick-create link). */
+connect.get('/template', ...admin, async (c) => {
+    const conn = await ensureConnection();
+    const t = JSON.parse(readFileSync(TEMPLATE, 'utf8'));
+    t.Parameters.ExternalId.Default = conn.external_id;
+    const principal = await consolePrincipal().catch(() => null);
+    if (principal) t.Parameters.ConsolePrincipal.Default = principal;
+    c.header('Content-Disposition', 'attachment; filename="ops-console-connect-aws.json"');
+    return c.body(JSON.stringify(t, null, 1), 200, { 'content-type': 'application/json' });
+});
+
+connect.post('/region', ...admin, async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    if (!REGION_RE.test(String(b.region ?? ''))) return c.json({ error: 'Choose a region.' }, 400);
+    const conn = await connection();
+    if (conn?.status === 'connected') return c.json({ error: 'Disconnect first to change the region.' }, 409);
+    return c.json({ connection: connectionView(await ensureConnection(String(b.region))) });
+});
+
+connect.post('/verify', ...admin, rateLimit(10, 10 * 60_000, (c) => `awsverify:${c.get('user')!.workspaceId}`), async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    const user = c.get('user')!;
+    try {
+        const r = await verifyConnection(b.roleArn, user.username);
+        await audit({ id: user.id, username: user.username }, 'aws.connect', r.account_id, { region: r.region, roleArn: r.role_arn }, c.get('ip'));
+        return c.json({ connection: connectionView(r) });
+    } catch (err) { return fail(c, err); }
+});
+
+connect.post('/disconnect', ...admin, async (c) => {
+    const user = c.get('user')!;
+    const before = await connection();
+    await disconnect();
+    await audit({ id: user.id, username: user.username }, 'aws.disconnect', before?.account_id ?? null, { roleArn: before?.role_arn }, c.get('ip'));
+    return c.json({ ok: true, note: `Delete the ${STACK_NAME} stack in your AWS account to remove the role completely.` });
+});
+
+// ------------------------------------------------------------------ servers in the connected account
+connect.get('/servers', requireRole('deployer'), denyDemo, async (c) => {
+    const conn = await connection();
+    if (conn?.status !== 'connected') return c.json({ error: 'Connect your AWS account first.' }, 409);
+    try {
+        const list = await aws().listInstances!(conn.region);
+        const { rows } = await db().query<{ aws_instance_id: string }>('SELECT aws_instance_id FROM instances');
+        const added = new Set(rows.map((r) => r.aws_instance_id));
+        return c.json({ region: conn.region, servers: list.map((s) => ({ ...s, added: added.has(s.id), linux: !/windows/i.test(s.platform) })) });
+    } catch (err) { return fail(c, err); }
+});
+
+/** Add one of the account's servers: tag it (and its security groups), give it our instance profile if it has none. */
+connect.post('/servers', ...admin, rateLimit(20, 10 * 60_000, (c) => `addserver:${c.get('user')!.id}`), async (c) => {
+    const conn = await connection();
+    if (conn?.status !== 'connected') return c.json({ error: 'Connect your AWS account first.' }, 409);
+    const b = await c.req.json().catch(() => ({}));
+    const id = String(b.awsInstanceId ?? '');
+    const environment = ['production', 'staging', 'development'].includes(b.environment) ? b.environment : 'production';
+    if (!/^i-[0-9a-f]{8,17}$/.test(id)) return c.json({ error: 'Choose a server.' }, 400);
+    const user = c.get('user')!;
+    try {
+        const s = (await aws().listInstances!(conn.region)).find((x) => x.id === id);
+        if (!s) return c.json({ error: 'That server was not found in your account.' }, 404);
+        if (/windows/i.test(s.platform)) return c.json({ error: 'Only Linux servers are supported.' }, 409);
+        const steps: string[] = [];
+        if (!s.managedTag) { await aws().tagManaged!(conn.region, id, s.securityGroups); steps.push('tagged ops-console=managed'); }
+        const profile = `OpsConsoleInstance-${conn.region}`;
+        if (!s.instanceProfile) { await aws().attachInstanceProfile!(conn.region, id, profile); steps.push(`attached ${profile}`); }
+        const name = String(b.name ?? '').trim().slice(0, 60) || s.name || id;
+        const { rows: [inst] } = await db().query(
+            `INSERT INTO instances (name, aws_instance_id, region, environment) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (workspace_id, aws_instance_id) DO UPDATE SET name = EXCLUDED.name RETURNING id, name`, [name, id, conn.region, environment]);
+        await audit({ id: user.id, username: user.username }, 'instance.add', `${name} (${id})`, { region: conn.region, steps }, c.get('ip'));
+        return c.json({ instance: inst, steps,
+            note: s.instanceProfile && s.instanceProfile !== profile ? `This server already has the instance profile ${s.instanceProfile}: give it AmazonSSMManagedInstanceCore (or switch it to ${profile}) so the console can reach it.` : null });
+    } catch (err) { return fail(c, err); }
+});
+
+export default connect;

@@ -242,6 +242,10 @@ export interface SecurityView { at: string | null; snapshot: SecuritySnapshot | 
 export interface FailedDeploy { instanceId: number; instance: string; project: string; status: string; at: string; actor: string; toSha: string; fromSha: string; trigger: string | null; runUrl: string | null; attempts: number; appExists: boolean }
 export interface FailedCreation { id: number; instanceId: number; instance: string; project: string; repo: string; branch: string; domain: string; createdBy: string; createdAt: string; deploymentId: number | null; error: string | null; step: string | null }
 
+export interface AwsConnection { region: string; roleArn: string | null; accountId: string | null; status: 'pending' | 'connected' | 'error' | 'disconnected'; error: string | null; connectedBy: string | null; connectedAt: string | null; externalId?: string }
+export interface AwsConnectionView { connection: AwsConnection; principal?: string | null; quickCreateUrl: string | null; cloudFormationUrl: string; regions: [string, string][] }
+export interface AwsServer { id: string; name: string | null; state: string; type: string; az: string; publicIp: string | null; platform: string; managedTag: boolean; instanceProfile: string | null; ssmOnline: boolean; linux: boolean; added: boolean }
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
@@ -303,6 +307,12 @@ export const api = {
     call<{ instance: Instance }>('PATCH', `/api/instances/${id}`, b).then((r) => r.instance),
   removeInstance: (id: number) => call('DELETE', `/api/instances/${id}`),
   appView: (id: number, project: string) => call<AppView>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}`),
+  awsConnection: () => call<AwsConnectionView>('GET', '/api/aws-connection'),
+  awsRegion: (region: string) => call<{ connection: AwsConnection }>('POST', '/api/aws-connection/region', { region }),
+  awsVerify: (roleArn: string) => call<{ connection: AwsConnection }>('POST', '/api/aws-connection/verify', { roleArn }),
+  awsDisconnect: () => call<{ ok: true; note: string }>('POST', '/api/aws-connection/disconnect'),
+  awsServers: () => call<{ region: string; servers: AwsServer[] }>('GET', '/api/aws-connection/servers'),
+  awsAddServer: (b: { awsInstanceId: string; name?: string; environment: string }) => call<{ instance: { id: number; name: string }; steps: string[]; note: string | null }>('POST', '/api/aws-connection/servers', b),
   failures: () => call<{ deploys: FailedDeploy[]; creations: FailedCreation[] }>('GET', '/api/failures'),
   dismissFailure: (b: { kind: 'deploy'; instanceId: number; project: string; at: string; note?: string } | { kind: 'create'; creationId: number; note?: string }) =>
     call<{ ok: true }>('POST', '/api/failures/dismiss', b),
