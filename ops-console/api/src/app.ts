@@ -12,6 +12,7 @@ import secrets from './routes/secrets';
 import { costs, schedules } from './routes/ops';
 import github, { appRepo } from './routes/github';
 import envRoutes from './routes/env';
+import newapp from './routes/newapp';
 import instances from './routes/instances';
 import users from './routes/users';
 
@@ -41,6 +42,7 @@ export function createApp() {
     app.route('/api/github', github);
     app.route('/api/instances', appRepo);
     app.route('/api/instances', envRoutes);
+    app.route('/api', newapp);
     app.route('/api/instances', apps);
     app.route('/api/instances', instances);
     app.route('/api/deployments', deployments);

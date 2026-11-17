@@ -35,10 +35,11 @@ def put(name, value):   # value via --cli-input-json on stdin: never on a comman
 
 # projects on this instance: SERVICE and HEALTH_URL from /opt/deploy/projects/*.conf
 apps = {}
-for f in sorted(os.listdir("/opt/deploy/projects")):
+for d in ("/opt/deploy/projects", "/opt/deploy-state/projects"):   # repo projects, then console-created apps
+  for f in (sorted(os.listdir(d)) if os.path.isdir(d) else []):
     if not f.endswith(".conf") or f.startswith("_"): continue
-    conf = dict(re.findall(r'^([A-Z_]+)="([^"]*)"', open("/opt/deploy/projects/" + f).read(), re.M))
-    if conf.get("SERVICE"): apps[conf["SERVICE"]] = conf.get("HEALTH_URL")
+    conf = dict(re.findall(r'^([A-Z_]+)="([^"]*)"', open(os.path.join(d, f)).read(), re.M))
+    if conf.get("SERVICE") and conf["SERVICE"] not in apps: apps[conf["SERVICE"]] = conf.get("HEALTH_URL")
 params = {p["Name"]: p["Value"] for p in json.loads(aws("ssm", "get-parameters-by-path", "--path", "/apps", "--recursive", "--with-decryption"))["Parameters"]}
 
 def health(svc):

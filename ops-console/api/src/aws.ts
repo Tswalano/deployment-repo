@@ -1,5 +1,6 @@
 import { DescribeInstancesCommand, EC2Client, RebootInstancesCommand, StartInstancesCommand, StopInstancesCommand, TerminateInstancesCommand } from '@aws-sdk/client-ec2';
 import { CostExplorerClient, GetCostAndUsageCommand, GetCostForecastCommand } from '@aws-sdk/client-cost-explorer';
+import { ChangeResourceRecordSetsCommand, ListHostedZonesByNameCommand, ListResourceRecordSetsCommand, Route53Client } from '@aws-sdk/client-route-53';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetScheduleCommand, ListSchedulesCommand, SchedulerClient, UpdateScheduleCommand } from '@aws-sdk/client-scheduler';
 import type { RawCostRow } from './costs';
@@ -37,6 +38,12 @@ export interface AwsProvider {
     costRows?(start: string, end: string): Promise<RawCostRow[]>;
     /** Forecast unblended cost for [start, end) (one request). */
     costForecast?(start: string, end: string): Promise<number | null>;
+    /** The public hosted zone for a domain (e.g. glenify.studio), or null. */
+    hostedZoneId?(domain: string): Promise<string | null>;
+    /** Records with exactly this name in a hosted zone (any type). */
+    dnsRecords?(zoneId: string, name: string): Promise<DnsRecord[]>;
+    /** Create or update an A record (TTL 60). */
+    upsertARecord?(zoneId: string, name: string, ip: string): Promise<void>;
     /** The EC2 instance this console runs on (IMDSv2), or null when not on EC2. */
     selfInstanceId?(): Promise<string | null>;
     /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
@@ -61,7 +68,10 @@ export interface Ec2Info {
     type: string;
     az: string;
     managedTag: boolean;
+    publicIp?: string | null;
 }
+
+export interface DnsRecord { name: string; type: string; values: string[] }
 
 const ec2: Record<string, EC2Client> = {};
 const ssm: Record<string, SSMClient> = {};
@@ -71,6 +81,8 @@ const sched: Record<string, SchedulerClient> = {};
 const schedc = (r: string) => (sched[r] ??= new SchedulerClient({ region: r }));
 let ce: CostExplorerClient | null = null;
 const cec = () => (ce ??= new CostExplorerClient({ region: 'us-east-1' }));   // Cost Explorer's only endpoint
+let r53: Route53Client | null = null;
+const r53c = () => (r53 ??= new Route53Client({ region: 'us-east-1' }));   // Route 53 is global
 const s3: Record<string, S3Client> = {};
 const s3c = (r: string) => (s3[r] ??= new S3Client({ region: r }));
 let selfId: string | null | undefined;
@@ -96,7 +108,7 @@ export const realAws: AwsProvider = {
             const tag = (k: string) => i.Tags?.find((t) => t.Key === k)?.Value;
             return {
                 name: tag('Name') ?? null, state: i.State?.Name ?? 'unknown', type: i.InstanceType ?? '?',
-                az: i.Placement?.AvailabilityZone ?? '?', managedTag: tag('ops-console') === 'managed',
+                az: i.Placement?.AvailabilityZone ?? '?', managedTag: tag('ops-console') === 'managed', publicIp: i.PublicIpAddress ?? null,
             };
         } catch (err) {
             if ((err as { name?: string }).name === 'InvalidInstanceID.NotFound' || (err as { name?: string }).name === 'InvalidInstanceID.Malformed') return null;
@@ -215,6 +227,25 @@ export const realAws: AwsProvider = {
         if (!name.startsWith('/ops-console/')) throw new Error('not a console parameter');
         return realAws.deleteParameter!(region, name);
     },
+    async hostedZoneId(domain) {
+        const r = await r53c().send(new ListHostedZonesByNameCommand({ DNSName: `${domain}.`, MaxItems: 1 }))
+            .catch((err) => { throw new Error(awsErrorMessage(err, 'route53')); });
+        const z = r.HostedZones?.[0];
+        return z && z.Name === `${domain}.` && !z.Config?.PrivateZone ? (z.Id ?? '').replace('/hostedzone/', '') : null;
+    },
+    async dnsRecords(zoneId, name) {
+        const fq = name.endsWith('.') ? name : `${name}.`;
+        const r = await r53c().send(new ListResourceRecordSetsCommand({ HostedZoneId: zoneId, StartRecordName: fq, MaxItems: 10 }))
+            .catch((err) => { throw new Error(awsErrorMessage(err, 'route53')); });
+        return (r.ResourceRecordSets ?? []).filter((x) => x.Name === fq)
+            .map((x) => ({ name, type: x.Type ?? '?', values: (x.ResourceRecords ?? []).map((v) => v.Value ?? '').concat(x.AliasTarget?.DNSName ? [x.AliasTarget.DNSName] : []) }));
+    },
+    async upsertARecord(zoneId, name, ip) {
+        await r53c().send(new ChangeResourceRecordSetsCommand({ HostedZoneId: zoneId, ChangeBatch: {
+            Comment: 'ops-console: new app',
+            Changes: [{ Action: 'UPSERT', ResourceRecordSet: { Name: name, Type: 'A', TTL: 60, ResourceRecords: [{ Value: ip }] } }],
+        } })).catch((err) => { throw new Error(awsErrorMessage(err, 'route53')); });
+    },
     async selfInstanceId() {
         if (selfId !== undefined) return selfId;
         try {
@@ -281,10 +312,12 @@ const simulated = new Map<string, { at: number; text: string }>();
 const dryAware: AwsProvider = {
     ...realAws,
     async sendDocument(region, id, document, parameters) {
-        if (document !== 'OpsConsole-Deploy') return realAws.sendDocument(region, id, document, parameters);
+        if (document !== 'OpsConsole-Deploy' && document !== 'OpsConsole-CreateApp') return realAws.sendDocument(region, id, document, parameters);
         const cid = `dryrun-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const p = (k: string) => parameters[k]?.[0] ?? '';
-        simulated.set(cid, { at: Date.now(), text: `DRY RUN (local test mode): nothing was changed.\nWould run: pipeline.sh ${p('action')} ${p('project')} ${p('ref')}\nactor=${p('actor')}` });
+        simulated.set(cid, { at: Date.now(), text: document === 'OpsConsole-CreateApp'
+            ? `DRY RUN (local test mode): nothing was changed.\nWould clone ${p('repo')}@${p('branch')} into /opt/apps/${p('project')}, create the service, ${p('db') === 'yes' ? 'a database, ' : ''}nginx + HTTPS for ${p('domain')} and run the first deploy.\n${JSON.stringify({ ok: true, step: 'done', error: null, port: 5000, tls: true, database: p('db') === 'yes' ? p('project').replace(/-/g, '_') : null, domain: p('domain'), dryRun: true })}`
+            : `DRY RUN (local test mode): nothing was changed.\nWould run: pipeline.sh ${p('action')} ${p('project')} ${p('ref')}\nactor=${p('actor')}` });
         return cid;
     },
     async getInvocation(region, id, commandId) {
@@ -298,6 +331,7 @@ const dryAware: AwsProvider = {
         return realAws.powerAction!(region, id, action, true);
     },
     async putParameter() { /* local test mode: never write app secrets */ },
+    async upsertARecord() { /* local test mode: never change DNS */ },
     async deleteParameter() { /* local test mode */ },
     async runDocument(region, id, document, parameters, timeoutMs) {
         if (document === 'OpsConsole-RotateSecret') {

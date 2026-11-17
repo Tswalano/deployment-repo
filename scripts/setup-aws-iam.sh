@@ -10,6 +10,8 @@ cd "$(dirname "$0")/../infra/iam"
 REGION="${AWS_REGION:-af-south-1}"
 INSTANCE_NAME="${INSTANCE_NAME:-lendify-instance}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+APPS_DOMAIN="${APPS_DOMAIN:-glenify.studio}"
+HOSTED_ZONE_ID="$(aws route53 list-hosted-zones-by-name --dns-name "$APPS_DOMAIN." --query 'HostedZones[0].Id' --output text | sed 's#/hostedzone/##')"
 INSTANCE_ID="$(aws ec2 describe-instances --region "$REGION" --filters "Name=tag:Name,Values=$INSTANCE_NAME" "Name=instance-state-name,Values=running,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text)"
 SG_ID="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text)"
 # GitHub may issue "immutable" subject claims (repo:OWNER@ID/REPO@ID:...) instead of repo:OWNER/REPO:...
@@ -17,7 +19,7 @@ SG_ID="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$INSTANCE
 GH_REPO="${GH_REPO:-Tswalano/deployment-repo}"
 OIDC_SUB_PREFIX="$(gh api "repos/$GH_REPO/actions/oidc/customization/sub" --jq '.sub_claim_prefix // empty' 2>/dev/null || true)"
 OIDC_SUB_PREFIX="${OIDC_SUB_PREFIX:-repo:$GH_REPO}"
-render() { sed -e "s#\${OIDC_SUB_PREFIX}#$OIDC_SUB_PREFIX#g" -e "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" -e "s/\${SG_ID}/$SG_ID/g" -e "s/\${INSTANCE_ID}/$INSTANCE_ID/g" "$1"; }
+render() { sed -e "s#\${OIDC_SUB_PREFIX}#$OIDC_SUB_PREFIX#g" -e "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" -e "s/\${SG_ID}/$SG_ID/g" -e "s/\${INSTANCE_ID}/$INSTANCE_ID/g" -e "s/\${HOSTED_ZONE_ID}/$HOSTED_ZONE_ID/g" "$1"; }
 exists() { aws iam get-role --role-name "$1" >/dev/null 2>&1; }
 echo "account=$ACCOUNT_ID instance=$INSTANCE_ID sg=$SG_ID oidc_sub_prefix=$OIDC_SUB_PREFIX"
 
@@ -29,6 +31,7 @@ aws iam put-role-policy --role-name lendify-instance-role --policy-name send-ema
 aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-ssm --policy-document "$(render instance-ops-console.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-secrets --policy-document "$(render instance-ops-console-secrets.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-schedule-costs --policy-document "$(render instance-ops-console-schedule-costs.json)"
+aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-apps --policy-document "$(render instance-ops-console-apps.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name send-email-as-ops --policy-document "$(render instance-send-email-ops.json)"
 aws ec2 create-tags --region "$REGION" --resources "$INSTANCE_ID" --tags Key=ops-console,Value=managed
 aws iam attach-role-policy --role-name lendify-instance-role --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore

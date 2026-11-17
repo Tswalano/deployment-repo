@@ -2,7 +2,9 @@ import { aws } from './aws';
 import { InstanceRow } from './collector';
 import { db } from './db';
 import { announce } from './alerts';
+import { dropToken, stashToken } from './gittoken';
 import { forgetDetail } from './insights';
+import { creationFinished } from './newapp';
 import { activeFreeze, deployPolicy } from './policy';
 
 export const DEPLOY_DOCUMENT = 'OpsConsole-Deploy';
@@ -18,7 +20,7 @@ export interface DeploymentRow {
     id: number;
     instance_id: number;
     project: string;
-    action: 'deploy' | 'rollback';
+    action: 'deploy' | 'rollback' | 'create';
     ref: string;
     requested_by: number | null;
     requested_by_name: string;
@@ -34,6 +36,7 @@ export interface DeploymentRow {
     override_reason: string | null;
     expires_at: string | null;
     trigger?: string;
+    token_param?: string | null;
 }
 
 export function deploymentView(d: DeploymentRow, withOutput: boolean) {
@@ -131,6 +134,12 @@ async function launch(inst: InstanceRow, project: string, action: 'deploy' | 'ro
         if ((err as { code?: string }).code === '23505') throw new DeployError(`Another deployment on ${inst.name} is still running.`, 409);
         throw err;
     }
+    // Apps linked to a GitHub App repo fetch over HTTPS with a short-lived, repo-scoped token (see gittoken.ts).
+    try {
+        const { rows: [link] } = await db().query<{ repo: string }>('SELECT repo FROM app_repos WHERE instance_id = $1 AND project = $2', [inst.id, project]);
+        const name = link ? await stashToken(inst.region, project, link.repo).catch(() => null) : null;
+        if (name) row = (await db().query<DeploymentRow>('UPDATE deployments SET token_param = $2 WHERE id = $1 RETURNING *', [row.id, name])).rows[0];
+    } catch { /* no token: SSH remotes (the original apps) don't need one */ }
     try {
         const commandId = await aws().sendDocument(inst.region, inst.aws_instance_id, DEPLOY_DOCUMENT, {
             action: [action], project: [project], ref: [ref], actor: [actorFor(requester.username)],
@@ -139,7 +148,8 @@ async function launch(inst: InstanceRow, project: string, action: 'deploy' | 'ro
         return rows[0];
     } catch (err) {
         const msg = `Couldn't start via SSM: ${(err as Error).message.slice(0, 200)}`;
-        await db().query(`UPDATE deployments SET status = 'failed', ssm_status = 'NotSent', output = $2, finished_at = now() WHERE id = $1`, [row.id, msg]);
+        await db().query(`UPDATE deployments SET status = 'failed', ssm_status = 'NotSent', output = $2, finished_at = now(), token_param = NULL WHERE id = $1`, [row.id, msg]);
+        if (row.token_param) await dropToken(inst.region, row.token_param);   // never leave a token behind
         throw new DeployError(msg);
     }
 }
@@ -163,6 +173,7 @@ export async function approveDeployment(id: number, user: Requester): Promise<De
     if (freeze && !(d.action === 'rollback' && policy.rollbackAllowedInFreeze)) {
         throw new DeployError(`Can't start now: deploys are frozen (“${freeze.name}”) until ${fmt(freeze.endsAt, policy.timezone)}.`, 409, 'frozen');
     }
+    if (d.action === 'create') throw new DeployError('New apps are not approved this way.', 409);
     await syncRunning(inst.id);
     return launch(inst, d.project, d.action, d.ref, { id: d.requested_by, username: d.requested_by_name }, d.id, null, user.username);
 }
@@ -218,9 +229,15 @@ export async function syncDeployment(d: DeploymentRow): Promise<DeploymentRow> {
 }
 
 async function finish(id: number, status: 'success' | 'failed', ssmStatus: string, output: string): Promise<DeploymentRow> {
+    const { rows: [prev] } = await db().query<DeploymentRow>('SELECT * FROM deployments WHERE id = $1', [id]);
     const { rows } = await db().query<DeploymentRow>(
-        `UPDATE deployments SET status = $2, ssm_status = $3, output = $4, finished_at = now() WHERE id = $1 RETURNING *`,
+        `UPDATE deployments SET status = $2, ssm_status = $3, output = $4, finished_at = now(), token_param = NULL WHERE id = $1 RETURNING *`,
         [id, status, ssmStatus, output]);
+    if (prev?.token_param) {
+        const { rows: [i] } = await db().query<{ region: string }>('SELECT region FROM instances WHERE id = $1', [prev.instance_id]);
+        if (i) await dropToken(i.region, prev.token_param);
+    }
+    if (rows[0]?.action === 'create') await creationFinished(rows[0]).catch((err) => console.error('new app bookkeeping failed:', (err as Error).message));
     return rows[0];
 }
 

@@ -19,7 +19,7 @@ fail() { echo "ops-console: $*" >&2; exit 2; }
 case "$LEVEL" in all|warning|error) ;; *) fail "invalid level" ;; esac
 case "$SINCE" in 15m|1h|6h|24h|7d|boot) ;; *) fail "invalid since" ;; esac
 [[ "$Q" =~ ^[A-Za-z0-9\ ._:/@#=-]{0,60}$ ]] || fail "invalid search"
-CONF="/opt/deploy/projects/$PROJECT.conf"
+CONF="/opt/deploy/projects/$PROJECT.conf"; [[ -f "$CONF" ]] || CONF="/opt/deploy-state/projects/$PROJECT.conf"
 [[ -f "$CONF" ]] || fail "unknown project '$PROJECT'"
 SERVICE="$(sed -n 's/^SERVICE="\([A-Za-z0-9_.@-]*\)".*/\1/p' "$CONF" | head -1)"
 [[ -n "$SERVICE" ]] || fail "no SERVICE in $PROJECT.conf"

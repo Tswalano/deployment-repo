@@ -100,6 +100,15 @@ export interface GithubStatus {
   connected: boolean; webhookUrl: string; app?: { slug: string; owner: string; htmlUrl: string };
   installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
 }
+export interface Detection { found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[] }
+export interface NewAppCheck {
+  project: { ok: boolean; reason?: string }; domain: { status: 'free' | 'ours' | 'taken' | 'invalid'; name: string; reason?: string };
+  memoryMb: number | null; memoryWarning: string | null; publicIp: string | null; appsDomain: string;
+}
+export interface NewAppBody {
+  project: string; repo: string; branch: string; subdir: string; start: string; build: boolean; migrate: string; healthPath: string;
+  subdomain: string; db: boolean; memoryMb: number; confirmLowMemory?: boolean; override?: string;
+}
 export interface GithubRepo { fullName: string; private: boolean; defaultBranch: string; pushedAt: string | null; description: string | null }
 export interface EnvVar { key: string; kind: 'db' | 'jwt' | 'provider' | 'secret' | 'config'; version: number; lastModified: string | null; lastModifiedBy: string | null; generated: boolean }
 export interface PolicyStatus {
@@ -193,7 +202,7 @@ export interface CostSummary {
 export interface CostSettings { monthlyBudget: number | null; zarRate: number | null }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -206,7 +215,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error || `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error || `Request failed (${res.status})`, (data as { code?: string }).code);
   return data as T;
 }
 
@@ -286,6 +295,11 @@ export const api = {
   revealEnv: (id: number, project: string, key: string) => call<{ key: string; value: string }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/env/reveal`, { key }).then((r) => r.value),
   setEnv: (id: number, project: string, key: string, value: string) => call<{ verb: string; dryRun: boolean }>('PUT', `/api/instances/${id}/apps/${encodeURIComponent(project)}/env`, { key, value }),
   removeEnv: (id: number, project: string, key: string) => call<{ verb: string; dryRun: boolean }>('DELETE', `/api/instances/${id}/apps/${encodeURIComponent(project)}/env/${encodeURIComponent(key)}`),
+  detectRepo: (repo: string, branch: string, subdir: string) =>
+    call<Detection>('GET', `/api/github/detect?${new URLSearchParams({ repo, branch, subdir })}`),
+  newAppCheck: (id: number, project: string, subdomain: string) =>
+    call<NewAppCheck>('GET', `/api/instances/${id}/new-app/check?${new URLSearchParams({ project, subdomain })}`),
+  createApp: (id: number, b: NewAppBody) => call<{ deployment: Deployment }>('POST', `/api/instances/${id}/new-app`, b).then((r) => r.deployment),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 
