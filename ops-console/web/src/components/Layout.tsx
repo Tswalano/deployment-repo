@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NoWorkspace } from '../pages/Team';
+import { useTheme } from '../theme';
 import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
 
@@ -35,13 +36,14 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
     document.addEventListener('keydown', esc);
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
   }, []);
+  const [theme, setTheme] = useTheme();
   if (!user) return null;
   const initials = (user.displayName || user.username).split(/[\s._-]+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
               aria-label="Menu" className="flex items-center gap-1.5 rounded-full border border-ink-600 py-0.5 pl-0.5 pr-2 text-slate-400 transition hover:border-ink-500 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-indigo-500/40 to-sky-500/30 text-xs font-semibold text-white">{initials}</span>
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-indigo-500/40 to-sky-500/30 text-xs font-semibold text-indigo-100">{initials}</span>
         <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
       </button>
       {open && (
@@ -69,6 +71,18 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
               }}>+ New workspace</button>
             </div>
           )}
+          <div className="border-b border-ink-700 px-4 py-3">
+            <div className="mb-2 text-2xs font-semibold uppercase tracking-wider text-slate-500">Theme</div>
+            <div className="grid grid-cols-3 gap-1 rounded-lg border border-ink-600 bg-ink-950 p-1" role="radiogroup" aria-label="Theme">
+              {([['dark', 'Dark', 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'], ['light', 'Light', 'M12 4V2m0 20v-2m8-8h2M2 12h2m13.7-5.7 1.4-1.4M4.9 19.1l1.4-1.4m0-11.4L4.9 4.9m14.2 14.2-1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z'], ['system', 'System', 'M4 5h16v11H4zM8 20h8M12 16v4']] as const).map(([v, label, d]) => (
+                <button key={v} role="radio" aria-checked={theme === v} onClick={() => setTheme(v)}
+                        className={`flex flex-col items-center gap-1 rounded-md px-1 py-1.5 text-2xs ${theme === v ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:bg-ink-800 hover:text-slate-200'}`}>
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d={d} /></svg>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           {(['Operations', 'Administration'] as const).map((g) => {
             const items = pages.filter((t) => t.group === g);
             return items.length ? (
@@ -76,7 +90,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
                 <div className="px-4 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-slate-500">{g}</div>
                 {items.map((t) => (
                   <NavLink key={t.to} to={t.to} role="menuitem" onClick={() => setOpen(false)}
-                           className={({ isActive }) => `flex items-center gap-2.5 px-4 py-2 text-sm ${isActive ? 'bg-ink-800 text-white' : 'text-slate-300 hover:bg-ink-800'}`}>
+                           className={({ isActive }) => `flex items-center gap-2.5 px-4 py-2 text-sm ${isActive ? 'bg-ink-800 text-slate-100' : 'text-slate-300 hover:bg-ink-800'}`}>
                     <span className="text-slate-500">{t.icon}</span>{t.label}
                   </NavLink>
                 ))}
@@ -125,7 +139,7 @@ function NavGroup({ label, items }: { label: string; items: Tab[] }) {
         <div role="menu" className="absolute left-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-xl border border-ink-600 bg-ink-850 py-1.5 shadow-2xl shadow-black/50">
           {items.map((t) => (
             <NavLink key={t.to} to={t.to} role="menuitem"
-                     className={({ isActive }) => `flex items-center gap-2.5 px-4 py-2 text-sm ${isActive ? 'bg-ink-800 text-white' : 'text-slate-300 hover:bg-ink-800 hover:text-white'}`}>
+                     className={({ isActive }) => `flex items-center gap-2.5 px-4 py-2 text-sm ${isActive ? 'bg-ink-800 text-slate-100' : 'text-slate-300 hover:bg-ink-800 hover:text-white'}`}>
               <span className="text-slate-500">{t.icon}</span>{t.label}
             </NavLink>
           ))}
