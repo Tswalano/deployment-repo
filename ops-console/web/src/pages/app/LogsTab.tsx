@@ -12,8 +12,9 @@ const Q_RE = /^[A-Za-z0-9 ._:/@#=-]{0,60}$/;
 const time = (ms: number) => new Date(ms).toISOString().replace('T', ' ').slice(5, 19);
 
 export function LogsTab({ instanceId, project }: { instanceId: number; project: string }) {
-  const [level, setLevel] = useState('all');
-  const [since, setSince] = useState('1h');
+  const q0 = new URLSearchParams(window.location.search);
+  const [level, setLevel] = useState(['all', 'warning', 'error'].includes(q0.get('level') ?? '') ? q0.get('level')! : 'all');
+  const [since, setSince] = useState(['15m', '1h', '6h', '24h', '7d', 'boot'].includes(q0.get('since') ?? '') ? q0.get('since')! : '1h');
   const [lines, setLines] = useState(300);
   const [q, setQ] = useState('');
   const [applied, setApplied] = useState('');

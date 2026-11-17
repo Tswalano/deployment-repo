@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, AppStatus, DbPoint, Snapshot } from '../api';
 import { useAuth } from '../auth';
 import { ActivityList } from '../components/ActivityList';
-import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, Skeleton, Sparkline } from '../components/ui';
+import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, seriesOf, Skeleton, Sparkline } from '../components/ui';
 import { Facts } from './app/shared';
 import { PowerControls, stateTone } from '../components/PowerControls';
 import { ScheduleCard } from '../components/ScheduleCard';
@@ -13,10 +13,12 @@ import { usePoll } from '../usePoll';
 
 function AppRow({ a, instanceId }: { a: AppStatus; instanceId: number }) {
   const t = appTone(a);
+  const navigate = useNavigate();
+  const href = `/instances/${instanceId}/apps/${a.project}`;
   return (
-    <tr>
+    <tr className="cursor-pointer" onClick={() => navigate(href)} title={`Open ${a.project}`}>
       <td title={a.domain ?? a.project}>
-        <div className="flex items-center gap-2"><Dot tone={t} /><Link to={`/instances/${instanceId}/apps/${a.project}`} className="truncate font-medium text-slate-100 hover:text-indigo-300 hover:underline">{a.project}</Link></div>
+        <div className="flex items-center gap-2"><Dot tone={t} /><Link to={href} onClick={(e) => e.stopPropagation()} className="truncate font-medium text-slate-100 hover:text-indigo-300 hover:underline">{a.project}</Link></div>
         <div className="truncate pl-3.5 text-xs text-slate-500">{a.domain ?? a.service}</div>
       </td>
       <td className={a.healthy ? 'text-emerald-300' : 'text-rose-300'}>{a.healthy ? `HTTP ${a.healthCode} · ${a.healthMs} ms` : `Down · ${a.healthCode ?? 'no response'}`}</td>
@@ -25,11 +27,27 @@ function AppRow({ a, instanceId }: { a: AppStatus; instanceId: number }) {
       <td className="hidden md:table-cell" title={a.subject ?? ''}><span className="num text-xs text-slate-400">{a.sha ?? '—'}</span> <span className="text-slate-400">{a.subject ?? ''}</span></td>
       <td className="hidden lg:table-cell" title={a.lastDeploy?.at ?? ''}>{a.lastDeploy ? `${ago(a.lastDeploy.at)} · ${a.lastDeploy.actor}` : '—'}</td>
       <td className="text-right">
-        {a.errors24h ? <span className="pill-bad">{a.errors24h} err</span> : a.warnings24h ? <span className="pill-warn">{a.warnings24h} warn</span> : <span className="pill-ok">clean</span>}
+        {a.errors24h || a.warnings24h ? (
+          <Link to={`${href}?tab=logs&level=${a.errors24h ? 'error' : 'warning'}&since=24h`} onClick={(e) => e.stopPropagation()}
+                className={`${a.errors24h ? 'pill-bad' : 'pill-warn'} hover:brightness-125`} title="Open these log lines">
+            {a.errors24h ? `${a.errors24h} err` : `${a.warnings24h} warn`} →
+          </Link>
+        ) : <span className="pill-ok">clean</span>}
       </td>
     </tr>
   );
 }
+
+/** Fixed colour per PostgreSQL connection state, with a plain-English meaning for the legend. */
+const CONN: Record<string, { label: string; bar: string; hint: string }> = {
+  active: { label: 'Active (running a query)', bar: 'bg-emerald-400', hint: 'executing a statement right now' },
+  idle: { label: 'Idle (pooled, waiting)', bar: 'bg-sky-400', hint: 'open and ready; apps keep these in their connection pool' },
+  'idle in transaction': { label: 'Idle in transaction', bar: 'bg-amber-400', hint: 'a transaction was left open; holds locks if it lasts' },
+  background: { label: 'Background (PostgreSQL)', bar: 'bg-indigo-400', hint: "PostgreSQL's own workers: checkpointer, autovacuum, WAL writer" },
+  other: { label: 'Other', bar: 'bg-rose-400', hint: 'fastpath, disabled or unknown state' },
+};
+const CONN_ORDER = ['active', 'idle in transaction', 'idle', 'background', 'other'];
+const connKey = (k: string) => (k in CONN ? k : k.startsWith('idle in transaction') ? 'idle in transaction' : 'other');
 
 function DbServer({ s, series }: { s: Snapshot; series: Record<string, DbPoint[]> }) {
   const v = s.dbServer;
@@ -38,7 +56,7 @@ function DbServer({ s, series }: { s: Snapshot; series: Record<string, DbPoint[]
     const pts = (series[db] ?? []).map((p) => p[k]).filter((x): x is number => x != null);
     return pts.length ? pts[pts.length - 1] : null;
   };
-  const tpsSeries = (db: string) => (series[db] ?? []).map((p) => p.tps).filter((x): x is number => x != null);
+  const tpsSeries = (db: string) => seriesOf(series[db] ?? [], (p) => p.tps);
   return (
     <section className="card overflow-hidden p-0">
       <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 py-4">
@@ -48,13 +66,26 @@ function DbServer({ s, series }: { s: Snapshot; series: Record<string, DbPoint[]
       {v && (
         <div className="grid gap-6 border-y border-ink-800 px-5 py-4 lg:grid-cols-2">
           <div>
-            <div className="flex items-baseline justify-between text-xs"><span className="text-slate-400">Connections</span><span className="num text-slate-200">{conns} / {v.maxConnections ?? '—'}</span></div>
-            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-ink-700">
-              {Object.entries(v.connectionsByState).map(([k, n], i) => (
-                <div key={k} title={`${n} ${k}`} className={['bg-sky-400', 'bg-indigo-400', 'bg-amber-400', 'bg-emerald-400', 'bg-rose-400'][i % 5]} style={{ width: `${(n / (v.maxConnections || conns || 1)) * 100}%` }} />
+            <div className="flex items-baseline justify-between text-xs"><span className="text-slate-400">Connections</span><span className="num text-slate-200">{conns} of {v.maxConnections ?? '—'} allowed</span></div>
+            <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-ink-700" role="img" aria-label="Database connections by state">
+              {Object.entries(v.connectionsByState).sort(([a], [b]) => CONN_ORDER.indexOf(connKey(a)) - CONN_ORDER.indexOf(connKey(b))).map(([k, n]) => (
+                <div key={k} title={`${n} ${k}: ${CONN[connKey(k)].hint}`} className={CONN[connKey(k)].bar} style={{ width: `${(n / (v.maxConnections || conns || 1)) * 100}%` }} />
               ))}
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-4 text-2xs text-slate-500">{Object.entries(v.connectionsByState).map(([k, n]) => <span key={k}>{n} {k}</span>)}</div>
+            <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              {Object.entries(v.connectionsByState).sort(([a], [b]) => CONN_ORDER.indexOf(connKey(a)) - CONN_ORDER.indexOf(connKey(b))).map(([k, n]) => (
+                <li key={k} className="flex items-center gap-2" title={CONN[connKey(k)].hint}>
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${CONN[connKey(k)].bar}`} />
+                  <span className="truncate text-slate-300">{CONN[connKey(k)].label}</span>
+                  <span className="num ml-auto text-slate-100">{n}</span>
+                </li>
+              ))}
+              <li className="flex items-center gap-2" title="Connections still available before PostgreSQL refuses new ones">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-sm bg-ink-700 ring-1 ring-inset ring-ink-500" />
+                <span className="truncate text-slate-300">Free</span>
+                <span className="num ml-auto text-slate-100">{Math.max(0, (v.maxConnections ?? conns) - conns)}</span>
+              </li>
+            </ul>
           </div>
           <Facts rows={[
             ['Cache hit', v.cacheHitPct != null ? `${v.cacheHitPct.toFixed(2)}%` : '—'],
@@ -76,7 +107,7 @@ function DbServer({ s, series }: { s: Snapshot; series: Record<string, DbPoint[]
                 <td className="num" title={d.name}>{d.name}</td><td className="num text-right">{bytes(d.size)}</td>
                 <td className="num hidden text-right xl:table-cell">{d.tables ?? '—'}</td><td className="num text-right">{d.connections}</td>
                 <td className="num text-right">{tps == null ? '—' : tps.toFixed(2)}</td>
-                <td className="hidden py-1 xl:table-cell"><Sparkline values={tpsSeries(d.name)} tone="info" max={Math.max(0.5, ...tpsSeries(d.name))} height={24} /></td>
+                <td className="hidden py-1 xl:table-cell"><Sparkline {...tpsSeries(d.name)} tone="info" max={Math.max(0.5, ...tpsSeries(d.name).values)} height={24} format={(v) => `${v.toFixed(2)} tx/s`} /></td>
               </tr>
             );
           })}</tbody>
@@ -104,8 +135,8 @@ export function InstanceDetail() {
   if (error && !data) return <Alert>{error}</Alert>;
   if (!i) return <div className="space-y-3"><Skeleton className="h-12 w-72" /><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
 
-  const mem = data!.samples.map((x) => x.memPct ?? 0);
-  const load = data!.samples.map((x) => x.load1 ?? 0);
+  const mem = seriesOf(data!.samples, (x) => x.memPct);
+  const load = seriesOf(data!.samples, (x) => x.load1);
   return (
     <div>
       <div className="mb-2 text-xs text-slate-500"><Link to="/instances" className="hover:text-slate-300">Instances</Link> / <span className="text-slate-400">{i.name}</span></div>
@@ -138,8 +169,8 @@ export function InstanceDetail() {
           </div>
 
           <div className="mt-5 hidden gap-5 sm:grid sm:grid-cols-2">
-            <div className="card p-0"><div className="px-5 pt-4 text-sm text-slate-400">Memory · 24h</div><div className="pt-2"><Sparkline values={mem} tone="info" /></div></div>
-            <div className="card p-0"><div className="px-5 pt-4 text-sm text-slate-400">Load average · 24h</div><div className="pt-2"><Sparkline values={load} tone="warn" max={Math.max(2, ...load)} /></div></div>
+            <div className="card p-0"><div className="px-5 pt-4 text-sm text-slate-400">Memory · 24h</div><div className="pt-2"><Sparkline {...mem} tone="info" format={(v) => `${v.toFixed(1)}%`} label="memory used" /></div></div>
+            <div className="card p-0"><div className="px-5 pt-4 text-sm text-slate-400">Load average · 24h</div><div className="pt-2"><Sparkline {...load} tone="warn" max={Math.max(2, ...load.values)} format={(v) => v.toFixed(2)} label="load (1 min)" /></div></div>
           </div>
 
           <section className="card mt-5 overflow-hidden p-0">

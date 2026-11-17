@@ -1,12 +1,12 @@
 import { AppDetailData, DbPoint } from '../../api';
-import { ago, bytes, dur, Kpi, Skeleton, Sparkline } from '../../components/ui';
+import { ago, bytes, dur, Kpi, seriesOf, Skeleton, Sparkline } from '../../components/ui';
 import { Facts, num, Section } from './shared';
 
-function Chart({ title, value, values, tone, max }: { title: string; value: string; values: number[]; tone: 'info' | 'ok' | 'warn'; max?: number }) {
+function Chart({ title, value, values, times, tone, max, format, label }: { title: string; value: string; values: number[]; times: string[]; tone: 'info' | 'ok' | 'warn'; max?: number; format: (v: number) => string; label: string }) {
   return (
     <div className="card flex min-w-0 flex-col p-0">
       <div className="flex items-baseline justify-between px-5 pt-4"><span className="text-sm text-slate-400">{title}</span><span className="num text-sm text-slate-200">{value}</span></div>
-      <div className="mt-auto pt-3"><Sparkline values={values} tone={tone} max={max} height={56} /></div>
+      <div className="mt-auto pt-3"><Sparkline values={values} times={times} tone={tone} max={max} height={56} format={format} label={label} /></div>
     </div>
   );
 }
@@ -17,10 +17,8 @@ export function DatabaseTab({ detail, series, operator }: { detail: AppDetailDat
   if (!d) return <div className="card text-sm text-slate-500">This app has no database configured.</div>;
   if (!d.ok) return <div className="card text-sm text-rose-300">Database unavailable{d.error ? `: ${d.error}` : ''}.</div>;
 
-  const tps = series.map((p) => p.tps).filter((x): x is number => x != null);
-  const hits = series.map((p) => p.cacheHitPct).filter((x): x is number => x != null);
-  const sizes = series.map((p) => p.size).filter((x): x is number => x != null);
-  const conns = series.map((p) => p.connections).filter((x): x is number => x != null);
+  const T = seriesOf(series, (p) => p.tps), H = seriesOf(series, (p) => p.cacheHitPct), S = seriesOf(series, (p) => p.size), C = seriesOf(series, (p) => p.connections);
+  const tps = T.values, hits = H.values, sizes = S.values, conns = C.values;
   const deadlocks24h = series.reduce((n, p) => n + (p.deadlocks ?? 0), 0);
   const growth = sizes.length > 1 ? sizes[sizes.length - 1] - sizes[0] : null;
   const hit = d.stats.cache_hit_pct ?? null;
@@ -40,10 +38,10 @@ export function DatabaseTab({ detail, series, operator }: { detail: AppDetailDat
       </div>
 
       <div className="hidden gap-5 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-        <Chart title="Transactions/s · 24h" value={tps.length ? tps[tps.length - 1].toFixed(2) : '—'} values={tps} tone="info" max={Math.max(1, ...tps)} />
-        <Chart title="Cache hit · 24h" value={hits.length ? `${hits[hits.length - 1].toFixed(1)}%` : '—'} values={hits} tone="ok" />
-        <Chart title="Size · 24h" value={bytes(d.size)} values={sizes} tone="info" max={Math.max(...sizes, 1) * 1.05} />
-        <Chart title="Connections · 24h" value={String(connTotal)} values={conns} tone="warn" max={Math.max(5, ...conns)} />
+        <Chart title="Transactions/s · 24h" value={tps.length ? tps[tps.length - 1].toFixed(2) : '—'} values={tps} times={T.times} tone="info" max={Math.max(1, ...tps)} format={(v) => v.toFixed(2)} label="transactions/s" />
+        <Chart title="Cache hit · 24h" value={hits.length ? `${hits[hits.length - 1].toFixed(1)}%` : '—'} values={hits} times={H.times} tone="ok" format={(v) => `${v.toFixed(2)}%`} label="of reads from memory" />
+        <Chart title="Size · 24h" value={bytes(d.size)} values={sizes} times={S.times} tone="info" max={Math.max(...sizes, 1) * 1.05} format={(v) => bytes(v)} label="database size" />
+        <Chart title="Connections · 24h" value={String(connTotal)} values={conns} times={C.times} tone="warn" max={Math.max(5, ...conns)} format={(v) => v.toFixed(0)} label="connections" />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">

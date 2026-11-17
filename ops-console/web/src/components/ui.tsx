@@ -1,4 +1,5 @@
-import { ReactNode, useId } from 'react';
+import { ReactNode, useId, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 // ------------------------------------------------------------------ formatting
 export const bytes = (b: number | null | undefined): string => {
@@ -70,37 +71,79 @@ export function Meter({ label, value, tone }: { label: string; value: number | n
   );
 }
 
-/** Area sparkline from a series (0–100 by default). */
-export function Sparkline({ values, tone = 'info', max = 100, height = 64 }: { values: number[]; tone?: Tone; max?: number; height?: number }) {
+/**
+ * Area sparkline. With `times`, hovering/tapping shows a guide line, the nearest point and a tooltip with the
+ * exact time, the formatted value and where it sits in the range (min / max / average of what's shown).
+ */
+export function Sparkline({ values, times, tone = 'info', max = 100, height = 64, format = (v: number) => v.toFixed(1), label }:
+  { values: number[]; times?: string[]; tone?: Tone; max?: number; height?: number; format?: (v: number) => string; label?: string }) {
   const stroke = { ok: '#34d399', warn: '#fbbf24', bad: '#fb7185', info: '#60a5fa', mute: '#64748b' }[tone];
   const id = `spark${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+  const [hover, setHover] = useState<number | null>(null);
   if (values.length < 2) {
     return <div className="grid place-items-center text-2xs text-slate-600" style={{ height }}>{height >= 40 ? 'collecting history…' : '—'}</div>;
   }
   const w = 300, h = height, top = Math.max(max, ...values);
   const pts = values.map((v, i) => [(i / (values.length - 1)) * w, h - 4 - (v / top) * (h - 10)] as const);
   const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const lo = Math.min(...values), hi = Math.max(...values), avg = values.reduce((a, v) => a + v, 0) / values.length;
+  const pick = (clientX: number, el: Element) => {
+    const r = el.getBoundingClientRect();
+    setHover(Math.max(0, Math.min(values.length - 1, Math.round(((clientX - r.left) / r.width) * (values.length - 1)))));
+  };
+  const hv = hover != null ? values[hover] : null;
+  const leftPct = hover != null ? (hover / (values.length - 1)) * 100 : 0;
+  const when = hover != null && times?.[hover] ? new Date(times[hover]).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="block w-full" style={{ height }} aria-hidden>
-      <defs>
-        <linearGradient id={id} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={stroke} stopOpacity="0.28" />
-          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`${line} L${w},${h} L0,${h} Z`} fill={`url(#${id})`} />
-      <path d={line} fill="none" stroke={stroke} strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div className="relative" onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="block w-full cursor-crosshair touch-none" style={{ height }}
+           onMouseMove={(e) => pick(e.clientX, e.currentTarget)} onTouchStart={(e) => pick(e.touches[0].clientX, e.currentTarget)}
+           onTouchMove={(e) => pick(e.touches[0].clientX, e.currentTarget)} role="img" aria-label={`${label ?? 'Chart'}: low ${format(lo)}, high ${format(hi)}, latest ${format(values[values.length - 1])}`}>
+        <defs>
+          <linearGradient id={id} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={stroke} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={`${line} L${w},${h} L0,${h} Z`} fill={`url(#${id})`} />
+        <path d={line} fill="none" stroke={stroke} strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+        {hover != null && <line x1={pts[hover][0]} x2={pts[hover][0]} y1={0} y2={h} stroke="#94a3b8" strokeOpacity="0.5" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />}
+      </svg>
+      {hover != null && (
+        <>
+          <span className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-ink-950"
+                style={{ left: `${leftPct}%`, top: `${(pts[hover][1] / h) * 100}%`, background: stroke }} />
+          <div className={`pointer-events-none absolute top-1 z-10 w-max max-w-[16rem] rounded-lg border border-ink-600 bg-ink-850/95 px-2.5 py-1.5 text-2xs shadow-xl shadow-black/40 ${leftPct > 60 ? '-translate-x-full' : ''}`}
+               style={{ left: `calc(${leftPct}% ${leftPct > 60 ? '- 10px' : '+ 10px'})` }}>
+            {when && <div className="text-slate-400">{when}</div>}
+            <div className="num text-sm font-medium text-slate-100">{format(hv!)}{label ? <span className="ml-1 text-2xs font-normal text-slate-400">{label}</span> : null}</div>
+            <div className="num text-slate-500">
+              {hv === hi && hi !== lo ? 'highest in view · ' : hv === lo && hi !== lo ? 'lowest in view · ' : ''}
+              {hv! >= avg ? '+' : '−'}{format(Math.abs(hv! - avg))} vs avg {format(avg)}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
+/** Pick a numeric field from timestamped points, dropping gaps, keeping times aligned. */
+export function seriesOf<T extends { at: string }>(points: T[], pick: (p: T) => number | null | undefined) {
+  const values: number[] = [], times: string[] = [];
+  for (const p of points) { const v = pick(p); if (v != null && Number.isFinite(v)) { values.push(v); times.push(p.at); } }
+  return { values, times };
+}
+
 /** Grid of status cells (one per app/pod). */
-export function Cells({ items, size = 'md' }: { items: { key: string; tone: Tone; title: string }[]; size?: 'sm' | 'md' }) {
+export function Cells({ items, size = 'md' }: { items: { key: string; tone: Tone; title: string; href?: string }[]; size?: 'sm' | 'md' }) {
   const c = { ok: 'bg-emerald-500/70 hover:bg-emerald-400', warn: 'bg-amber-400/80 hover:bg-amber-300', bad: 'bg-rose-500/85 hover:bg-rose-400', info: 'bg-indigo-400/80', mute: 'bg-ink-600' };
   const s = size === 'sm' ? 'h-3 w-3 rounded-[3px]' : 'h-5 w-5 rounded-[4px] sm:h-6 sm:w-6';
   return (
     <div className="flex flex-wrap gap-1">
-      {items.map((it) => <span key={it.key} title={it.title} className={`${s} ${c[it.tone]} transition-colors`} />)}
+      {items.map((it) => it.href
+        ? <Link key={it.key} to={it.href} title={`${it.title} (open)`} aria-label={it.title} className={`${s} ${c[it.tone]} transition-all hover:scale-110 hover:ring-2 hover:ring-white/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300`} />
+        : <span key={it.key} title={it.title} className={`${s} ${c[it.tone]} transition-colors`} />)}
     </div>
   );
 }

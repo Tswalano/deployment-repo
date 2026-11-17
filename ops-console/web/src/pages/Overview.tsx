@@ -3,13 +3,13 @@ import { api, DeployEvent, Instance, Overview as OverviewData, Sample } from '..
 import { ActivityList } from '../components/ActivityList';
 import { InstanceCard } from '../components/InstanceCard';
 import { ago, Alert, bytes, Cells, Eyebrow, Kpi, PageHeader, Skeleton, Sparkline, Tone } from '../components/ui';
-import { appTone } from '../health';
+import { appTone, sortInstances } from '../health';
 import { UptimeTable } from '../components/uptime';
 import { usePoll } from '../usePoll';
 
 
 /** Average a metric across instances per ~5 minute bucket. */
-function series(samples: Sample[], key: 'memPct' | 'diskPct' | 'load1'): number[] {
+function series(samples: Sample[], key: 'memPct' | 'diskPct' | 'load1'): { values: number[]; times: string[] } {
   const buckets = new Map<number, number[]>();
   for (const s of samples) {
     const v = s[key];
@@ -17,7 +17,8 @@ function series(samples: Sample[], key: 'memPct' | 'diskPct' | 'load1'): number[
     const b = Math.floor(new Date(s.at).getTime() / 300_000);
     buckets.set(b, [...(buckets.get(b) ?? []), v]);
   }
-  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([, vs]) => vs.reduce((a, v) => a + v, 0) / vs.length);
+  const sorted = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
+  return { values: sorted.map(([, vs]) => vs.reduce((a, v) => a + v, 0) / vs.length), times: sorted.map(([b]) => new Date(b * 300_000).toISOString()) };
 }
 
 const trend = (values: number[]): string | null => {
@@ -26,7 +27,7 @@ const trend = (values: number[]): string | null => {
   return `${d >= 0 ? '+' : ''}${d.toFixed(1)}`;
 };
 
-function MetricCard({ title, value, unit, values, tone, max }: { title: string; value: string; unit?: string; values: number[]; tone: Tone; max?: number }) {
+function MetricCard({ title, value, unit, values, times, tone, max, format }: { title: string; value: string; unit?: string; values: number[]; times: string[]; tone: Tone; max?: number; format?: (v: number) => string }) {
   const t = trend(values);
   return (
     <div className="card flex min-w-0 flex-col p-0">
@@ -35,7 +36,7 @@ function MetricCard({ title, value, unit, values, tone, max }: { title: string; 
         {t && <span className={`num text-xs ${t.startsWith('+') && t !== '+0.0' ? 'text-amber-300' : 'text-emerald-300'}`} title="change over the last 24h">{t}{unit === '%' ? '%' : ''}</span>}
       </div>
       <div className="num px-5 pt-1 text-[1.7rem] font-medium tracking-tight text-slate-100">{value}<span className="ml-1 text-base text-slate-500">{unit}</span></div>
-      <div className="mt-auto pt-3"><Sparkline values={values} tone={tone} max={max} /></div>
+      <div className="mt-auto pt-3"><Sparkline values={values} times={times} tone={tone} max={max} format={format} label={title.toLowerCase()} /></div>
     </div>
   );
 }
@@ -44,7 +45,7 @@ function ServiceHealth({ instances }: { instances: Instance[] }) {
   const apps = instances.flatMap((i) => (i.status?.apps ?? []).map((a) => ({ a, i })));
   const offline = instances.filter((i) => !i.status || i.lastError);
   const cells = [
-    ...apps.map(({ a, i }) => ({ key: `${i.id}-${a.project}`, tone: appTone(a), title: `${a.project} on ${i.name}: ${a.healthy ? 'healthy' : `down (HTTP ${a.healthCode ?? 'none'})`}${a.warnings24h ? ` · ${a.warnings24h} warnings/24h` : ''}` })),
+    ...apps.map(({ a, i }) => ({ key: `${i.id}-${a.project}`, tone: appTone(a), href: `/instances/${i.id}/apps/${a.project}`, title: `${a.project} on ${i.name}: ${a.healthy ? 'healthy' : `down (HTTP ${a.healthCode ?? 'none'})`}${a.warnings24h ? ` · ${a.warnings24h} warnings/24h` : ''}` })),
     ...offline.map((i) => ({ key: `off-${i.id}`, tone: 'mute' as Tone, title: `${i.name}: unreachable` })),
   ];
   const count = (t: Tone) => cells.filter((c) => c.tone === t).length;
@@ -55,7 +56,7 @@ function ServiceHealth({ instances }: { instances: Instance[] }) {
     <section className="card grid gap-6 lg:grid-cols-[1fr_auto]">
       <div className="min-w-0">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="font-medium text-slate-100">Service health <span className="ml-1 text-sm font-normal text-slate-500">{apps.length} apps monitored</span></h2>
+          <h2 className="font-medium text-slate-100">Service health <span className="ml-1 text-sm font-normal text-slate-500">{apps.length} apps monitored · click one to open it</span></h2>
           <span className="pill-ok"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />LIVE</span>
         </div>
         <div className="mt-4">{cells.length ? <Cells items={cells} /> : <p className="text-sm text-slate-500">No apps reported yet.</p>}</div>
@@ -131,9 +132,9 @@ export function Overview() {
   const k = data?.kpis;
   const score = k && k.appsTotal ? Math.round((k.appsHealthy / k.appsTotal) * 1000) / 10 : null;
   const scoreTone: Tone = score == null ? 'mute' : score >= 99 ? 'ok' : score >= 75 ? 'warn' : 'bad';
-  const mem = data ? series(data.samples, 'memPct') : [];
-  const disk = data ? series(data.samples, 'diskPct') : [];
-  const load = data ? series(data.samples, 'load1') : [];
+  const mem = data ? series(data.samples, 'memPct') : { values: [], times: [] };
+  const disk = data ? series(data.samples, 'diskPct') : { values: [], times: [] };
+  const load = data ? series(data.samples, 'load1') : { values: [], times: [] };
   const events: DeployEvent[] = data?.activity ?? [];
 
   return (
@@ -185,9 +186,9 @@ export function Overview() {
                 {uptime ? <UptimeTable apps={uptime} /> : <Skeleton className="h-24" />}
               </section>
               <div className="hidden gap-5 sm:grid sm:grid-cols-3">
-                <MetricCard title="Memory utilization" value={k!.memPct?.toFixed(1) ?? '—'} unit="%" values={mem} tone="info" />
-                <MetricCard title="Disk usage" value={k!.diskPct?.toFixed(1) ?? '—'} unit="%" values={disk} tone="ok" />
-                <MetricCard title="Load average" value={load.length ? load[load.length - 1].toFixed(2) : '—'} values={load} tone="warn" max={Math.max(2, ...load)} />
+                <MetricCard title="Memory utilization" value={k!.memPct?.toFixed(1) ?? '—'} unit="%" values={mem.values} times={mem.times} tone="info" format={(v) => `${v.toFixed(1)}%`} />
+                <MetricCard title="Disk usage" value={k!.diskPct?.toFixed(1) ?? '—'} unit="%" values={disk.values} times={disk.times} tone="ok" format={(v) => `${v.toFixed(1)}%`} />
+                <MetricCard title="Load average" value={load.values.length ? load.values[load.values.length - 1].toFixed(2) : '—'} values={load.values} times={load.times} tone="warn" max={Math.max(2, ...load.values)} format={(v) => v.toFixed(2)} />
               </div>
               <section className="card">
                 <div className="flex items-baseline justify-between gap-3">
@@ -195,7 +196,7 @@ export function Overview() {
                   <Link to="/instances" className="text-sm text-indigo-300 hover:text-indigo-200">View all</Link>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {data.instances.map((i) => <InstanceCard key={i.id} instance={i} />)}
+                  {sortInstances(data.instances).map((i) => <InstanceCard key={i.id} instance={i} />)}
                 </div>
               </section>
             </div>

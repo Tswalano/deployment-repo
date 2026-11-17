@@ -155,7 +155,7 @@ async function collect(row: InstanceRow): Promise<InstanceRow> {
         const snap = normalise(decodeOutput(out) as { source: string; data: unknown });
         const { rows } = await db().query(
             `UPDATE instances SET last_status = $2, last_fetched_at = now(), last_ok_at = now(), last_error = NULL,
-                    ec2_state = 'running', ec2_state_at = now()
+                    ec2_state = 'running', ec2_state_at = CASE WHEN ec2_state IS DISTINCT FROM 'running' THEN now() ELSE ec2_state_at END
              WHERE id = $1 RETURNING *`, [row.id, JSON.stringify(snap)]);
         await maybeSample(row.id, snap);
         return rows[0] ?? row;
@@ -166,7 +166,7 @@ async function collect(row: InstanceRow): Promise<InstanceRow> {
         const state = info === null ? 'terminated' : info?.state ?? null;
         if (state && state !== 'running') msg = `Instance is ${state}`;
         const { rows } = await db().query(
-            `UPDATE instances SET last_fetched_at = now(), last_error = $2, ec2_state = COALESCE($3, ec2_state), ec2_state_at = CASE WHEN $3::text IS NULL THEN ec2_state_at ELSE now() END
+            `UPDATE instances SET last_fetched_at = now(), last_error = $2, ec2_state = COALESCE($3, ec2_state), ec2_state_at = CASE WHEN $3::text IS NULL OR ec2_state IS NOT DISTINCT FROM $3 THEN ec2_state_at ELSE now() END
               WHERE id = $1 RETURNING *`, [row.id, msg, state]);
         return rows[0] ?? row;
     }

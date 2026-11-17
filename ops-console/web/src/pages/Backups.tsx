@@ -113,9 +113,9 @@ function InstanceSection({ b, canOperate, isAdmin, downloads, reload }:
                 })}</tbody>
               </table>
               {mine.length > 5 && (
-                <button className="w-full border-t border-ink-800 py-2 text-xs text-slate-400 hover:bg-ink-850 hover:text-slate-200" onClick={() => setShowAll({ ...showAll, [db]: !showAll[db] })}>
+                <div className="border-t border-ink-800 p-2 text-center"><button className="btn-ghost px-3 py-1 text-xs" onClick={() => setShowAll({ ...showAll, [db]: !showAll[db] })}>
                   {showAll[db] ? 'Show fewer' : `Show all ${mine.length}`}
-                </button>
+                </button></div>
               )}
             </div>
           );
