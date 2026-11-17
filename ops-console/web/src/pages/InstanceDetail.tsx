@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, AppStatus, DbPoint, Snapshot } from '../api';
+import { api, AppStatus, DbPoint, NewAppCreation, Snapshot } from '../api';
 import { useAuth } from '../auth';
 import { ActivityList } from '../components/ActivityList';
 import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, seriesOf, Skeleton, Sparkline } from '../components/ui';
@@ -117,6 +117,29 @@ function DbServer({ s, series }: { s: Snapshot; series: Record<string, DbPoint[]
   );
 }
 
+/** "An app is being created here" with a link back to its live progress (survives refreshes). */
+function CreatingBanner({ instanceId }: { instanceId: number }) {
+  const [running, setRunning] = useState<NewAppCreation[]>([]);
+  useEffect(() => {
+    const load = () => api.newAppHistory(instanceId).then((h) => setRunning(h.filter((c) => c.status === 'running' && c.deploymentId))).catch(() => undefined);
+    void load();
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
+  }, [instanceId]);
+  if (!running.length) return null;
+  return (
+    <div className="mb-4 space-y-2">
+      {running.map((c) => (
+        <div key={c.id} className="card flex flex-wrap items-center gap-3 border-indigo-400/40 bg-indigo-500/[0.07] p-3">
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-indigo-400 motion-reduce:animate-none" />
+          <span className="min-w-0 flex-1 truncate text-sm text-slate-200"><b>{c.project}</b> is being created ({c.domain}) · started {ago(c.createdAt)} by {c.createdBy}</span>
+          <Link className="btn-secondary px-3 py-1 text-xs" to={`/instances/${instanceId}/new-app?job=${c.deploymentId}`}>View progress</Link>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function InstanceDetail() {
   const id = Number(useParams().id);
   const { user } = useAuth();
@@ -155,6 +178,7 @@ export function InstanceDetail() {
           </>
         )}
       />
+      {canRefresh && <CreatingBanner instanceId={i.id} />}
       {powerMsg && <div className="mb-4"><Alert tone="ok">{powerMsg}</Alert></div>}
       {i.lastError && i.ec2State && i.ec2State !== 'running' ? (
         <div className="mb-4"><Alert tone="warn">This instance is {i.ec2State}{i.ec2StateAt ? ` (since ${ago(i.ec2StateAt)})` : ''}. Showing the last snapshot from {ago(i.lastOkAt)}.</Alert></div>

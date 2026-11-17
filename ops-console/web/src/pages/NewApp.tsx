@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, Deployment, Detection, GithubRepo, Instance, NewAppCheck } from '../api';
-import { Alert, DesktopOnly, PageHeader, Skeleton } from '../components/ui';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { api, ApiError, Deployment, Detection, GithubRepo, Instance, NewAppCheck, NewAppCreation } from '../api';
+import { ago, Alert, DesktopOnly, PageHeader, Skeleton } from '../components/ui';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const code = (e: unknown) => (e instanceof ApiError ? e.code : undefined);
@@ -32,6 +32,11 @@ function Field({ label, hint, children }: { label: string; hint?: React.ReactNod
 
 export function NewApp() {
   const instanceId = Number(useParams().id);
+  const [search, setSearch] = useSearchParams();
+  const jobParam = Number(search.get('job')) || null;
+  const [history, setHistory] = useState<NewAppCreation[] | null>(null);
+  /** The saved record behind a resumed job (after a refresh the form fields are empty). */
+  const [creation, setCreation] = useState<NewAppCreation | null>(null);
   const [inst, setInst] = useState<Instance | null>(null);
   const [repos, setRepos] = useState<GithubRepo[] | null>(null);
   const [ghError, setGhError] = useState<string | null>(null);
@@ -62,6 +67,17 @@ export function NewApp() {
   const [job, setJob] = useState<Deployment | null>(null);
   const started = useRef<number>(0);
   const [now, setNow] = useState(Date.now());
+
+  // Resume: ?job=<id> reopens the live progress of a creation (refresh, reconnect, bookmark).
+  useEffect(() => {
+    api.newAppHistory(instanceId).then((h) => {
+      setHistory(h);
+      if (!jobParam) return;
+      const c = h.find((x) => x.deploymentId === jobParam) ?? null;
+      setCreation(c);
+      api.deployment(jobParam).then((d) => { setJob(d); setStep(3); }).catch((e) => setError(err(e)));
+    }).catch(() => setHistory([]));
+  }, [instanceId, jobParam]);
 
   useEffect(() => {
     api.instance(instanceId).then((r) => setInst(r.instance)).catch((e) => setError(err(e)));
@@ -127,6 +143,7 @@ export function NewApp() {
       const d = await api.createApp(instanceId, { project, repo, branch, subdir, start, build, migrate, healthPath, subdomain, db, memoryMb,
         confirmLowMemory: confirmLow, override: needOverride ? override : undefined });
       started.current = Date.now(); setJob(d); setStep(3);
+      setSearch({ job: String(d.id) }, { replace: true });   // a refresh comes back to this progress view
     } catch (e) {
       if (code(e) === 'frozen') setNeedOverride(true);
       setError(err(e));
@@ -243,15 +260,30 @@ export function NewApp() {
           </section>
         )}
 
+        {step === 0 && !jobParam && (() => {
+          const running = history?.filter((c) => c.status === 'running' && c.deploymentId) ?? [];
+          return running.length > 0 && (
+            <div className="mb-5 space-y-2">
+              {running.map((c) => (
+                <div key={c.id} className="card flex flex-wrap items-center gap-3 border-indigo-400/40 bg-indigo-500/[0.07] p-4">
+                  <span className="h-3 w-3 animate-pulse rounded-full bg-indigo-400 motion-reduce:animate-none" />
+                  <span className="min-w-0 flex-1 truncate text-sm text-slate-200"><b>{c.project}</b> is being created ({c.repo}@{c.branch} → {c.domain}) · started by {c.createdBy} {ago(c.createdAt)}</span>
+                  <Link className="btn-primary px-3 py-1.5 text-xs" to={`?job=${c.deploymentId}`}>View progress</Link>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
         {step === 3 && job && (
           <section className="card space-y-5">
             <div className="flex items-center gap-3">
               {job.status === 'running' ? <span className="h-3 w-3 animate-pulse rounded-full bg-indigo-400 motion-reduce:animate-none" /> : job.status === 'success' ? <span className="pill-ok">live</span> : <span className="pill-bad">failed</span>}
-              <h2 className="font-medium text-slate-100">{job.status === 'running' ? `Creating ${project}…` : job.status === 'success' ? `${project} is live` : `Creating ${project} failed`}</h2>
+              <h2 className="font-medium text-slate-100">{job.status === 'running' ? `Creating ${creation?.project ?? project}…` : job.status === 'success' ? `${creation?.project ?? project} is live` : `Creating ${creation?.project ?? project} failed`}</h2>
               <span className="ml-auto text-xs text-slate-500">{Math.round(((job.finishedAt ? Date.parse(job.finishedAt) : now) - Date.parse(job.createdAt)) / 1000)}s</span>
             </div>
             <ol className="grid gap-2 md:grid-cols-2">
-              {RUN_STEPS.filter(([k]) => k !== 'database' || db).map(([k, label]) => {
+              {RUN_STEPS.filter(([k]) => k !== 'database' || (creation ? creation.withDb : db)).map(([k, label]) => {
                 const order = RUN_STEPS.map(([x]) => x);
                 const reached = summary ? order.indexOf(summary.step) : -1;
                 const state = job.status === 'success' ? 'done' : summary && !summary.ok ? (order.indexOf(k) < reached ? 'done' : k === summary.step ? 'failed' : 'skipped') : 'pending';
@@ -265,11 +297,11 @@ export function NewApp() {
                 );
               })}
             </ol>
-            {job.status === 'running' && <p className="text-sm text-slate-400">This usually takes 2–5 minutes. You can leave this page; the result also arrives by email and appears under Activity.</p>}
+            {job.status === 'running' && <p className="text-sm text-slate-400">This usually takes 2–5 minutes. You can leave or refresh this page and come back: progress is kept (the address of this page reopens it), and the result also arrives by email. The steps fill in when the run finishes.</p>}
             {job.status === 'success' && (
               <Alert tone="ok">
-                <a className="underline" href={`https://${summary?.domain ?? domain}`} target="_blank" rel="noreferrer noopener">https://{summary?.domain ?? domain}</a>
-                {summary && !summary.tls ? ' (HTTPS pending: DNS was still propagating)' : ''}. Pushes to {branch} now deploy automatically. The app page appears within a few minutes.
+                <a className="underline" href={`https://${summary?.domain ?? creation?.domain ?? domain}`} target="_blank" rel="noreferrer noopener">https://{summary?.domain ?? creation?.domain ?? domain}</a>
+                {summary && !summary.tls ? ' (HTTPS pending: DNS was still propagating)' : ''}. Pushes to {creation?.branch ?? branch} now deploy automatically. The app page appears within a few minutes.
               </Alert>
             )}
             {job.status === 'failed' && <Alert>{summary?.error ?? 'The run failed.'} Everything it created was removed again.</Alert>}
@@ -277,10 +309,28 @@ export function NewApp() {
             {job.status !== 'running' && (
               <div className="flex gap-2">
                 <Link to={`/instances/${inst.id}`} className="btn-secondary">Back to {inst.name}</Link>
-                {job.status === 'success' && <Link to={`/instances/${inst.id}/apps/${project}`} className="btn-primary">Open {project}</Link>}
-                {job.status === 'failed' && <button className="btn-primary" onClick={() => { setJob(null); setStep(2); }}>Try again</button>}
+                {job.status === 'success' && <Link to={`/instances/${inst.id}/apps/${creation?.project ?? project}`} className="btn-primary">Open {creation?.project ?? project}</Link>}
+                {job.status === 'failed' && <button className="btn-primary" onClick={() => { setJob(null); setCreation(null); setSearch({}, { replace: true }); setStep(creation ? 0 : 2); }}>Try again</button>}
               </div>
             )}
+          </section>
+        )}
+        {step === 0 && !jobParam && history && history.length > 0 && (
+          <section className="card mt-5 overflow-hidden p-0">
+            <h2 className="px-5 py-4 font-medium text-slate-100">Recent new apps on {inst.name}</h2>
+            <table className="tbl">
+              <thead><tr><th className="w-[18%]">App</th><th>Repository</th><th className="w-[26%]">Address</th><th className="w-[12%]">Status</th><th className="w-[12%]">Started</th><th className="w-[12%] text-right"></th></tr></thead>
+              <tbody>{history.slice(0, 8).map((c) => (
+                <tr key={c.id}>
+                  <td className="font-medium text-slate-100">{c.project}</td>
+                  <td className="num text-xs" title={`${c.repo}@${c.branch}`}>{c.repo}@{c.branch}</td>
+                  <td title={c.domain}>{c.domain}</td>
+                  <td><span className={c.status === 'success' ? 'pill-ok' : c.status === 'failed' ? 'pill-bad' : 'pill-info'}>{c.status === 'running' ? 'creating' : c.status === 'success' ? 'live' : 'failed'}</span></td>
+                  <td title={c.createdAt}>{ago(c.createdAt)}</td>
+                  <td className="text-right">{c.deploymentId && <Link className="btn-ghost px-2 py-1 text-xs" to={`?job=${c.deploymentId}`}>{c.status === 'running' ? 'Progress' : 'Details'}</Link>}</td>
+                </tr>
+              ))}</tbody>
+            </table>
           </section>
         )}
       </div>
