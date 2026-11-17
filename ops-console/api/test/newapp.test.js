@@ -59,7 +59,10 @@ const fake = {
     upserts: [], invs: {}, memAvailable: 600 * 1048576,
     async hostedZoneId(domain) { return domain === 'glenify.studio' ? 'ZTESTZONE' : null; },
     async dnsRecords(zone, name) { assert.equal(zone, 'ZTESTZONE'); return (this.dns[name + '.'] ?? []).map((r) => ({ name, ...r })); },
-    async upsertARecord(zone, name, ip) { this.upserts.push([zone, name, ip]); },
+    async upsertARecord(zone, name, ip) { this.upserts.push([zone, name, ip]); this.dns[name + '.'] = [{ type: 'A', values: [ip] }]; return 'C123'; },
+    waits: [], deletes: [],
+    async waitDnsChange(id, ms) { this.waits.push([id, ms]); return true; },
+    async deleteARecord(zone, name, ip) { this.deletes.push([zone, name, ip]); delete this.dns[name + '.']; },
     sent: [], async sendDocument(_r, _id, doc, params) { this.sent.push([doc, params]); return 'cmd-' + this.sent.length; },
     async getInvocation(_r, _id, cid) { return this.invs[cid] ?? { status: 'running', detail: 'InProgress', stdout: '', stderr: '' }; },
     async getConsoleSecret(_r, name) { return this.consoleSecrets[name] ?? null; },
@@ -141,6 +144,7 @@ global.fetch = async (url, init = {}) => {
         { full_name: 'Tswalano/alpha', private: true, default_branch: 'main', pushed_at: null, description: null }] });
     if (u.includes('/repos/Tswalano/shop/contents/package.json')) return json({ content: Buffer.from(JSON.stringify(PKG)).toString('base64'), encoding: 'base64' });
     if (u.includes('/repos/Tswalano/shop/contents/backend/package.json')) return json({ message: 'Not Found' }, 404);
+    if (u.includes('/repos/Tswalano/shop/contents/spa/package.json')) return json({ content: Buffer.from(JSON.stringify({ name: 'spa', scripts: { dev: 'vite', build: 'tsc && vite build', preview: 'vite preview' }, devDependencies: { vite: '^5', typescript: '^5' }, dependencies: { react: '^18' } })).toString('base64'), encoding: 'base64' });
     return json({ message: 'unexpected ' + u }, 500);
 };
 
@@ -164,6 +168,11 @@ test('detect: scripts and guesses from package.json; a missing package.json expl
     assert.equal(none.found, false);
     assert.match(none.warnings[0], /No package\.json/);
     assert.equal((await a.get('/api/github/detect?repo=Tswalano/shop&branch=main&subdir=../../etc')).status, 400);
+    assert.equal(d.frontend, false, 'a server app is not flagged');
+    const spa = (await a.get('/api/github/detect?repo=Tswalano/shop&branch=main&subdir=spa')).json;
+    assert.equal(spa.frontend, true, 'Vite + React with no server framework');
+    assert.match(spa.warnings[0], /front-end app \(vite\)/);
+    assert.equal(spa.start, null, 'no start script: the person has to choose');
     assert.equal((await (await signedIn('deployer')).get('/api/github/detect?repo=Tswalano/shop&branch=main')).status, 403);
 });
 
@@ -249,6 +258,8 @@ test('a failed creation is recorded, its token removed, and nothing is linked', 
     const { rows } = await dist('db').db().query("SELECT status FROM app_creations WHERE project = 'blog'");
     assert.equal(rows[0].status, 'failed');
     assert.equal((await dist('db').db().query("SELECT 1 FROM app_repos WHERE project = 'blog'")).rows.length, 0);
+    assert.ok(fake.waits.some(([id, ms]) => id === 'C123' && ms <= 60000), 'waited for the DNS change (capped)');
+    assert.ok(fake.deletes.some(([, name]) => name === 'blog.glenify.studio'), 'the DNS record the console created is removed again');
 });
 
 test('deploys of GitHub-linked apps get a token for the run, removed afterwards', async () => {

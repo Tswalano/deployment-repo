@@ -49,7 +49,7 @@ undo() {
       cert)   certbot delete --cert-name "$DOMAIN" --non-interactive 2>/dev/null ;;
       db)     printf 'DROP DATABASE IF EXISTS "%s" WITH (FORCE);\nDROP ROLE IF EXISTS "%s";\n' "$DBNAME" "$DBROLE" | pgsu >/dev/null 2>&1 ;;
       ssm)    for k in PORT NODE_ENV DATABASE_URL; do aws ssm delete-parameter --region "$REGION" --name "/apps/$PROJECT/$k" 2>/dev/null; done ;;
-      conf)   rm -f "$STATE_PROJ/$PROJECT.conf" ;;
+      conf)   rm -f "$STATE_PROJ/$PROJECT.conf"; rm -rf "/opt/deploy-state/$PROJECT" ;;   # the pipeline's history/backups dir for this new app
       clone)  rm -rf "/opt/apps/$PROJECT" ;;
     esac
   done
@@ -76,6 +76,12 @@ asec2() { runuser -u ec2-user -- env -i HOME=/home/ec2-user USER=ec2-user LANG=C
 STEP=checks
 [[ -e "/opt/deploy/projects/$PROJECT.conf" || -e "$STATE_PROJ/$PROJECT.conf" ]] && fail "a project called $PROJECT already exists"
 [[ -e "/opt/apps/$PROJECT" ]] && fail "/opt/apps/$PROJECT already exists"
+# a pipeline state dir without a project conf is left over from an earlier failed attempt: set it aside, never delete it
+if [[ -d "/opt/deploy-state/$PROJECT" ]]; then
+  install -d -m 0755 /opt/deploy-state/.leftovers
+  mv "/opt/deploy-state/$PROJECT" "/opt/deploy-state/.leftovers/$PROJECT-$(date -u +%Y%m%dT%H%M%SZ)"
+  log "moved an old pipeline state dir for $PROJECT to /opt/deploy-state/.leftovers/"
+fi
 systemctl cat "$PROJECT.service" >/dev/null 2>&1 && fail "a systemd unit $PROJECT.service already exists"
 [[ -e "/etc/nginx/conf.d/$PROJECT.conf" ]] && fail "an nginx site $PROJECT.conf already exists"
 grep -rqsl -E "server_name[^;]*[[:space:]]$DOMAIN[[:space:];]" /etc/nginx/conf.d/ && fail "nginx already serves $DOMAIN"
@@ -221,14 +227,14 @@ NGX
 nginx -t && systemctl reload nginx || fail "nginx rejected the new site"
 
 STEP=https
-for _ in $(seq 1 36); do [[ "$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)" == "$MYIP" ]] && break; sleep 5; done
-if [[ "$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)" == "$MYIP" ]]; then
-  CREATED+=(cert)
-  if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect --register-unsafely-without-email; then TLS=true; log "HTTPS certificate issued for $DOMAIN"
-  else log "⚠ certbot failed; the app is reachable over HTTP only for now"; fi
-else
-  log "⚠ $DOMAIN does not point at this instance yet; skipped HTTPS (re-run certbot later)"
-fi
+# The console already waited for Route 53 to report the record live; this instance's resolver may still hold an old
+# "no such name" answer for a few minutes. Let's Encrypt checks public DNS, so try the certificate either way.
+resolved=false
+for _ in $(seq 1 60); do [[ "$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)" == "$MYIP" ]] && { resolved=true; break; }; sleep 5; done
+$resolved || log "this instance doesn't resolve $DOMAIN yet (DNS cache); trying the certificate anyway"
+CREATED+=(cert)
+if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect --register-unsafely-without-email; then TLS=true; log "HTTPS certificate issued for $DOMAIN"
+else log "⚠ certbot failed; the app is reachable over HTTP only for now (re-run: sudo certbot --nginx -d $DOMAIN)"; fi
 
 # ------------------------------------------------------------------ first deploy (install, build, migrate, start, health)
 STEP=deploy
