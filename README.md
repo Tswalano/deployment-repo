@@ -397,21 +397,10 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
   Set the Paystack webhook URL to `<PUBLIC_URL>/api/billing/paystack`. The original single-team workspace (plan
   `internal`) is never billed.
 
-### Moving the single-team console to multi-company mode (runbook)
-The single-team console's data is already workspace 1, so nothing is copied:
-1. Back up the database.
-2. Every person signs in and adds an email on **Your account** (accounts without one can add it once, with their
-   password).
-3. Create the access stack in your own account with `InstallDocuments=no` (the documents already exist) and
-   `ConsolePrincipal` = the console's instance role. Apply `infra/iam/instance-ops-console-saas.json` to that role.
-4. Set `OPS_MULTI_TENANT=1`, `PLATFORM_ADMINS=<your email>`, `PUBLIC_URL`, `PAYSTACK_SECRET_KEY`,
-   `SERVER_BUNDLE_URL`/`SHA256` and `CONNECT_TEMPLATE_URL` (from `infra/saas/publish-template.sh`), then deploy.
-5. Settings → AWS account: paste the RoleArn and Connect. Settings → Apps domain: `glenify.studio`.
-6. GitHub (Settings, as platform admin): add the existing app's Client ID and secret, set its callback URL to
-   `<PUBLIC_URL>/github/installed` and tick "Request user authorization during installation" on GitHub. Then **Link
-   existing installations**, so pushes deploy again.
-7. To undo: unset `OPS_MULTI_TENANT` and redeploy. The data is unchanged; multi-company mode only added tables and
-   columns.
+### Moving the single-team console to multi-company mode
+The full step-by-step cutover, with commands, checks and rollback, is in **[docs/saas-cutover.md](docs/saas-cutover.md)**.
+The console CLI helps: `cutover-check`, `cutover-prepare [region]`, `cutover-connect <roleArn>` and
+`set-email <username> <email>`.
 
 ## Repository layout
 

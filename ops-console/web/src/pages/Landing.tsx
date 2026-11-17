@@ -69,26 +69,26 @@ function ConsolePreview() {
 }
 
 const FEATURES: [string, string, string][] = [
-  [ICON.github, 'Deploy from GitHub', 'Pick a repository and a subdomain. It builds, gets HTTPS, and every push to your branch deploys by itself, rolling back if the new version is unhealthy.'],
-  [ICON.pulse, 'Know before your customers do', 'Health checks every minute, uptime history and alerts for downtime, disk, memory, certificates and failed deploys, by email, Slack or Discord.'],
-  [ICON.db, 'Backups you can trust', 'Nightly database backups that are restore-tested automatically, with one-click downloads.'],
-  [ICON.terminal, 'Safe server access', 'A browser terminal with no open SSH port, and time-limited SSH for your own laptop that closes by itself.'],
-  [ICON.coins, 'Costs under control', "This month's AWS bill and forecast in Rand or dollars, budget alerts, and servers that sleep overnight on a schedule."],
+  [ICON.github, 'Deploy from GitHub', 'Pick a repository and a subdomain. It builds, gets HTTPS, and every push to the branch deploys automatically, rolling back if the new version is unhealthy.'],
+  [ICON.pulse, 'Problems found before customers notice', 'Health checks every minute, uptime history and alerts for downtime, disk, memory, certificates and failed deploys, by email, Slack or Discord.'],
+  [ICON.db, 'Verified backups', 'Nightly database backups, kept on the server for two weeks and restore-tested automatically.'],
+  [ICON.terminal, 'Safe server access', 'A browser terminal with no open SSH port, and time-limited SSH from a laptop that closes automatically.'],
+  [ICON.coins, 'Costs under control', "This month's AWS bill and forecast in Rand or dollars, budget alerts, and control of the schedules that start and stop servers."],
   [ICON.users, 'Built for teams', 'Roles, deploy approvals for production, freeze windows and a full audit log of who did what.'],
 ];
 
 const FAQ: [string, string][] = [
-  ['Who pays for the servers?', 'You do, directly to AWS, in your own account. We only charge for the console.'],
-  ['What can you access in my AWS account?', 'Only what the access role you create allows: running our published commands on the servers you add, reading their status and your costs, and managing your apps\' DNS records. Every request uses a secret ID unique to your workspace, and deleting the role cuts us off at once.'],
-  ['What happens if I stop paying?', 'Your servers and apps keep running: they live in your AWS account. The workspace becomes read-only until you subscribe again.'],
+  ['Who pays for the servers?', 'AWS bills the servers directly to the organisation\'s own account. The subscription covers the console only.'],
+  ['What can the console access in the AWS account?', 'Only what the access role allows: running the console\'s published commands on added servers, reading their status and costs, and managing the apps\' DNS records. Every request uses a secret ID unique to the workspace, and deleting the role ends access at once.'],
+  ['What happens when a subscription ends?', 'Servers and apps keep running, because they live in the organisation\'s AWS account. The workspace becomes read-only until a plan is chosen again.'],
   ['What can I deploy?', 'Node.js web apps on Amazon Linux servers today. Static front-ends and more runtimes are on the way.'],
-  ['Do I need DevOps experience?', 'No. Connecting your account takes one CloudFormation stack, and the console prepares servers, certificates, databases and backups for you.'],
+  ['Is DevOps experience required?', 'No. Connecting the account takes one CloudFormation stack, and the console prepares servers, certificates, databases and backups automatically.'],
 ];
 
 /** The public front page of the multi-customer product. Flat design, no gradients. */
 export function Landing() {
   const { site } = useAuth();
-  const nav: [string, string][] = [['#features', 'Features'], ['#how', 'How it works'], ['#security', 'Security'], ['#pricing', 'Pricing'], ['#faq', 'FAQ']];
+  const nav: [string, string][] = [['#features', 'Features'], ['#how', 'How it works'], ['#security', 'Security'], ['#pricing', 'Pricing'], ['/docs', 'Docs']];
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-ink-700 bg-ink-950/90 backdrop-blur">
@@ -109,15 +109,15 @@ export function Landing() {
       <section className="border-b border-ink-700">
         <div className="mx-auto grid max-w-6xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:py-24">
           <div>
-            <span className="inline-flex items-center gap-2 rounded-full border border-ink-600 px-3 py-1 text-xs text-slate-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Your own Heroku, on your own AWS</span>
-            <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-slate-100 sm:text-5xl">Ship and run your apps on AWS, without a DevOps team.</h1>
-            <p className="mt-5 max-w-xl text-lg text-slate-400">Connect your AWS account, pick a server and a GitHub repository. {site.productName} deploys, monitors, backs up and secures it, while your servers and data stay in your own account.</p>
+            <span className="inline-flex items-center gap-2 rounded-full border border-ink-600 px-3 py-1 text-xs text-slate-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> A self-hosted platform on AWS</span>
+            <h1 className="mt-5 text-4xl font-semibold leading-tight tracking-tight text-slate-100 sm:text-5xl">Ship and run apps on AWS, without a DevOps team.</h1>
+            <p className="mt-5 max-w-xl text-lg text-slate-400">Connect an AWS account, add a server and choose a GitHub repository. {site.productName} deploys, monitors, backs up and secures the app, while servers and data stay in the organisation's own account.</p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link to="/signup" className="btn-primary px-5 py-2.5 text-base">Start your {site.trialDays}-day free trial</Link>
+              <Link to="/signup" className="btn-primary px-5 py-2.5 text-base">Start the {site.trialDays}-day free trial</Link>
               <a href="#how" className="btn-secondary px-5 py-2.5 text-base">See how it works</a>
             </div>
             <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-slate-500">
-              {['No card for the trial', 'Your AWS, your data', 'Cancel any time'].map((t) => <li key={t} className="flex items-center gap-1.5"><I d={ICON.check} className="h-4 w-4 text-emerald-300" />{t}</li>)}
+              {['No card for the trial', 'Data stays in the AWS account', 'Cancel any time'].map((t) => <li key={t} className="flex items-center gap-1.5"><I d={ICON.check} className="h-4 w-4 text-emerald-300" />{t}</li>)}
             </ul>
           </div>
           <ConsolePreview />
@@ -132,7 +132,7 @@ export function Landing() {
         </div>
       </div>
 
-      <Section id="features" eyebrow="Features" title="Everything a small team needs to run production" sub="The work a platform team would do, done by the console, on servers you own.">
+      <Section id="features" eyebrow="Features" title="Everything a small team needs to run production" sub="The work of a platform team, done by the console, on servers the organisation owns.">
         <div className="grid gap-px overflow-hidden rounded-2xl border border-ink-700 bg-ink-700 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map(([icon, t, d]) => (
             <div key={t} className="bg-ink-900 p-6">
@@ -147,9 +147,9 @@ export function Landing() {
       <div className="border-y border-ink-700 bg-ink-900">
         <Section id="how" eyebrow="How it works" title="Live in three steps, in about ten minutes">
           <ol className="grid gap-6 md:grid-cols-3">
-            {[['Connect AWS', 'One CloudFormation stack creates a narrowly scoped role in your account. Delete it any time to disconnect.'],
-              ['Add a server', 'Choose an EC2 server you have. The console prepares it: web server, Node.js, database, backups.'],
-              ['Deploy from GitHub', 'Pick a repository and a subdomain. HTTPS, health checks and auto-deploy on push are set up for you.']].map(([t, d], i) => (
+            {[['Connect AWS', 'One CloudFormation stack creates a narrowly scoped role in the account. Deleting it disconnects at any time.'],
+              ['Add a server', 'Choose an existing EC2 server. The console prepares it: web server, Node.js, database, backups.'],
+              ['Deploy from GitHub', 'Pick a repository and a subdomain. HTTPS, health checks and auto-deploy on push are configured automatically.']].map(([t, d], i) => (
               <li key={t} className="rounded-2xl border border-ink-700 bg-ink-950 p-6">
                 <span className="num text-sm font-semibold text-indigo-300">0{i + 1}</span>
                 <h3 className="mt-3 text-lg font-medium text-slate-100">{t}</h3>
@@ -160,12 +160,12 @@ export function Landing() {
         </Section>
       </div>
 
-      <Section id="security" eyebrow="Security" title="Your account. Your rules." sub="The console only ever does what your access role allows, and you can see and revoke that at any moment.">
+      <Section id="security" eyebrow="Security" title="Access on the organisation's terms" sub="The console only does what the access role allows, and that access can be reviewed and revoked at any moment.">
         <div className="grid gap-4 sm:grid-cols-2">
-          {[[ICON.key, 'A role you own', 'Created by you with CloudFormation, scoped to the servers you add and the console\'s published commands. No access keys are ever shared.'],
-            [ICON.shield, 'Isolated per workspace', 'Every request carries a secret ID unique to your workspace, and each workspace\'s data is separated by the database itself.'],
+          {[[ICON.key, 'A role the organisation owns', 'Created with CloudFormation in the organisation\'s account, scoped to added servers and the console\'s published commands. No access keys are ever shared.'],
+            [ICON.shield, 'Isolated per workspace', 'Every request carries a secret ID unique to the workspace, and each workspace\'s data is separated by the database itself.'],
             [ICON.eye, 'Everything is audited', 'Deploys, terminal sessions, SSH access, key changes and settings: who did what, and when.'],
-            [ICON.unplug, 'Leave whenever you like', 'Delete the stack and we are disconnected. Your servers, apps and data never left your account.']].map(([icon, t, d]) => (
+            [ICON.unplug, 'No lock-in', 'Deleting the stack disconnects the console. Servers, apps and data never leave the organisation\'s account.']].map(([icon, t, d]) => (
             <div key={t} className="flex gap-4 rounded-2xl border border-ink-700 bg-ink-900 p-6">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-ink-600 bg-ink-850 text-emerald-300"><I d={icon} className="h-[18px] w-[18px]" /></span>
               <div><h3 className="font-medium text-slate-100">{t}</h3><p className="mt-1.5 text-sm leading-6 text-slate-400">{d}</p></div>
@@ -175,7 +175,7 @@ export function Landing() {
       </Section>
 
       <div className="border-y border-ink-700 bg-ink-900">
-        <Section id="pricing" eyebrow="Pricing" title="Simple monthly plans" sub={`Start with a ${site.trialDays}-day free trial with everything in Pro. Your AWS usage is billed by AWS, separately.`}>
+        <Section id="pricing" eyebrow="Pricing" title="Simple monthly plans" sub={`Start with a ${site.trialDays}-day free trial with everything in Pro. AWS usage is billed by AWS, separately.`}>
           <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
             {PLANS.map((p) => {
               const hi = 'highlight' in p && p.highlight;
@@ -213,24 +213,33 @@ export function Landing() {
         <div className="flex flex-col items-start justify-between gap-6 rounded-2xl border border-ink-700 bg-ink-900 p-8 sm:flex-row sm:items-center sm:p-10">
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-slate-100">Ready to stop babysitting servers?</h2>
-            <p className="mt-2 text-slate-400">Connect your AWS account and deploy your first app today.</p>
+            <p className="mt-2 text-slate-400">Connect an AWS account and deploy the first app today.</p>
           </div>
           <Link to="/signup" className="btn-primary shrink-0 px-5 py-2.5 text-base">Start free trial</Link>
         </div>
       </section>
 
       <footer className="border-t border-ink-700">
-        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-[2fr_1fr_1fr]">
+        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-[2fr_1fr_1fr_1fr]">
           <div>
             <div className="flex items-center gap-2.5">
               <span className="grid h-7 w-7 place-items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-300"><I d={ICON.logo} className="h-4 w-4" /></span>
               <span className="font-semibold text-slate-100">{site.productName}</span>
             </div>
-            <p className="mt-3 max-w-sm text-sm text-slate-500">Deploy, monitor and secure your apps on servers in your own AWS account.</p>
+            <p className="mt-3 max-w-sm text-sm text-slate-500">Deploy, monitor and secure apps on servers in the organisation's own AWS account.</p>
           </div>
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Product</h3>
             <ul className="mt-3 space-y-2 text-sm text-slate-500">{nav.slice(0, 4).map(([h, l]) => <li key={h}><a href={h} className="hover:text-slate-300">{l}</a></li>)}</ul>
+          </div>
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Legal</h3>
+            <ul className="mt-3 space-y-2 text-sm text-slate-500">
+              <li><Link to="/terms" className="hover:text-slate-300">Terms of Service</Link></li>
+              <li><Link to="/privacy" className="hover:text-slate-300">Privacy Policy</Link></li>
+              <li><Link to="/security" className="hover:text-slate-300">Security</Link></li>
+              {site.supportEmail && <li><a href={`mailto:${site.supportEmail}`} className="hover:text-slate-300">Contact</a></li>}
+            </ul>
           </div>
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Account</h3>
@@ -242,7 +251,7 @@ export function Landing() {
           </div>
         </div>
         <div className="border-t border-ink-700">
-          <p className="mx-auto max-w-6xl px-4 py-5 text-xs text-slate-500 sm:px-6">© {new Date().getFullYear()} {site.productName}. Prices in ZAR; AWS usage billed by AWS.</p>
+          <p className="mx-auto max-w-6xl px-4 py-5 text-xs text-slate-500 sm:px-6">© {new Date().getFullYear()} {site.legalEntity ?? site.productName}. Prices in ZAR; AWS usage is billed by AWS.</p>
         </div>
       </footer>
     </div>

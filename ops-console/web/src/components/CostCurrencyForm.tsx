@@ -35,7 +35,7 @@ export function CostCurrencyForm() {
     <section id="costs" className="card space-y-4">
       <div>
         <h2 className="font-medium text-slate-100">Costs</h2>
-        <p className="mt-1 text-sm text-slate-400">Which currency the Costs page and budget emails use. AWS always bills in US dollars; Rand amounts are converted at the rate you enter here (update it now and then).</p>
+        <p className="mt-1 text-sm text-slate-400">Which currency the Costs page and budget emails use. AWS always bills in US dollars; Rand amounts are converted at the rate entered here (update it periodically).</p>
       </div>
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       <div className="flex flex-wrap items-end gap-4">

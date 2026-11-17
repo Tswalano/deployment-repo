@@ -54,7 +54,7 @@ export function Team() {
           <tbody>
             {data.members.map((m) => (
               <tr key={m.id}>
-                <td className="font-medium text-slate-100">{m.displayName || m.username}{m.id === user?.id && <span className="pill-mute ml-2">you</span>}</td>
+                <td className="font-medium text-slate-100">{m.displayName || m.username}{m.id === user?.id && <span className="ml-2 text-xs text-slate-500">(signed in)</span>}</td>
                 <td title={m.email ?? ''}>{m.email}{!m.emailVerified && <span className="pill-warn ml-2">unconfirmed</span>}</td>
                 <td>{isAdmin && m.id !== user?.id ? (
                   <select className="input py-1 text-xs" value={m.role} disabled={busy} aria-label={`Role of ${m.email}`}
@@ -65,8 +65,8 @@ export function Team() {
                 <td className="text-right">
                   {m.id === user?.id ? (
                     <button className="btn-ghost px-2.5 py-1 text-xs" disabled={busy} onClick={async () => {
-                      if (!confirm('Leave this workspace? You lose access to it until someone invites you again.')) return;
-                      await act(() => api.removeMember(m.id), 'You left the workspace.'); await refresh(); navigate('/');
+                      if (!confirm('Leave this workspace? Access ends until a new invitation is accepted.')) return;
+                      await act(() => api.removeMember(m.id), 'Left the workspace.'); await refresh(); navigate('/');
                     }}>Leave</button>
                   ) : isAdmin && (
                     <button className="btn-danger px-2.5 py-1 text-xs" disabled={busy} onClick={() => {
@@ -107,8 +107,8 @@ export function NoWorkspace() {
   return (
     <div className="grid min-h-screen place-items-center px-4">
       <div className="w-full max-w-sm">
-        <h1 className="text-center text-xl font-semibold text-slate-100">You're not in a workspace</h1>
-        <p className="mt-2 text-center text-sm text-slate-400">Ask a teammate to invite {user?.email ?? 'you'}, or start your own.</p>
+        <h1 className="text-center text-xl font-semibold text-slate-100">No workspace</h1>
+        <p className="mt-2 text-center text-sm text-slate-400">This account isn't a member of any workspace. Ask an admin for an invitation{user?.email ? ` to ${user.email}` : ''}, or create a new workspace.</p>
         <form className="card mt-6 space-y-4" onSubmit={async (e) => {
           e.preventDefault(); setBusy(true); setError(null);
           try { await api.createWorkspace(name.trim()); await refresh(); } catch (e2) { setError(err(e2)); } finally { setBusy(false); }

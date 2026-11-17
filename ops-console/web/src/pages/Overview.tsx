@@ -166,10 +166,10 @@ export function Overview() {
           <div className="card py-10">
             <p className="text-center font-medium text-slate-200">Welcome to {site.productName}</p>
             <ol className="mx-auto mt-6 max-w-lg space-y-3 text-sm">
-              <li className="flex gap-3"><span className="pill-ok">done</span><span className="text-slate-300">Create your workspace</span></li>
-              <li className="flex gap-3"><span className="pill-info">next</span><span className="text-slate-300">Connect your AWS account: a one-click, narrowly scoped access role in your account. <span className="text-slate-500">(Arriving in the next update.)</span></span></li>
-              <li className="flex gap-3"><span className="pill-mute">then</span><span className="text-slate-400">Add a server and deploy your first app from GitHub</span></li>
-              <li className="flex gap-3"><span className="pill-mute">any time</span><span className="text-slate-400"><Link to="/team" className="text-indigo-300 hover:underline">Invite your team</Link></span></li>
+              <li className="flex gap-3"><span className="pill-ok">done</span><span className="text-slate-300">Create the workspace</span></li>
+              <li className="flex gap-3"><span className="pill-info">next</span><span className="text-slate-300">Connect the AWS account: a narrowly scoped access role created with one click. <span className="text-slate-500">(Arriving in the next update.)</span></span></li>
+              <li className="flex gap-3"><span className="pill-mute">then</span><span className="text-slate-400">Add a server and deploy the first app from GitHub</span></li>
+              <li className="flex gap-3"><span className="pill-mute">any time</span><span className="text-slate-400"><Link to="/team" className="text-indigo-300 hover:underline">Invite the team</Link></span></li>
             </ol>
           </div>
         ) : (

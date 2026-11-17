@@ -31,7 +31,7 @@ export function ConnectAwsPanel({ view, onChanged }: { view: AwsConnectionView; 
     <div className="space-y-4 rounded-xl border border-ink-700 bg-ink-950/40 p-4">
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="label" htmlFor="aws-region">Region of your servers</label>
+          <label className="label" htmlFor="aws-region">Server region</label>
           <select id="aws-region" className="input" value={c.region} disabled={busy} onChange={async (e) => {
             setBusy(true); setMsg(null);
             try { await api.awsRegion(e.target.value); await onChanged(); } catch (e2) { setMsg(err(e2)); } finally { setBusy(false); }
@@ -45,7 +45,7 @@ export function ConnectAwsPanel({ view, onChanged }: { view: AwsConnectionView; 
         <li className="flex gap-3">
           <span className="num grid h-6 w-6 shrink-0 place-items-center rounded-full bg-ink-800 text-xs text-slate-300">1</span>
           <div className="min-w-0 flex-1">
-            <p className="text-slate-200">Create the access role in your AWS account ({region}).</p>
+            <p className="text-slate-200">Create the access role in the AWS account ({region}).</p>
             {view.quickCreateUrl ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 <a className="btn-primary" href={view.quickCreateUrl} target="_blank" rel="noreferrer noopener">Open AWS CloudFormation</a>
@@ -105,7 +105,7 @@ export function AddServersPanel({ onAdded }: { onAdded: (id: number) => void }) 
   useEffect(() => { void load(); }, [load]);
 
   if (error) return <Alert>{error}</Alert>;
-  if (!data) return <p className="text-sm text-slate-500">Looking for servers in your account…</p>;
+  if (!data) return <p className="text-sm text-slate-500">Looking for servers in the AWS account…</p>;
   const usable = data.servers.filter((s) => s.linux);
   return (
     <div className="space-y-3">
@@ -161,7 +161,7 @@ export function AwsAccountCard() {
     <section className="card space-y-4">
       <div>
         <h2 className="font-medium text-slate-100">AWS account</h2>
-        <p className="mt-1 text-sm text-slate-400">The console works in your account only through the access role you created.</p>
+        <p className="mt-1 text-sm text-slate-400">The console works in this AWS account only through the access role created for it.</p>
       </div>
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       {c.status === 'connected' ? (
@@ -175,7 +175,7 @@ export function AwsAccountCard() {
           {isAdmin && (
             <div className="flex flex-wrap items-center gap-3">
               <button className="btn-danger" onClick={async () => {
-                if (!confirm('Disconnect this AWS account? The console stops managing its servers at once. Your servers and apps keep running.')) return;
+                if (!confirm('Disconnect this AWS account? The console stops managing its servers at once. Servers and apps keep running.')) return;
                 try { const r = await api.awsDisconnect(); setMsg({ tone: 'warn', text: `Disconnected. ${r.note}` }); await load(); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); }
               }}>Disconnect</button>
               <span className="text-xs text-slate-500">To remove our access completely, also delete the <code>OpsConsoleAccess</code> stack in CloudFormation.</span>
@@ -184,7 +184,7 @@ export function AwsAccountCard() {
         </>
       ) : (
         <>
-          <p className="text-sm text-slate-400">Not connected{c.status === 'disconnected' ? ' (disconnected)' : ''}. Until it is, the console can't reach your servers.</p>
+          <p className="text-sm text-slate-400">Not connected{c.status === 'disconnected' ? ' (disconnected)' : ''}. Until it is, the console can't reach any servers.</p>
           <ConnectAwsPanel view={view} onChanged={async () => { await load(); }} />
         </>
       )}

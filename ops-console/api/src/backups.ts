@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { gunzipSync } from 'zlib';
 import { raise, resolve } from './alerts';
-import { aws } from './aws';
+import { aws, hostAws } from './aws';
 import { InstanceRow } from './collector';
 import { config } from './config';
 import { db } from './db';
@@ -83,7 +83,8 @@ export async function exportBackup(inst: InstanceRow, dbName: string, file: stri
     const r = parseLine(await aws().runDocument(inst.region, inst.aws_instance_id, ACTION_DOCUMENT,
         { action: ['export'], db: [dbName], file: [file], bucket: [config.transferBucket], key: [key] }, 120_000));
     if (!r.ok) throw new DeployError(r.error || 'Export failed.');
-    const url = await aws().presignGet(config.transferRegion, config.transferBucket, key, LINK_SECONDS, file);
+    // the transfer bucket is the console host's: sign with the host's identity (a customer role has no access to it)
+    const url = await hostAws().presignGet(config.transferRegion, config.transferBucket, key, LINK_SECONDS, file);
     return { url, expiresAt: new Date(Date.now() + LINK_SECONDS * 1000).toISOString(), bytes: r.bytes, sha256: r.sha256 };
 }
 

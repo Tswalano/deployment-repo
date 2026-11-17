@@ -6,11 +6,6 @@ import { Alert, PageHeader, Skeleton } from '../components/ui';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '—');
-const STATUS: Record<string, [string, string]> = {
-  trialing: ['Free trial', 'pill-info'], active: ['Active', 'pill-ok'], past_due: ['Payment failed', 'pill-bad'],
-  cancelling: ['Cancels at period end', 'pill-warn'], cancelled: ['Cancelled', 'pill-mute'], expired: ['Ended', 'pill-mute'],
-};
-
 function Usage({ label, used, max }: { label: string; used: number; max: number | null }) {
   const pct = max ? Math.min(100, (used / max) * 100) : 0;
   return (
@@ -33,34 +28,54 @@ export function Billing() {
   if (!b) return msg ? <Alert>{msg.text}</Alert> : <Skeleton className="h-72" />;
 
   const trialLeft = b.plan === 'trial' && b.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(b.trialEndsAt) - Date.now()) / 86400e3)) : null;
-  const [statusLabel, statusPill] = b.plan === 'trial' ? (b.active ? [`${trialLeft} day${trialLeft === 1 ? '' : 's'} left`, 'pill-info'] : STATUS.expired) : STATUS[b.status] ?? [b.status, 'pill-mute'];
+  const subscribed = (b.plan === 'starter' || b.plan === 'pro') && ['active', 'past_due', 'cancelling'].includes(b.status);
+  const planName = (id: string) => `${id[0].toUpperCase()}${id.slice(1)}`;
+  const price = (id: string) => b.plans.find((p) => p.id === id)?.price ?? '';
+  const other = subscribed ? b.plans.find((p) => p.id !== b.plan) : undefined;
+  const [statusText, tone] = b.plan === 'internal' ? ['Not billed', 'bg-slate-500']
+    : b.plan === 'trial' ? (b.active ? [`Trial, ${trialLeft} day${trialLeft === 1 ? '' : 's'} left; no card needed until a plan is chosen`, 'bg-indigo-400'] : ['Trial ended', 'bg-rose-400'])
+    : b.status === 'active' ? ['Active', 'bg-emerald-400']
+    : b.status === 'past_due' ? [`Payment failed; update the card before ${day(b.graceUntil)}`, 'bg-rose-400']
+    : b.status === 'cancelling' ? [`Cancelled; active until ${day(b.currentPeriodEnd)}`, 'bg-amber-400']
+    : ['Ended', 'bg-slate-500'];
   const go = async (key: string, fn: () => Promise<void>) => { setBusy(key); setMsg(null); try { await fn(); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); setBusy(null); } };
 
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title="Billing" subtitle="Your plan and what it includes. Your AWS servers are billed by AWS, separately." />
+      <PageHeader title="Billing" subtitle="Plan, usage and invoices. AWS servers are billed by AWS, separately." />
       {msg && <div className="mb-4"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
-      {!b.active && <div className="mb-4"><Alert>{b.reason} Your servers and apps keep running; only changes through the console are paused.</Alert></div>}
+      {!b.active && <div className="mb-4"><Alert>{b.reason} Servers and apps keep running; only changes through the console are paused.</Alert></div>}
       {!b.enabled && b.plan !== 'internal' && <div className="mb-4"><Alert tone="warn">Payments aren't set up on this platform yet.</Alert></div>}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <section className="card">
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-lg font-semibold text-slate-100">{b.plan === 'trial' ? 'Free trial' : b.plan === 'internal' ? 'Platform workspace' : `${b.plan[0].toUpperCase()}${b.plan.slice(1)} plan`}</h2>
-            <span className={statusPill}>{statusLabel}</span>
-          </div>
-          <p className="mt-2 text-sm text-slate-400">
-            {b.plan === 'internal' ? 'This workspace runs the platform and is never billed.'
-              : b.plan === 'trial' ? (trialLeft ? `${trialLeft} day${trialLeft === 1 ? '' : 's'} left, with everything in Pro. No card needed until you choose a plan.` : 'The trial has ended.')
-              : b.status === 'past_due' ? `A payment failed. Update your card before ${day(b.graceUntil)} to keep making changes.`
-              : b.status === 'cancelling' ? `Cancelled: everything keeps working until ${day(b.currentPeriodEnd)}.`
-              : `Renews around ${day(b.currentPeriodEnd)}${b.billingEmail ? `; receipts go to ${b.billingEmail}` : ''}.`}
-          </p>
-          {isAdmin && b.hasSubscription && b.plan !== 'trial' && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button className="btn-secondary" disabled={!!busy} onClick={() => go('card', async () => { window.location.assign((await api.billingManage()).url); })}>Update card</button>
-              {b.status === 'active' && <button className="btn-ghost" disabled={!!busy} onClick={() => {
-                if (confirm('Cancel the subscription? Everything keeps working until the end of the period you paid for.')) void go('cancel', async () => { await api.billingCancel(); await load(); setBusy(null); setMsg({ tone: 'ok', text: 'Cancelled at the end of the current period.' }); });
+          <h2 className="font-medium text-slate-100">Subscription</h2>
+          <dl className="mt-4 divide-y divide-ink-700 text-sm">
+            <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3">
+              <dt className="text-slate-500">Plan</dt>
+              <dd className="text-slate-100">{b.plan === 'internal' ? 'Platform workspace (not billed)' : b.plan === 'trial' ? 'Free trial (Pro features)' : `${planName(b.plan)}, R${price(b.plan)} per month`}</dd>
+            </div>
+            <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3">
+              <dt className="text-slate-500">Status</dt>
+              <dd className="flex items-center gap-2 text-slate-200"><span className={`h-1.5 w-1.5 rounded-full ${tone}`} />{statusText}</dd>
+            </div>
+            {subscribed && b.status === 'active' && (
+              <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Next renewal</dt><dd className="text-slate-200">{day(b.currentPeriodEnd)}</dd></div>
+            )}
+            {b.billingEmail && (
+              <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Billing email</dt><dd className="truncate text-slate-200">{b.billingEmail}</dd></div>
+            )}
+          </dl>
+          {isAdmin && subscribed && (
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-ink-700 pt-5">
+              {other && b.status === 'active' && (
+                <button className="btn-primary" disabled={!!busy} onClick={() => {
+                  if (confirm(`Switch to ${planName(other.id)} (R${other.price} per month)? The new plan starts today through Paystack checkout, and the current subscription stops renewing.`)) void go(other.id, async () => { window.location.assign((await api.billingCheckout(other.id)).url); });
+                }}>{busy === other.id ? 'Opening Paystack…' : `Switch to ${planName(other.id)}`}</button>
+              )}
+              {b.hasSubscription && <button className="btn-secondary" disabled={!!busy} onClick={() => go('card', async () => { window.location.assign((await api.billingManage()).url); })}>Update card</button>}
+              {b.hasSubscription && b.status === 'active' && <button className="btn-ghost ml-auto" disabled={!!busy} onClick={() => {
+                if (confirm('Cancel the subscription? Everything keeps working until the end of the paid period.')) void go('cancel', async () => { await api.billingCancel(); await load(); setBusy(null); setMsg({ tone: 'ok', text: 'The subscription ends at the end of the current period.' }); });
               }}>Cancel subscription</button>}
             </div>
           )}
@@ -74,27 +89,24 @@ export function Billing() {
         </section>
       </div>
 
-      {b.plan !== 'internal' && (
+      {b.plan !== 'internal' && !subscribed && (
         <section className="mt-6 grid gap-4 sm:grid-cols-2">
-          {b.plans.map((p) => {
-            const current = b.plan === p.id && ['active', 'cancelling', 'past_due'].includes(b.status);
-            return (
-              <div key={p.id} className={`card flex flex-col ${p.id === 'pro' ? 'border-indigo-400/40' : ''}`}>
-                <div className="flex items-baseline justify-between"><h3 className="font-medium text-slate-100">{p.name}</h3>{current && <span className="pill-ok">current</span>}</div>
-                <p className="mt-3"><span className="num text-3xl font-semibold text-slate-100">R{p.price}</span><span className="text-sm text-slate-500"> / month</span></p>
-                <ul className="mt-4 flex-1 space-y-1.5 text-sm text-slate-300">
-                  <li>{p.limits.servers} server{p.limits.servers === 1 ? '' : 's'}</li><li>{p.limits.apps} apps</li><li>{p.limits.members} team members</li>
-                  <li>{p.limits.approvals ? 'Deploy approvals and freeze windows' : 'Everything except deploy approvals'}</li>
-                </ul>
-                {isAdmin && !current && b.enabled && (
-                  <button className={`${p.id === 'pro' ? 'btn-primary' : 'btn-secondary'} mt-5`} disabled={!!busy}
-                          onClick={() => go(p.id, async () => { window.location.assign((await api.billingCheckout(p.id)).url); })}>
-                    {busy === p.id ? 'Opening Paystack…' : b.plan === 'trial' || !b.active ? `Choose ${p.name}` : `Switch to ${p.name}`}
-                  </button>
-                )}
-              </div>
-            );
-          })}
+          {b.plans.map((p) => (
+            <div key={p.id} className={`card flex flex-col ${p.id === 'pro' ? 'border-indigo-400/40' : ''}`}>
+              <h3 className="font-medium text-slate-100">{p.name}</h3>
+              <p className="mt-3"><span className="num text-3xl font-semibold text-slate-100">R{p.price}</span><span className="text-sm text-slate-500"> per month</span></p>
+              <ul className="mt-4 flex-1 space-y-1.5 text-sm text-slate-300">
+                <li>{p.limits.servers} server{p.limits.servers === 1 ? '' : 's'}</li><li>{p.limits.apps} apps</li><li>{p.limits.members} team members</li>
+                <li>{p.limits.approvals ? 'Deploy approvals and freeze windows' : 'Everything except deploy approvals'}</li>
+              </ul>
+              {isAdmin && b.enabled && (
+                <button className={`${p.id === 'pro' ? 'btn-primary' : 'btn-secondary'} mt-5`} disabled={!!busy}
+                        onClick={() => go(p.id, async () => { window.location.assign((await api.billingCheckout(p.id)).url); })}>
+                  {busy === p.id ? 'Opening Paystack…' : `Choose ${p.name}`}
+                </button>
+              )}
+            </div>
+          ))}
         </section>
       )}
       {b.plan !== 'internal' && isAdmin && <Invoices />}
@@ -124,7 +136,7 @@ function Invoices() {
         )}
       </div>
       {error ? <div className="px-5 pb-5"><Alert>{error}</Alert></div> : !list ? <div className="px-5 pb-5"><Skeleton className="h-16" /></div> : list.length === 0 ? (
-        <p className="px-5 pb-5 text-sm text-slate-500">No invoices yet: your first one appears here after your first payment.</p>
+        <p className="px-5 pb-5 text-sm text-slate-500">No invoices yet. Invoices appear here after each payment.</p>
       ) : (
         <table className="tbl">
           <thead><tr><th className="w-[16%]">Date</th><th className="w-[18%]">Invoice</th><th>Description</th><th className="w-[14%] text-right">Amount</th><th className="w-[10%]">Status</th><th className="w-[10%] text-right"></th></tr></thead>
@@ -151,12 +163,12 @@ export function BillingReturn() {
   const [state, setState] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
   useEffect(() => {
     const ref = q.get('reference') ?? q.get('trxref') ?? '';
-    api.billingConfirm(ref).then(async (r) => { await refresh(); setState({ tone: 'ok', text: `Thank you: you're on ${r.plan[0].toUpperCase()}${r.plan.slice(1)}.` }); })
+    api.billingConfirm(ref).then(async (r) => { await refresh(); setState({ tone: 'ok', text: `Payment received. Plan: ${r.plan[0].toUpperCase()}${r.plan.slice(1)}.` }); })
       .catch((e) => setState({ tone: 'bad', text: err(e) }));
   }, [q, refresh]);
   return (
     <div className="mx-auto max-w-lg py-10">
-      {state ? <Alert tone={state.tone}>{state.text}</Alert> : <p className="text-sm text-slate-400">Confirming your payment with Paystack…</p>}
+      {state ? <Alert tone={state.tone}>{state.text}</Alert> : <p className="text-sm text-slate-400">Confirming the payment with Paystack…</p>}
       <Link to="/billing" className="btn-secondary mt-4">Back to Billing</Link>
     </div>
   );

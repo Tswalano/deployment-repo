@@ -3,8 +3,11 @@
  *   node dist/cli.js migrate
  *   node dist/cli.js set-admin <username>        # creates or resets an admin; password read from stdin
  *   node dist/cli.js ensure-demo                 # creates/enables the read-only demo viewer
+ *   node dist/cli.js set-email <username> <email> # owner tool: set a user's sign-in email (confirmed again by them)
+ *   node dist/cli.js cutover-check | cutover-prepare [region] | cutover-connect <roleArn>   # docs/saas-cutover.md
  */
 import { audit } from './audit';
+import { cutoverCheck, cutoverConnect, cutoverPrepare, setEmail } from './cutover';
 import { closeDb, db } from './db';
 import { migrate } from './migrate';
 import { hashPassword, passwordProblem } from './password';
@@ -18,7 +21,16 @@ async function readStdin(): Promise<string> {
 
 async function main() {
     const [cmd, arg] = process.argv.slice(2);
-    if (cmd === 'migrate') {
+    const arg2 = process.argv[4];
+    if (cmd === 'cutover-check') { await migrate(); await cutoverCheck(); }
+    else if (cmd === 'cutover-prepare') { await migrate(); await cutoverPrepare(arg || undefined); }
+    else if (cmd === 'cutover-connect') {
+        if (!arg) throw new Error('usage: cutover-connect <roleArn>');
+        await migrate(); await cutoverConnect(arg);
+    } else if (cmd === 'set-email') {
+        if (!arg || !arg2) throw new Error('usage: set-email <username> <email>');
+        await migrate(); await setEmail(arg, arg2);
+    } else if (cmd === 'migrate') {
         const applied = await migrate();
         console.log(applied.length ? `applied: ${applied.join(', ')}` : 'up to date');
     } else if (cmd === 'set-admin') {

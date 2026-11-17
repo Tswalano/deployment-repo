@@ -117,12 +117,12 @@ export function Users() {
                 <tr key={u.id}>
                   <td title={`${u.displayName} (${u.username})`}>
                     <div className="truncate font-medium text-slate-100">{u.displayName || u.username}</div>
-                    <div className="truncate text-xs text-slate-500">@{u.username}{self && ' · you'}{u.isDemo && ' · public demo'}</div>
+                    <div className="truncate text-xs text-slate-500">@{u.username}{self && ' · signed in'}{u.isDemo && ' · public demo'}</div>
                   </td>
                   <td>
                     {u.isDemo || self ? (
                       <span className={ROLE_INFO[u.role].badge}
-                            title={self ? "You can't change your own role" : 'The demo account is always a viewer'}>
+                            title={self ? "An account's own role can't be changed" : 'The demo account is always a viewer'}>
                         {ROLE_INFO[u.role].label}
                       </span>
                     ) : (

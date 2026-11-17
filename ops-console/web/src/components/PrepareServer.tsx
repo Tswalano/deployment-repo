@@ -6,7 +6,7 @@ import { Alert } from './ui';
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const WHAT = [
   ['Web server', 'nginx, with HTTPS certificates from Let\'s Encrypt'],
-  ['Node.js and git', 'the newest Node.js Amazon Linux offers, to build and run your apps'],
+  ['Node.js and git', 'the newest Node.js Amazon Linux offers, to build and run apps'],
   ['PostgreSQL 15', 'for apps that need a database, with nightly backups kept on the server'],
   ['Status agent', 'read-only; reports health, memory, disk and app status to the console'],
   ['Deploy pipeline', 'deploys from GitHub with automatic rollback'],
@@ -47,7 +47,7 @@ export function PrepareServer({ instanceId, onDone }: { instanceId: number; onDo
       <div>
         <h2 className="font-medium text-slate-100">{running ? 'Preparing this server…' : job?.status === 'success' ? 'Server prepared' : 'Prepare this server'}</h2>
         <p className="mt-1 text-sm text-slate-400">
-          {running ? 'Installing everything the console needs. This takes 3 to 6 minutes; you can leave this page.'
+          {running ? 'Installing everything the console needs. This takes 3 to 6 minutes; this page can be closed.'
             : 'This server doesn\'t have the console\'s software yet. Preparing it installs, once:'}
         </p>
       </div>
@@ -58,7 +58,7 @@ export function PrepareServer({ instanceId, onDone }: { instanceId: number; onDo
           ))}
         </ul>
       )}
-      {job?.status === 'failed' && <Alert>{summary?.error ? `Stopped at "${summary.step}": ${summary.error}` : 'The preparation failed: see the output below.'} You can run it again: every step checks what's already done.</Alert>}
+      {job?.status === 'failed' && <Alert>{summary?.error ? `Stopped at "${summary.step}": ${summary.error}` : 'The preparation failed: see the output below.'} It can be run again: every step checks what's already done.</Alert>}
       {summary?.steps?.length ? (
         <ol className="space-y-1 text-sm">{summary.steps.map((s) => <li key={s} className="flex gap-2 text-slate-300"><span className="text-emerald-300">✓</span>{s}</li>)}</ol>
       ) : null}
@@ -69,7 +69,7 @@ export function PrepareServer({ instanceId, onDone }: { instanceId: number; onDo
         <div className="flex flex-wrap items-center gap-4">
           <label className="flex items-center gap-2 text-sm text-slate-300">
             <input type="checkbox" className="accent-indigo-500" checked={openWeb} onChange={(e) => setOpenWeb(e.target.checked)} />
-            Open web ports 80 and 443 to the internet (needed for your apps' websites)
+            Open web ports 80 and 443 to the internet (needed for the apps' websites)
           </label>
           <button className="btn-primary ml-auto" disabled={busy} onClick={async () => {
             setBusy(true); setError(null);

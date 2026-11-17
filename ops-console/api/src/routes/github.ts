@@ -14,8 +14,17 @@ const github = new Hono<Env>();
 const fail = (c: Context<Env>, err: unknown) => c.json({ error: (err as Error).message.slice(0, 300) }, err instanceof DeployError ? err.status : 502);
 
 /** Multi-customer: only the people running the platform set up (or remove) the shared GitHub App. */
-const platformAdmin = (c: Context<Env>) => !config.multiTenant || config.platformAdmins.includes((c.get('user')?.email ?? '').toLowerCase());
-const appManager = async (c: Context<Env>, next: () => Promise<void>) => (platformAdmin(c) ? next() : c.json({ error: "Only the platform's administrators set up the GitHub App." }, 403));
+async function platformAdmin(c: Context<Env>): Promise<boolean> {
+    const u = c.get('user');
+    if (!config.multiTenant) return true;
+    if (!u) return false;
+    if (config.platformAdmins.includes((u.email ?? '').toLowerCase())) return true;
+    // the admins of the platform's own workspace (plan 'internal': the original single-team console) run the platform
+    if (u.role !== 'admin' || u.workspaceId == null) return false;
+    const { rows } = await db().query("SELECT 1 FROM workspaces WHERE id = $1 AND plan = 'internal'", [u.workspaceId]);
+    return rows.length > 0;
+}
+const appManager = async (c: Context<Env>, next: () => Promise<void>) => ((await platformAdmin(c)) ? next() : c.json({ error: "Only the platform's administrators set up the GitHub App." }, 403));
 
 /** Connection status (no secrets). */
 github.get('/', requireRole('deployer'), denyDemo, async (c) => {
@@ -23,7 +32,7 @@ github.get('/', requireRole('deployer'), denyDemo, async (c) => {
     if (config.multiTenant) {
         // a workspace sees the platform app (if set up) and ONLY its own linked installations
         const mine = cfg ? await workspaceInstallations(cfg) : [];
-        return c.json({ multiTenant: true, connected: !!cfg, canManageApp: platformAdmin(c), app: cfg ? { slug: cfg.slug, htmlUrl: cfg.htmlUrl } : null,
+        return c.json({ multiTenant: true, connected: !!cfg, canManageApp: await platformAdmin(c), app: cfg ? { slug: cfg.slug, htmlUrl: cfg.htmlUrl } : null,
             installations: mine, linkable: !!cfg?.clientId });
     }
     if (!cfg) return c.json({ connected: false, webhookUrl: WEBHOOK_URL });

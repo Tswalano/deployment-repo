@@ -49,7 +49,7 @@ export function Terminal() {
     ws.onclose = () => {
       if (sock.current !== ws) return;
       setState('closed');
-      const why = closedWith ?? (opened ? 'the connection was lost' : "couldn't connect: you may have been signed out, or the instance isn't running");
+      const why = closedWith ?? (opened ? 'the connection was lost' : "couldn't connect: the session may have expired, or the instance isn't running");
       setReason(why);
       t.write(`\r\n\x1b[90m[session closed: ${why}]\x1b[0m\r\n`);
     };
@@ -106,7 +106,7 @@ export function Terminal() {
           <div ref={host} className="h-[calc(100vh-290px)] min-h-[320px] w-full" />
         </div>
         <p className="mt-3 text-xs text-slate-500">
-          Closes after 20 minutes without typing and after 2 hours in all. Who opened a session and when is recorded in the audit log; what you type is not.
+          Closes after 20 minutes without typing and after 2 hours in all. Who opened a session and when is recorded in the audit log; keystrokes are not.
           Copy with the mouse selection; paste with Ctrl+Shift+V (or Cmd+V).
         </p>
       </div>

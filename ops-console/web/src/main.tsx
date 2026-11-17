@@ -23,6 +23,8 @@ import { GithubCallback, GithubInstalled } from './components/GithubConnect';
 import { Users } from './pages/Users';
 import { AcceptInvite, ForgotPassword, ResetPassword, Signup, VerifyEmail } from './pages/Public';
 import { Landing } from './pages/Landing';
+import { Docs } from './pages/Docs';
+import { Privacy, Security, Terms } from './pages/Legal';
 import { Team } from './pages/Team';
 import { Billing, BillingReturn } from './pages/Billing';
 import { useLocation } from 'react-router-dom';
@@ -47,6 +49,11 @@ function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route path="/docs" element={<Docs />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/security" element={<Security />} />
+      <Route path="/docs/:slug" element={<Docs />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify" element={<VerifyEmail />} />

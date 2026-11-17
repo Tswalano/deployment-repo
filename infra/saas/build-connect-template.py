@@ -73,6 +73,20 @@ statements = [
      'Condition': {'StringEquals': {'iam:PassedToService': 'scheduler.amazonaws.com'}}},
 ]
 
+# One role for the whole account: every region (servers can live in several); still limited to what the statements
+# allow (tagged instances, our documents, /apps/* settings). The documents themselves are installed in the stack's region.
+def any_region(o):
+    if isinstance(o, dict):
+        if set(o) == {'Fn::Sub'} and isinstance(o['Fn::Sub'], str):
+            return {'Fn::Sub': o['Fn::Sub'].replace(':${AWS::Region}:', ':*:')}
+        if 'kms:ViaService' in o.get('StringEquals', {}):
+            return {'StringLike': {'kms:ViaService': 'ssm.*.amazonaws.com'}}
+        return {k: any_region(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [any_region(v) for v in o]
+    return o
+statements = any_region(statements)
+
 resources = {
     'AccessRole': {'Type': 'AWS::IAM::Role', 'Properties': {
         'RoleName': sub('OpsConsoleAccess-${AWS::Region}'),
@@ -90,7 +104,7 @@ resources = {
         'Policies': [{'PolicyName': 'app-settings', 'PolicyDocument': {'Version': '2012-10-17', 'Statement': [
             {'Effect': 'Allow', 'Action': ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParametersByPath'],
              'Resource': [sub(f'arn:${{AWS::Partition}}:ssm:${{AWS::Region}}:{acct}:parameter/apps/*'), sub(f'arn:${{AWS::Partition}}:ssm:${{AWS::Region}}:{acct}:parameter/ops-console/git-tokens/*')]},
-            {'Effect': 'Allow', 'Action': 'kms:Decrypt', 'Resource': '*', 'Condition': {'StringEquals': {'kms:ViaService': sub('ssm.${AWS::Region}.amazonaws.com')}}}]}}]}},
+            {'Effect': 'Allow', 'Action': 'kms:Decrypt', 'Resource': '*', 'Condition': {'StringLike': {'kms:ViaService': 'ssm.*.amazonaws.com'}}}]}}]}},
     'InstanceProfile': {'Type': 'AWS::IAM::InstanceProfile', 'Properties': {
         'InstanceProfileName': sub('OpsConsoleInstance-${AWS::Region}'), 'Roles': [{'Ref': 'InstanceRole'}]}},
 }
@@ -101,7 +115,7 @@ for name, script, desc, timeout, p in docs:
 
 template = {
     'AWSTemplateFormatVersion': '2010-09-09',
-    'Description': 'Ops Console access (one region). Creates a role only the console can use with your workspace\'s external ID, '
+    'Description': 'Ops Console access. Creates a role only the console can use with your workspace\'s external ID, '
                    'an instance profile for your servers, and the console\'s fixed commands. Delete the stack to disconnect.',
     'Parameters': {
         'ExternalId': {'Type': 'String', 'AllowedPattern': '^[A-Za-z0-9-]{32,64}$', 'Description': "Your workspace's external ID (shown in the console)."},

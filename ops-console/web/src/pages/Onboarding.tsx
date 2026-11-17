@@ -58,9 +58,9 @@ function AccessDiagram({ product }: { product: string }) {
   const Arrow = () => <span className="hidden shrink-0 text-slate-500 sm:block"><I d={ICON.arrow} /></span>;
   return (
     <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-      <Box icon={ICON.cloud} title="Your AWS account" sub="your servers, your bill" tone="border-ink-600 bg-ink-850 text-amber-300" />
+      <Box icon={ICON.cloud} title="AWS account" sub="servers and billing stay there" tone="border-ink-600 bg-ink-850 text-amber-300" />
       <Arrow />
-      <Box icon={ICON.shield} title="Access role" sub="created by you, deletable any time" tone="border-indigo-400/40 bg-indigo-500/[0.08] text-indigo-300" />
+      <Box icon={ICON.shield} title="Access role" sub="created in the account, deletable any time" tone="border-indigo-400/40 bg-indigo-500/[0.08] text-indigo-300" />
       <Arrow />
       <Box icon={ICON.rocket} title={product} sub="deploys, watches, backs up" tone="border-ink-600 bg-ink-850 text-emerald-300" />
     </div>
@@ -80,7 +80,7 @@ function InviteCard() {
   }
   return (
     <section className="card">
-      <div className="flex items-center gap-2 text-slate-100"><I d={ICON.users} className="h-[18px] w-[18px] text-sky-300" /><h2 className="font-medium">Bring your team</h2></div>
+      <div className="flex items-center gap-2 text-slate-100"><I d={ICON.users} className="h-[18px] w-[18px] text-sky-300" /><h2 className="font-medium">Invite the team</h2></div>
       <p className="mt-1 text-sm text-slate-400">They can join now and help with setup.</p>
       <form className="mt-4 space-y-2" onSubmit={submit}>
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
@@ -120,9 +120,9 @@ export function Onboarding() {
       {/* hero */}
       <section className="card px-6 py-8 sm:px-10 sm:py-10">
         <div>
-          <p className="eyebrow text-indigo-300">{ws?.name ?? 'Your workspace'}</p>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-100 sm:text-3xl">Welcome{first ? `, ${first}` : ''}. Let's get your apps running.</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-400 sm:text-base">Three steps and about ten minutes: connect your AWS account, pick a server, deploy from GitHub. You stay in control of everything in your account.</p>
+          <p className="eyebrow text-indigo-300">{ws?.name ?? 'Workspace'}</p>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-100 sm:text-3xl">Welcome{first ? `, ${first}` : ''}. Set-up takes about ten minutes.</h1>
+          <p className="mt-2 max-w-2xl text-sm text-slate-400 sm:text-base">Three steps: connect the AWS account, add a server, deploy from GitHub. Everything stays in the organisation's own AWS account and under its control.</p>
           <div className="mt-6 flex max-w-md items-center gap-3">
             <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done} aria-label="Setup progress">
               <div className="h-full rounded-full bg-indigo-500" style={{ width: `${(done / total) * 100}%` }} />
@@ -136,28 +136,28 @@ export function Onboarding() {
         {/* the steps */}
         <section className="card px-6 pb-0 pt-6 sm:px-8">
           <ol>
-            <Step n={1} state="done" icon={ICON.check} title="Create your workspace">
+            <Step n={1} state="done" icon={ICON.check} title="Create the workspace">
               <p className="text-sm text-slate-400">{ws ? <><b className="font-medium text-slate-300">{ws.name}</b> is ready{trialLeft != null ? `, with ${trialLeft} days of free trial left` : ''}.</> : 'Done.'}</p>
             </Step>
 
-            <Step n={2} state={connected ? 'done' : 'current'} icon={ICON.cloud} title="Connect your AWS account">
+            <Step n={2} state={connected ? 'done' : 'current'} icon={ICON.cloud} title="Connect the AWS account">
               {connected ? (
                 <p className="text-sm text-slate-400">Connected to account <span className="num text-slate-300">{aws!.connection.accountId}</span> in <span className="num text-slate-300">{aws!.connection.region}</span>. Manage it under Settings.</p>
               ) : (
                 <>
-                  <p className="text-sm text-slate-400">AWS CloudFormation creates an access role in your own account that only {site.productName} can use, and only with this workspace's ID. You can see exactly what it allows, and deleting the stack disconnects us at once.</p>
+                  <p className="text-sm text-slate-400">AWS CloudFormation creates an access role in the account that only {site.productName} can use, and only with this workspace's ID. Its permissions are listed below, and deleting the stack disconnects the console at once.</p>
                   <div className="mt-4"><AccessDiagram product={site.productName} /></div>
                   <button className="mt-4 text-sm text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline" onClick={() => setShowAccess((v) => !v)} aria-expanded={showAccess}>
                     {showAccess ? 'Hide' : 'What can the role do?'}
                   </button>
                   {showAccess && (
                     <ul className="mt-3 grid gap-2 rounded-xl border border-ink-700 bg-ink-950/40 p-4 text-sm sm:grid-cols-2">
-                      {[['Allowed', 'Run our fixed, published commands on servers you add (deploy, health, logs, backups)', true],
-                        ['Allowed', 'Read your servers, costs, schedules and the DNS records of your apps', true],
-                        ['Allowed', 'Tag servers you add, and give them our instance profile', true],
-                        ['Allowed', 'Browser terminal and time-limited SSH on servers you added', true],
-                        ['Allowed', 'Your apps\' settings (under /apps/) and their DNS records', true],
-                        ['Never', 'Run arbitrary commands, read your other data, or touch servers you didn\'t add', false]].map(([k, t, ok], i) => (
+                      {[['Allowed', 'Run the console\'s fixed, published commands on added servers (deploy, health, logs, backups)', true],
+                        ['Allowed', 'Read servers, costs, schedules and the apps\' DNS records', true],
+                        ['Allowed', 'Tag added servers and attach the console\'s instance profile', true],
+                        ['Allowed', 'Browser terminal and time-limited SSH on added servers', true],
+                        ['Allowed', 'App settings (under /apps/) and their DNS records', true],
+                        ['Never', 'Run arbitrary commands, read other data, or touch servers that weren\'t added', false]].map(([k, t, ok], i) => (
                         <li key={i} className="flex gap-2">
                           <span className={ok ? 'text-emerald-300' : 'text-rose-300'}><I d={ok ? ICON.check : ICON.lock} className="h-4 w-4" /></span>
                           <span className="text-slate-300"><b className="font-medium">{k as string}:</b> {t as string}</span>
@@ -170,10 +170,10 @@ export function Onboarding() {
               )}
             </Step>
 
-            <Step n={3} state={connected ? 'current' : 'locked'} icon={ICON.server} title="Add your first server">
+            <Step n={3} state={connected ? 'current' : 'locked'} icon={ICON.server} title="Add the first server">
               {connected
                 ? <AddServersPanel onAdded={(id) => window.location.assign(`/instances/${id}`)} />
-                : <p className="text-sm text-slate-400">Choose an EC2 server in your account. The console reaches it through AWS Session Manager, so no SSH port has to be open.</p>}
+                : <p className="text-sm text-slate-400">Choose an EC2 server in the connected account. The console reaches it through AWS Session Manager, so no SSH port has to be open.</p>}
             </Step>
 
             <Step n={4} state="locked" icon={ICON.github} title="Deploy an app from GitHub" last>
@@ -186,17 +186,17 @@ export function Onboarding() {
         <aside className="space-y-6">
           {isAdmin && <InviteCard />}
           <section className="card">
-            <div className="flex items-center gap-2 text-slate-100"><I d={ICON.check} className="h-[18px] w-[18px] text-emerald-300" /><h2 className="font-medium">What you'll need</h2></div>
+            <div className="flex items-center gap-2 text-slate-100"><I d={ICON.check} className="h-[18px] w-[18px] text-emerald-300" /><h2 className="font-medium">Requirements</h2></div>
             <ul className="mt-3 space-y-2.5 text-sm text-slate-400">
-              <li>An AWS account where you can create a role (once).</li>
-              <li>Your code on GitHub (private repositories are fine).</li>
-              <li>Optional: your own domain for your apps.</li>
+              <li>An AWS account with permission to create a CloudFormation stack (once).</li>
+              <li>Code on GitHub (private repositories are fine).</li>
+              <li>Optional: a domain for the apps.</li>
             </ul>
           </section>
           {trialLeft != null && (
             <section className="card border-indigo-400/30 bg-indigo-500/[0.06]">
               <h2 className="font-medium text-slate-100">Free trial</h2>
-              <p className="mt-1 text-sm text-slate-400"><span className="num text-2xl font-semibold text-slate-100">{trialLeft}</span> days left. No card needed until you choose a plan.</p>
+              <p className="mt-1 text-sm text-slate-400"><span className="num text-2xl font-semibold text-slate-100">{trialLeft}</span> days left. No card needed until a plan is chosen.</p>
             </section>
           )}
         </aside>

@@ -34,7 +34,7 @@ export function AlertSettingsForm() {
       const bad = r.filter((x) => !x.ok);
       setMsg(bad.length
         ? { tone: 'warn', text: `Sent to ${r.filter((x) => x.ok).map((x) => x.channel).join(' and ') || 'nothing'}. Failed: ${bad.map((x) => `${x.channel} (${x.error})`).join('; ')}` }
-        : { tone: 'ok', text: `Test sent by ${r.map((x) => x.channel).join(' and ')}. Check your inbox.` });
+        : { tone: 'ok', text: `Test sent by ${r.map((x) => x.channel).join(' and ')}. Check the inbox.` });
       apply(await api.alertSettings());
     } catch (e2) { setMsg({ tone: 'bad', text: err(e2) }); } finally { setBusy(null); }
   }
@@ -61,7 +61,7 @@ export function AlertSettingsForm() {
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
           <label className="label" htmlFor="al-rcpt">Email recipients</label>
-          <input id="al-rcpt" className="input" value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="you@example.com, teammate@example.com" />
+          <input id="al-rcpt" className="input" value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ops@example.com, oncall@example.com" />
         </div>
         <div>
           <label className="label" htmlFor="al-hook">Slack or Discord webhook <span className="text-slate-600">(optional)</span></label>

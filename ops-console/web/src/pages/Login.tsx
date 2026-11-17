@@ -43,12 +43,12 @@ export function Login() {
         <div className="mb-8 text-center">
           <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl border border-indigo-400/40 bg-indigo-500/15 text-indigo-300"><svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M12 3 3 20h18L12 3z" /></svg></span>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-100">{site.productName}</h1>
-          <p className="mt-1 text-sm text-slate-500">{site.multiTenant ? 'Sign in to your workspace.' : 'Deployments, health and databases across EC2 instances.'}</p>
+          <p className="mt-1 text-sm text-slate-500">{site.multiTenant ? 'Sign in to continue.' : 'Deployments, health and databases across EC2 instances.'}</p>
         </div>
 
         {localMode && (
           <div className="mb-4 rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/10 p-3 text-xs text-fuchsia-200">
-            Local test server: it has its own logins (not your production password). They're in
+            Local test server: it has its own logins (not the production password). They're in
             <code className="mx-1 rounded bg-ink-900 px-1 font-mono">ops-console/.local/credentials.txt</code>,
             or choose one with <code className="rounded bg-ink-900 px-1 font-mono">ops-console/dev/local.sh --password admin</code>.
           </div>
