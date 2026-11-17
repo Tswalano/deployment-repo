@@ -33,6 +33,7 @@ export interface DeploymentRow {
     decision_reason: string | null;
     override_reason: string | null;
     expires_at: string | null;
+    trigger?: string;
 }
 
 export function deploymentView(d: DeploymentRow, withOutput: boolean) {
@@ -40,7 +41,7 @@ export function deploymentView(d: DeploymentRow, withOutput: boolean) {
         id: d.id, instanceId: d.instance_id, project: d.project, action: d.action, ref: d.ref,
         requestedBy: d.requested_by_name, status: d.status, ssmStatus: d.ssm_status,
         createdAt: d.created_at, finishedAt: d.finished_at, approvedBy: d.approved_by, approvedAt: d.approved_at,
-        decisionReason: d.decision_reason, overrideReason: d.override_reason, expiresAt: d.expires_at,
+        decisionReason: d.decision_reason, overrideReason: d.override_reason, expiresAt: d.expires_at, trigger: d.trigger ?? 'console',
         output: withOutput ? d.output : undefined,
     };
 }
@@ -52,7 +53,7 @@ export class DeployError extends Error {
     constructor(message: string, public status: 400 | 403 | 404 | 409 = 400, public code?: string) { super(message); }
 }
 
-export interface Requester { id: number; username: string; role: 'admin' | 'deployer' | 'viewer' }
+export interface Requester { id: number | null; username: string; role: 'admin' | 'deployer' | 'viewer' }
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://ops.glenify.studio';
 const fmt = (iso: string, tz: string) => new Date(iso).toLocaleString('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -64,7 +65,7 @@ const fmt = (iso: string, tz: string) => new Date(iso).toLocaleString('en-GB', {
  * - otherwise: started immediately
  */
 export async function requestDeployment(inst: InstanceRow, project: string, action: 'deploy' | 'rollback', ref: string,
-                                        user: Requester, override?: string): Promise<DeploymentRow> {
+                                        user: Requester, override?: string, trigger: 'console' | 'github' = 'console'): Promise<DeploymentRow> {
     if (!PROJECT_RE.test(project)) throw new DeployError('Invalid project.');
     if (ref && (!REF_RE.test(ref) || ref.includes('..'))) throw new DeployError('Invalid git ref.');
     if (action === 'rollback' && ref && !SHA_RE.test(ref)) throw new DeployError('Roll back to a commit SHA (7–40 hex characters), or leave it empty for the previous good deploy.');
@@ -90,9 +91,9 @@ export async function requestDeployment(inst: InstanceRow, project: string, acti
         let row: DeploymentRow;
         try {
             ({ rows: [row] } = await db().query<DeploymentRow>(
-                `INSERT INTO deployments (instance_id, project, action, ref, requested_by, requested_by_name, status, expires_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, 'pending_approval', now() + make_interval(mins => $7)) RETURNING *`,
-                [inst.id, project, action, ref, user.id, user.username, policy.requestTtlMinutes]));
+                `INSERT INTO deployments (instance_id, project, action, ref, requested_by, requested_by_name, status, expires_at, trigger)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'pending_approval', now() + make_interval(mins => $7), $8) RETURNING *`,
+                [inst.id, project, action, ref, user.id, user.username, policy.requestTtlMinutes, trigger]));
         } catch (err) {
             if ((err as { code?: string }).code === '23505') throw new DeployError(`There is already a request waiting for approval for ${project} on ${inst.name}.`, 409);
             throw err;
@@ -102,7 +103,7 @@ export async function requestDeployment(inst: InstanceRow, project: string, acti
             `Another deployer or admin must approve it within ${policy.requestTtlMinutes} minutes:\n${PUBLIC_URL}/instances/${inst.id}/apps/${project}?tab=deploy`, 'approval');
         return row;
     }
-    const row = await launch(inst, project, action, ref, user, null, reason || null);
+    const row = await launch(inst, project, action, ref, user, null, reason || null, undefined, trigger);
     if (reason) {
         await announce(`[OVERRIDE] ${user.username} ${action === 'deploy' ? 'deployed' : 'rolled back'} ${project} on ${inst.name}`,
             `${freezeApplies ? `Freeze “${freeze!.name}” was overridden. ` : ''}${needsApproval ? 'Approval was skipped. ' : ''}Reason given:\n\n${reason}\n\n${PUBLIC_URL}/instances/${inst.id}/apps/${project}?tab=deploy`, 'override');
@@ -112,7 +113,7 @@ export async function requestDeployment(inst: InstanceRow, project: string, acti
 
 /** Insert (or promote a pending row to) a running deployment and send the SSM command. */
 async function launch(inst: InstanceRow, project: string, action: 'deploy' | 'rollback', ref: string, requester: { id: number | null; username: string },
-                      pendingId: number | null, override: string | null, approver?: string): Promise<DeploymentRow> {
+                      pendingId: number | null, override: string | null, approver?: string, trigger: 'console' | 'github' = 'console'): Promise<DeploymentRow> {
     if (inst.last_status?.deploying) throw new DeployError(`A pipeline run is already in progress on ${inst.name} (${inst.last_status.deploying.project}).`, 409);
     let row: DeploymentRow;
     try {
@@ -123,8 +124,8 @@ async function launch(inst: InstanceRow, project: string, action: 'deploy' | 'ro
             if (!row) throw new DeployError('That request is no longer waiting for approval.', 409);
         } else {
             ({ rows: [row] } = await db().query<DeploymentRow>(
-                `INSERT INTO deployments (instance_id, project, action, ref, requested_by, requested_by_name, override_reason)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`, [inst.id, project, action, ref, requester.id, requester.username, override]));
+                `INSERT INTO deployments (instance_id, project, action, ref, requested_by, requested_by_name, override_reason, trigger)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`, [inst.id, project, action, ref, requester.id, requester.username, override, trigger]));
         }
     } catch (err) {
         if ((err as { code?: string }).code === '23505') throw new DeployError(`Another deployment on ${inst.name} is still running.`, 409);
@@ -156,7 +157,7 @@ async function pending(id: number): Promise<{ d: DeploymentRow; inst: InstanceRo
 /** A different deployer/admin approves: the freeze is checked again at this moment, then it starts. */
 export async function approveDeployment(id: number, user: Requester): Promise<DeploymentRow> {
     const { d, inst } = await pending(id);
-    if (d.requested_by === user.id) throw new DeployError('You can\'t approve your own request; another deployer or admin has to.', 403);
+    if (d.requested_by !== null && d.requested_by === user.id) throw new DeployError('You can\'t approve your own request; another deployer or admin has to.', 403);
     const policy = await deployPolicy();
     const freeze = activeFreeze(policy, inst.environment);
     if (freeze && !(d.action === 'rollback' && policy.rollbackAllowedInFreeze)) {

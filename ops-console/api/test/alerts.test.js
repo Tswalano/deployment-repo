@@ -9,7 +9,7 @@ const fs = require('fs');
 const zlib = require('zlib');
 
 const ORIGIN = 'https://ops.example.test';
-const PORT = 55000 + Math.floor(Math.random() * 1000);
+const PORT = 57000 + Math.floor(Math.random() * 1000);
 process.env.DATABASE_URL = `postgresql://postgres:pw@127.0.0.1:${PORT}/opsconsole_test`;
 process.env.ALLOWED_ORIGINS = ORIGIN;
 process.env.COOKIE_SECURE = 'false';

@@ -9,9 +9,11 @@ import { usePoll } from '../usePoll';
 import { DatabaseTab } from './app/DatabaseTab';
 import { DeployTab } from './app/DeployTab';
 import { LogsTab } from './app/LogsTab';
+import { EnvTab } from './app/EnvTab';
+import { RepoCard } from './app/RepoCard';
 import { ActionDialog, errMsg, Facts, RunningBanner, Section } from './app/shared';
 
-type Tab = 'overview' | 'deploy' | 'database' | 'logs';
+type Tab = 'overview' | 'deploy' | 'environment' | 'database' | 'logs';
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 function PendingCard({ d, me, onDone }: { d: Deployment; me: { username: string; canDecide: boolean }; onDone: (msg: string, ok: boolean) => Promise<void> }) {
@@ -197,7 +199,7 @@ export function AppDetail() {
   if (!data) return <div className="space-y-3"><Skeleton className="h-12 w-72" /><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   const { app, instance } = data;
   const t = appTone(app);
-  const tabs: [Tab, string, boolean][] = [['overview', 'Overview', true], ['deploy', 'Deploy', true], ['database', 'Database', !!app.db], ['logs', 'Logs', true]];
+  const tabs: [Tab, string, boolean][] = [['overview', 'Overview', true], ['deploy', 'Deploy', true], ['environment', 'Environment', op], ['database', 'Database', !!app.db], ['logs', 'Logs', true]];
 
   return (
     <div>
@@ -232,7 +234,7 @@ export function AppDetail() {
       <nav aria-label="App sections" className="mb-5 flex gap-1 overflow-x-auto border-b border-ink-700">
         {tabs.filter(([, , show]) => show).map(([id, label]) => (
           <button key={id} onClick={() => setSearch(id === 'overview' ? {} : { tab: id }, { replace: true })}
-                  className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${id === 'logs' ? 'hidden md:block' : ''} ${tab === id
+                  className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${id === 'logs' || id === 'environment' ? 'hidden md:block' : ''} ${tab === id
                     ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
                   aria-current={tab === id ? 'page' : undefined}>
             {label}{id === 'deploy' && detail?.git.behind ? <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-2xs text-amber-300">{detail.git.behind}</span> : null}
@@ -241,6 +243,9 @@ export function AppDetail() {
       </nav>
 
       {tab === 'overview' && <OverviewTab view={data} detail={detail} />}
+      {tab === 'deploy' && <div className="mb-5"><RepoCard view={data} isAdmin={user?.role === 'admin' && !user.isDemo} onChange={async () => { await reload(); }} /></div>}
+      {tab === 'environment' && op && <div className="hidden md:block"><EnvTab instanceId={instance.id} project={app.project} isAdmin={user?.role === 'admin' && !user.isDemo} /></div>}
+      {tab === 'environment' && <p className="card text-sm text-slate-500 md:hidden">Environment variables are available on larger screens.</p>}
       {tab === 'deploy' && (
         <DeployTab view={data} detail={detail} fetching={fetching} onCheck={() => void loadDetail(true)}
                    onDeploy={(ref, note) => setDialog(ref.startsWith('rollback:') ? { action: 'rollback', ref: ref.slice(9) } : { action: 'deploy', ref, note })} />

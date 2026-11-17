@@ -8,13 +8,14 @@ import { Activity } from './pages/Activity';
 import { Alerts } from './pages/Alerts';
 import { AppDetail } from './pages/AppDetail';
 import { Audit } from './pages/Audit';
+import { Costs } from './pages/Costs';
 import { Backups } from './pages/Backups';
 import { InstanceDetail } from './pages/InstanceDetail';
 import { Instances } from './pages/Instances';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
-import { Secrets } from './pages/Secrets';
 import { Settings } from './pages/Settings';
+import { GithubCallback } from './components/GithubConnect';
 import { Users } from './pages/Users';
 import type { Role } from './api';
 import './index.css';
@@ -39,8 +40,9 @@ function App() {
         <Route path="activity" element={<Activity />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="backups" element={<Backups />} />
-        <Route path="secrets" element={<Secrets />} />
+        <Route path="costs" element={<Costs />} />
         <Route path="account" element={<Account />} />
+        <Route path="github/callback" element={<Protected role="admin"><GithubCallback /></Protected>} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />
         <Route path="audit" element={<Protected role="admin"><Audit /></Protected>} />

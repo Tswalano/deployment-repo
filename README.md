@@ -243,6 +243,29 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
   needs a reason). The console refuses to stop or terminate the instance it runs on. IAM allows these only on
   instances tagged `ops-console=managed`. Stopped instances show as stopped instead of raising "unreachable" alerts.
 
+
+### Schedules and costs (Ops Console)
+- **Schedule** card on each instance page: the EventBridge Scheduler start/stop schedules that target it (the
+  AutoStartStop Lambda or the EC2 universal target), with the next run in the schedule's timezone. Admins change
+  times/days and pause/resume; deployers can **Keep running tonight** (pauses the stop schedule, which the console
+  re-enables automatically after the skipped time). IAM: `infra/iam/instance-ops-console-schedule-costs.json`
+  (PassRole only for the existing `Amazon_EventBridge_Scheduler_*` role, only to scheduler.amazonaws.com).
+- **Costs** (admins and deployers): month to date, AWS forecast, last month, daily spend and top services, optional
+  Rand conversion and monthly budget alerts. Cost Explorer charges USD 0.01 per request, so the console fetches
+  once a day (2 requests, ~USD 0.60/month) and allows a manual refresh at most once an hour.
+
+
+### GitHub and environment variables (Ops Console)
+- **Settings → GitHub → Connect GitHub** creates a private GitHub App from a manifest (read-only access to code and
+  metadata, push events). Its credentials are stored in SSM under `/ops-console/github/*`; installation tokens are
+  minted per request and expire within an hour. Then install the app on your account/organisation and pick repos.
+- On an app's **Deploy** tab, **Repository** links it to a repo and branch; with auto-deploy on, every push to that
+  branch deploys the pushed commit (deploy approvals and freeze windows still apply). Webhooks go to
+  `https://ops.glenify.studio/api/github/webhook` and are verified by their HMAC signature.
+- An app's **Environment** tab lists its variables (`/apps/<service>/*`): admins reveal (logged), add, change and remove
+  them; the app restarts and the change is undone automatically if it doesn't come back healthy. Database passwords
+  and JWT secrets are rotated, not typed.
+
 ## Repository layout
 
 ```

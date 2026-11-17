@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadSchedules",
+      "Effect": "Allow",
+      "Action": ["scheduler:ListSchedules", "scheduler:GetSchedule"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EditSchedules",
+      "Effect": "Allow",
+      "Action": "scheduler:UpdateSchedule",
+      "Resource": "arn:aws:scheduler:*:${ACCOUNT_ID}:schedule/*/*"
+    },
+    {
+      "Sid": "UpdateScheduleResendsItsExistingRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::${ACCOUNT_ID}:role/service-role/Amazon_EventBridge_Scheduler_*",
+      "Condition": { "StringEquals": { "iam:PassedToService": "scheduler.amazonaws.com" } }
+    },
+    {
+      "Sid": "ReadCosts",
+      "Effect": "Allow",
+      "Action": ["ce:GetCostAndUsage", "ce:GetCostForecast"],
+      "Resource": "*"
+    }
+  ]
+}

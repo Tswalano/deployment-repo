@@ -94,7 +94,14 @@ export interface AppView {
   deployments: Deployment[];
   canOperate: boolean;
   policy: PolicyStatus;
+  repo: { repo: string; branch: string; autoDeploy: boolean; linkedBy: string | null } | null;
 }
+export interface GithubStatus {
+  connected: boolean; webhookUrl: string; app?: { slug: string; owner: string; htmlUrl: string };
+  installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
+}
+export interface GithubRepo { fullName: string; private: boolean; defaultBranch: string; pushedAt: string | null; description: string | null }
+export interface EnvVar { key: string; kind: 'db' | 'jwt' | 'provider' | 'secret' | 'config'; version: number; lastModified: string | null; lastModifiedBy: string | null; generated: boolean }
 export interface PolicyStatus {
   freeze: { id: string; name: string; endsAt: string } | null;
   needsApproval: { deploy: boolean; rollback: boolean };
@@ -174,6 +181,17 @@ export interface InstanceBackups {
   verifications: BackupVerification[];
 }
 
+export interface Schedule {
+  name: string; group: string; action: 'start' | 'stop' | 'unknown'; instanceIds: string[]; expression: string; timezone: string;
+  enabled: boolean; next: string | null; time: string | null; days: number[] | null; editable: boolean; skip: { until: string; by: string } | null;
+}
+export interface CostSummary {
+  fetchedAt: string; currency: string; monthToDate: number; lastMonth: number; lastMonthSamePeriod: number; forecast: number; forecastSource: 'aws' | 'linear';
+  daily: { day: string; total: number; top?: { name: string; amount: number }[] }[]; services: { name: string; monthToDate: number; lastMonth: number }[];
+  period: { monthStart: string; today: string; daysInMonth: number };
+}
+export interface CostSettings { monthlyBudget: number | null; zarRate: number | null }
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -249,6 +267,25 @@ export const api = {
     call<{ ok: boolean; updated: string[]; restarted: string[]; dryRun?: boolean }>('POST', `/api/instances/${instanceId}/secrets/rotate`, { kind, target, confirm }),
   updateSecret: (instanceId: number, service: string, key: string, value: string) =>
     call<{ ok: boolean; name: string; dryRun: boolean }>('PUT', `/api/instances/${instanceId}/secrets/value`, { service, key, value }),
+  schedule: (id: number) => call<{ schedules: Schedule[] }>('GET', `/api/instances/${id}/schedule`).then((r) => r.schedules),
+  editSchedule: (id: number, name: string, b: { time?: string; days?: number[]; enabled?: boolean }) =>
+    call<{ schedules: Schedule[] }>('PUT', `/api/instances/${id}/schedule/${encodeURIComponent(name)}`, b),
+  skipStop: (id: number, name: string) => call<{ schedules: Schedule[]; until: string }>('POST', `/api/instances/${id}/schedule/${encodeURIComponent(name)}/skip`),
+  costs: () => call<{ summary: CostSummary; settings: CostSettings }>('GET', '/api/costs'),
+  refreshCosts: () => call<{ summary: CostSummary; settings: CostSettings; fetched: boolean }>('POST', '/api/costs/refresh'),
+  saveCostSettings: (b: { monthlyBudget: string | number | null; zarRate: string | number | null }) => call<{ settings: CostSettings }>('PUT', '/api/costs/settings', b),
+  github: () => call<GithubStatus>('GET', '/api/github'),
+  githubManifest: (org?: string) => call<{ action: string; manifest: object }>('POST', '/api/github/manifest', org ? { org } : {}),
+  githubExchange: (code: string, state: string) => call<{ connected: boolean; installUrl: string }>('POST', '/api/github/exchange', { code, state }),
+  githubDisconnect: () => call<{ ok: boolean; deleteAppUrl: string | null }>('DELETE', '/api/github'),
+  githubRepos: (refresh = false) => call<{ repos: GithubRepo[] }>('GET', `/api/github/repos${refresh ? '?refresh=1' : ''}`).then((r) => r.repos),
+  githubBranches: (repo: string) => call<{ branches: string[] }>('GET', `/api/github/branches?repo=${encodeURIComponent(repo)}`).then((r) => r.branches),
+  linkRepo: (id: number, project: string, b: { repo: string; branch: string; autoDeploy: boolean }) => call('PUT', `/api/instances/${id}/apps/${encodeURIComponent(project)}/repo`, b),
+  unlinkRepo: (id: number, project: string) => call('DELETE', `/api/instances/${id}/apps/${encodeURIComponent(project)}/repo`),
+  env: (id: number, project: string) => call<{ service: string; dbRole: string | null; vars: EnvVar[]; dryRun: boolean }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/env`),
+  revealEnv: (id: number, project: string, key: string) => call<{ key: string; value: string }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/env/reveal`, { key }).then((r) => r.value),
+  setEnv: (id: number, project: string, key: string, value: string) => call<{ verb: string; dryRun: boolean }>('PUT', `/api/instances/${id}/apps/${encodeURIComponent(project)}/env`, { key, value }),
+  removeEnv: (id: number, project: string, key: string) => call<{ verb: string; dryRun: boolean }>('DELETE', `/api/instances/${id}/apps/${encodeURIComponent(project)}/env/${encodeURIComponent(key)}`),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
 

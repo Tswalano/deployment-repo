@@ -6,6 +6,7 @@ import { ActivityList } from '../components/ActivityList';
 import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, Skeleton, Sparkline } from '../components/ui';
 import { Facts } from './app/shared';
 import { PowerControls, stateTone } from '../components/PowerControls';
+import { ScheduleCard } from '../components/ScheduleCard';
 import { appTone } from '../health';
 import { usePoll } from '../usePoll';
 
@@ -173,10 +174,13 @@ export function InstanceDetail() {
                 </div>
               </section>
             </div>
+            <div className="min-w-0 space-y-5">
+            <ScheduleCard instanceId={i.id} />
             <section className="card min-w-0">
               <h2 className="font-medium text-slate-100">Recent deployments</h2>
               <ActivityList events={s.deployEvents.slice(0, 8)} showInstance={false} />
             </section>
+            </div>
           </div>
         </>
       )}

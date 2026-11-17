@@ -21,7 +21,9 @@
     "@aws-sdk/client-ssm": "3.967.0",
     "@aws-sdk/client-sesv2": "3.967.0",
     "@aws-sdk/client-s3": "3.967.0",
-    "@aws-sdk/s3-request-presigner": "3.967.0"
+    "@aws-sdk/s3-request-presigner": "3.967.0",
+    "@aws-sdk/client-scheduler": "3.967.0",
+    "@aws-sdk/client-cost-explorer": "3.967.0"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
