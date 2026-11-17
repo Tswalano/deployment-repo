@@ -1,10 +1,12 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api, ApiError, Instance } from '../api';
+import { useAuth } from '../auth';
 import { Alert, DesktopOnly, Dot, PageHeader, ago } from '../components/ui';
 import { AlertSettingsForm } from '../components/AlertSettingsForm';
 import { CostCurrencyForm } from '../components/CostCurrencyForm';
 import { DeployPolicyForm } from '../components/DeployPolicyForm';
 import { GithubConnect } from '../components/GithubConnect';
+import { WorkspaceForm } from '../components/WorkspaceForm';
 import { usePoll } from '../usePoll';
 
 const REGIONS = ['af-south-1', 'eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'ap-southeast-1'];
@@ -74,6 +76,7 @@ function AddInstance({ onAdded }: { onAdded: (i: Instance) => void }) {
 }
 
 export function Settings() {
+  const { site } = useAuth();
   const { data, error, reload } = usePoll(api.instances, 60_000);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -144,6 +147,7 @@ export function Settings() {
             </tbody>
           </table>
         </section>
+        {site.multiTenant && <WorkspaceForm />}
         <GithubConnect />
         <DeployPolicyForm />
         <AlertSettingsForm />

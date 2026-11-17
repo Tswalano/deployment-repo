@@ -109,7 +109,7 @@ async function skips(): Promise<Skip[]> {
 }
 async function saveSkips(list: Skip[]): Promise<void> {
     await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('schedule_skips', $1, 'console')
-                      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [JSON.stringify(list)]);
+                      ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [JSON.stringify(list)]);
 }
 
 const cache = new Map<string, { at: number; list: RawSchedule[] }>();

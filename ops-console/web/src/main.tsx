@@ -21,13 +21,20 @@ import { Access } from './pages/Access';
 const Terminal = lazy(() => import('./pages/Terminal').then((m) => ({ default: m.Terminal })));
 import { GithubCallback } from './components/GithubConnect';
 import { Users } from './pages/Users';
+import { AcceptInvite, ForgotPassword, Landing, ResetPassword, Signup, VerifyEmail } from './pages/Public';
+import { Team } from './pages/Team';
+import { useLocation } from 'react-router-dom';
 import type { Role } from './api';
 import './index.css';
 
 function Protected({ children, role }: { children: JSX.Element; role?: Role }) {
-  const { user, loading } = useAuth();
+  const { user, loading, site } = useAuth();
+  const { pathname, search } = useLocation();
   if (loading) return <div className="grid h-screen place-items-center text-sm text-slate-500">Loading…</div>;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    if (site.multiTenant && pathname === '/') return <Landing />;   // the product's public front page
+    return <Navigate to={pathname === '/' ? '/login' : `/login?next=${encodeURIComponent(pathname + search)}`} replace />;
+  }
   if (role === 'admin' && user.role !== 'admin') return <Navigate to="/" replace />;
   if (role === 'deployer' && (user.role === 'viewer' || user.isDemo)) return <Navigate to="/" replace />;
   return children;
@@ -37,6 +44,11 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify" element={<VerifyEmail />} />
+      <Route path="/invite" element={<AcceptInvite />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route index element={<Overview />} />
         <Route path="instances" element={<Instances />} />
@@ -53,6 +65,7 @@ function App() {
         <Route path="github/callback" element={<Protected role="admin"><GithubCallback /></Protected>} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />
+        <Route path="team" element={<Team />} />
         <Route path="audit" element={<Protected role="admin"><Audit /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

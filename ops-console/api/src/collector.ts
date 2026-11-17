@@ -1,6 +1,6 @@
 import { gunzipSync } from 'zlib';
 import { aws } from './aws';
-import { db } from './db';
+import { db, forEachWorkspace } from './db';
 import { dispatch, evaluateInstance } from './alerts';
 import { autoVerify } from './backups';
 import { refreshCosts } from './costs';
@@ -190,7 +190,8 @@ async function maybeSample(instanceId: number, s: Snapshot): Promise<void> {
 }
 
 export function startPoller(): NodeJS.Timeout {
-    const tick = async () => {
+    // once per workspace, each in its own context (row-level security)
+    const tick = () => forEachWorkspace(async () => {
         const { rows } = await db().query<InstanceRow>('SELECT * FROM instances');
         await syncRunning().catch(() => undefined);
         await expirePending().catch(() => undefined);
@@ -204,7 +205,7 @@ export function startPoller(): NodeJS.Timeout {
         await dispatch().catch((err) => console.error('alert dispatch failed:', (err as Error).message));
         await db().query("DELETE FROM instance_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
         await db().query("DELETE FROM db_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
-    };
+    });
     setTimeout(() => void tick().catch(() => undefined), 10_000).unref();
     const t = setInterval(() => void tick().catch(() => undefined), POLL_EVERY_MS);
     t.unref();

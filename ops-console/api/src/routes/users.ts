@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { Hono } from 'hono';
 import { audit } from '../audit';
 import { db } from '../db';
@@ -6,6 +7,9 @@ import { hashPassword, passwordProblem } from '../password';
 import { destroyUserSessions, Role } from '../sessions';
 
 const users = new Hono<Env>();
+// The global user list is the single-team console's: with many customers it would show every account, so it is off
+// there (workspaces use /api/team: members and invitations of their own workspace only).
+users.use('*', async (c, next) => (config.multiTenant ? c.json({ error: 'Not found' }, 404) : next()));
 users.use('*', requireRole('admin'), denyDemo);
 
 const ROLES: Role[] = ['admin', 'deployer', 'viewer'];

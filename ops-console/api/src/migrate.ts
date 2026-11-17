@@ -8,6 +8,8 @@ export async function migrate(dir = join(__dirname, '..', 'migrations')): Promis
     const applied: string[] = [];
     try {
         await client.query('SELECT pg_advisory_lock(726371)');   // one migrator at a time
+        // migrations see every workspace (row-level security, migration 015)
+        await client.query("SELECT set_config('app.bypass', 'on', false), set_config('app.workspace_id', '', false)");
         await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
             name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
         const done = new Set((await client.query('SELECT name FROM schema_migrations')).rows.map((r) => r.name));
@@ -26,6 +28,7 @@ export async function migrate(dir = join(__dirname, '..', 'migrations')): Promis
         }
     } finally {
         await client.query('SELECT pg_advisory_unlock(726371)').catch(() => undefined);
+        await client.query("SELECT set_config('app.bypass', 'off', false)").catch(() => undefined);
         client.release();
     }
     return applied;

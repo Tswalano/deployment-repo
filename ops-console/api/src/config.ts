@@ -29,4 +29,12 @@ export const config = {
     /** Private S3 bucket for backup downloads (SSM /apps/ops-console/TRANSFER_BUCKET); '' disables downloads. */
     transferBucket: process.env.TRANSFER_BUCKET || '',
     transferRegion: process.env.TRANSFER_REGION || 'af-south-1',
+    /** Multi-customer (SaaS) mode: sign-up, workspaces, no access to the host's own AWS account. Off = the single-team console. */
+    multiTenant: bool(process.env.OPS_MULTI_TENANT, false),
+    /** Product name shown on the landing page and in emails (placeholder until it is decided). */
+    productName: process.env.PRODUCT_NAME || 'Ops Console',
+    /** Public address of this console (links in emails). */
+    publicUrl: process.env.PUBLIC_URL || 'https://ops.glenify.studio',
+    /** Free trial for new workspaces. */
+    trialDays: num(process.env.TRIAL_DAYS, 14),
 };

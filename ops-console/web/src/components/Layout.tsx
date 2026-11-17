@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { api, ROLE_INFO } from '../api';
+import { NoWorkspace } from '../pages/Team';
+import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
 
 type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; mobile?: boolean; group?: 'Operations' | 'Administration'; icon: JSX.Element };
@@ -22,7 +23,7 @@ const TABS: Tab[] = [
   { to: '/settings', label: 'Settings', group: 'Administration', admin: true, icon: <Icon d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /> },
 ];
 
-function UserMenu({ pages }: { pages: Tab[] }) {
+function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; workspaces?: Workspace[]; onSwitched?: () => Promise<void> }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -49,6 +50,25 @@ function UserMenu({ pages }: { pages: Tab[] }) {
             <div className="truncate text-sm font-medium text-slate-100" title={user.username}>{user.displayName || user.username}</div>
             <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">@{user.username} <span className={ROLE_INFO[user.role].badge}>{ROLE_INFO[user.role].label}</span></div>
           </div>
+          {workspaces.length > 0 && (
+            <div className="border-b border-ink-700 py-1.5">
+              <div className="px-4 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-slate-500">Workspaces</div>
+              {workspaces.map((w) => (
+                <button key={w.id} role="menuitem" className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm ${w.id === user.workspaceId ? 'text-slate-100' : 'text-slate-300 hover:bg-ink-800'}`}
+                        disabled={w.id === user.workspaceId}
+                        onClick={async () => { setOpen(false); await api.switchWorkspace(w.id); await onSwitched?.(); }}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${w.id === user.workspaceId ? 'bg-indigo-400' : 'bg-transparent'}`} />
+                  <span className="min-w-0 flex-1 truncate">{w.name}</span><span className="text-2xs capitalize text-slate-500">{w.role}</span>
+                </button>
+              ))}
+              <button role="menuitem" className="block w-full px-4 py-2 text-left text-sm text-slate-400 hover:bg-ink-800" onClick={async () => {
+                const name = prompt('Name of the new workspace');
+                if (!name || name.trim().length < 2) return;
+                setOpen(false);
+                try { await api.createWorkspace(name.trim()); await onSwitched?.(); } catch (e) { alert(e instanceof Error ? e.message : 'Could not create it.'); }
+              }}>+ New workspace</button>
+            </div>
+          )}
           {(['Operations', 'Administration'] as const).map((g) => {
             const items = pages.filter((t) => t.group === g);
             return items.length ? (
@@ -116,7 +136,10 @@ function NavGroup({ label, items }: { label: string; items: Tab[] }) {
 }
 
 export function Layout() {
-  const { user } = useAuth();
+  const { user, site, refresh } = useAuth();
+  const [wss, setWss] = useState<Workspace[]>([]);
+  const [resent, setResent] = useState(false);
+  useEffect(() => { if (user && site.multiTenant && user.workspaceId != null) api.workspaces().then((r) => setWss(r.workspaces)).catch(() => undefined); }, [user, site.multiTenant]);
   const { pathname } = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   const [alerts, setAlerts] = useState({ open: 0, critical: 0 });
@@ -130,7 +153,12 @@ export function Layout() {
     return () => clearInterval(t);
   }, [user, pathname]);
   if (!user) return null;
-  const tabs = TABS.filter((t) => (!t.admin || user.role === 'admin') && (!t.deployer || ((user.role === 'admin' || user.role === 'deployer') && !user.isDemo)));
+  if (site.multiTenant && user.workspaceId == null) return <NoWorkspace />;
+  const current = wss.find((w) => w.id === user.workspaceId);
+  const trialDays = current?.plan === 'trial' && current.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(current.trialEndsAt) - Date.now()) / 86400e3)) : null;
+  // with many customers the global Users page becomes the workspace's Team page (all members see it)
+  const TABS_HERE = site.multiTenant ? TABS.map((t) => (t.to === '/users' ? { ...t, to: '/team', label: 'Team', admin: false } : t)) : TABS;
+  const tabs = TABS_HERE.filter((t) => (!t.admin || user.role === 'admin') && (!t.deployer || ((user.role === 'admin' || user.role === 'deployer') && !user.isDemo)));
   const badge = (t: Tab) => t.to === '/alerts' && alerts.open > 0 && (
     <span className={`num ml-0.5 rounded-full px-1.5 text-2xs font-semibold ${alerts.critical ? 'bg-rose-500 text-white' : 'bg-amber-400 text-ink-950'}`}>{alerts.open}</span>
   );
@@ -140,6 +168,17 @@ export function Layout() {
       {localMode && (
         <div className="border-b border-fuchsia-500/30 bg-fuchsia-500/10 px-4 py-2 text-center text-xs text-fuchsia-200">
           Local test mode: live data from AWS, but deploys and “Back up now” are simulated and notifications are only logged.
+        </div>
+      )}
+      {site.multiTenant && user.email && !user.emailVerified && (
+        <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-200">
+          Confirm your email: we sent a link to {user.email}.{' '}
+          {resent ? 'Sent again.' : <button className="underline underline-offset-2" onClick={() => { void api.resendVerification().then(() => setResent(true)); }}>Send it again</button>}
+        </div>
+      )}
+      {trialDays != null && (
+        <div className="border-b border-indigo-400/20 bg-indigo-500/10 px-4 py-2 text-center text-xs text-indigo-200">
+          Free trial: {trialDays === 0 ? 'ends today' : `${trialDays} day${trialDays === 1 ? '' : 's'} left`}. Plans and billing arrive soon; nothing is charged during the trial.
         </div>
       )}
       {user.isDemo && (
@@ -153,10 +192,11 @@ export function Layout() {
             <span className="grid h-7 w-7 place-items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-300">
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M12 3 3 20h18L12 3z" /></svg>
             </span>
-            <span className="text-sm font-semibold tracking-tight text-slate-100">Ops Console</span>
+            <span className="text-sm font-semibold tracking-tight text-slate-100">{site.productName}</span>
+            {site.multiTenant && current && <span className="hidden max-w-[12rem] truncate rounded-md border border-ink-600 px-2 py-0.5 text-xs text-slate-400 sm:inline" title="Current workspace">{current.name}</span>}
           </NavLink>
           <div className="ml-auto flex items-center gap-2">
-            <UserMenu pages={tabs} />
+            <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
         </div>
         <nav aria-label="Main" className="mx-auto hidden max-w-[1400px] gap-1 px-4 sm:px-6 md:flex">

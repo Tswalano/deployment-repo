@@ -16,7 +16,7 @@ import { audit } from './audit';
 import { aws, dryRun } from './aws';
 import { InstanceRow } from './collector';
 import { config } from './config';
-import { db } from './db';
+import { currentWorkspace, db, withWorkspace } from './db';
 import { originAllowed } from './middleware';
 import { sessionUser } from './sessions';
 import { openShellStream, ShellStream, simulatedShell } from './ssmsession';
@@ -60,7 +60,9 @@ export function attachTerminal(server: Server): void {
             const user = await sessionUser(cookie(req, config.cookieName)).catch(() => null);
             if (!user) return refuse(socket, 401, 'Not signed in');
             if (user.role !== 'admin' || user.isDemo) return refuse(socket, 403, 'Only admins can open a terminal');
-            const { rows: [inst] } = await db().query<InstanceRow>('SELECT * FROM instances WHERE id = $1', [Number(m[1])]);
+            const wsId = user.workspaceId;
+            if (config.multiTenant && wsId == null) return refuse(socket, 403, 'No workspace');
+            const { rows: [inst] } = await withWorkspace(wsId, () => db().query<InstanceRow>('SELECT * FROM instances WHERE id = $1', [Number(m[1])]));
             if (!inst) return refuse(socket, 404, 'Instance not found');
             const mine = [...live.values()].filter((s) => s.username === user.username).length;
             if (mine >= PER_USER || live.size >= TOTAL) return refuse(socket, 429, `At most ${PER_USER} terminals per person (${TOTAL} in all): close one first`);
@@ -70,7 +72,7 @@ export function attachTerminal(server: Server): void {
             if (info.state !== 'running') return refuse(socket, 409, `The instance is ${info.state}`);
             const url = new URL(req.url ?? '/', 'http://x');
             const cols = Number(url.searchParams.get('cols')) || 120, rows = Number(url.searchParams.get('rows')) || 32;
-            wss.handleUpgrade(req, socket, head, (ws) => { void run(ws, inst, user.id, user.username, ipOf(req), { cols, rows }); });
+            wss.handleUpgrade(req, socket, head, (ws) => { void withWorkspace(wsId, () => run(ws, inst, user.id, user.username, ipOf(req), { cols, rows })); });
         })().catch((err) => { console.error('terminal upgrade failed:', (err as Error).message); refuse(socket, 500, 'Internal error'); });
     });
 }
@@ -87,7 +89,9 @@ async function run(ws: WebSocket, inst: InstanceRow, userId: number, username: s
     let idle: NodeJS.Timeout;
     const toBrowser = (o: object) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); };
 
-    const end = async (reason: string) => {
+    const wsId = currentWorkspace();
+    const end = (reason: string) => withWorkspace(wsId, () => endNow(reason));
+    const endNow = async (reason: string) => {
         if (ended) return;
         ended = true;
         clearTimeout(idle); clearTimeout(cap); clearInterval(ping);

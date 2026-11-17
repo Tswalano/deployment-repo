@@ -1,9 +1,11 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import { api, Me } from './api';
+import { api, Me, SiteConfig } from './api';
 
 interface AuthState {
   user: Me | null;
   loading: boolean;
+  /** Single-team console or the multi-customer product (and its name). */
+  site: SiteConfig;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -13,6 +15,8 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [site, setSite] = useState<SiteConfig>({ multiTenant: false, productName: 'Ops Console', trialDays: 14 });
+  useEffect(() => { api.site().then(setSite).catch(() => undefined); }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -33,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  return <AuthContext.Provider value={{ user, loading, refresh, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, loading, site, refresh, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthState {

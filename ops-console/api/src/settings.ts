@@ -44,7 +44,7 @@ export async function alertSettings(): Promise<AlertSettings> {
 export async function saveAlertSettings(value: AlertSettings, by: string): Promise<void> {
     await db().query(
         `INSERT INTO settings (key, value, updated_at, updated_by) VALUES ('alerts', $1, now(), $2)
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+         ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
         [JSON.stringify(value), by]);
     cache = null;
 }

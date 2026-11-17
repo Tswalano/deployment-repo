@@ -1,6 +1,6 @@
 import { dispatch, raise, resolve } from './alerts';
 import { InstanceRow } from './collector';
-import { db } from './db';
+import { db, forEachWorkspace } from './db';
 import { alertSettings } from './settings';
 
 const PROBE_EVERY_MS = 60_000;
@@ -96,8 +96,8 @@ export async function rollup(): Promise<void> {
 export function startUptime(): NodeJS.Timeout {
     let n = 0;
     const tick = async () => {
-        await probeAll();
-        if (n++ % 10 === 0) await rollup();
+        const doRollup = n++ % 10 === 0;
+        await forEachWorkspace(async () => { await probeAll(); if (doRollup) await rollup(); });
     };
     const t = setInterval(() => void tick().catch((err) => console.error('uptime tick failed:', (err as Error).message)), PROBE_EVERY_MS);
     t.unref();
