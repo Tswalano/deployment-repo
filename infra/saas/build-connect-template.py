@@ -95,7 +95,7 @@ resources = {
         'InstanceProfileName': sub('OpsConsoleInstance-${AWS::Region}'), 'Roles': [{'Ref': 'InstanceRole'}]}},
 }
 for name, script, desc, timeout, p in docs:
-    resources[name.replace('-', '')] = {'Type': 'AWS::SSM::Document', 'Properties': {
+    resources[name.replace('-', '')] = {'Type': 'AWS::SSM::Document', 'Condition': 'InstallDocuments', 'Properties': {
         'Name': name, 'DocumentType': 'Command', 'DocumentFormat': 'JSON', 'UpdateMethod': 'NewVersion',
         'Content': doc_content(script, desc, timeout, p)}}
 
@@ -105,9 +105,12 @@ template = {
                    'an instance profile for your servers, and the console\'s fixed commands. Delete the stack to disconnect.',
     'Parameters': {
         'ExternalId': {'Type': 'String', 'AllowedPattern': '^[A-Za-z0-9-]{32,64}$', 'Description': "Your workspace's external ID (shown in the console)."},
+        'InstallDocuments': {'Type': 'String', 'AllowedValues': ['yes', 'no'], 'Default': 'yes',
+                             'Description': "'no' only if this account and region already have the OpsConsole-* documents (e.g. published by infra/ops-console-ssm/deploy.sh)."},
         'ConsolePrincipal': {'Type': 'String', 'AllowedPattern': '^arn:aws:iam::\\d{12}:(role|user)/[A-Za-z0-9+=,.@_/-]+$',
                              'Description': 'The Ops Console identity allowed to use the role (shown in the console).'},
     },
+    'Conditions': {'InstallDocuments': {'Fn::Equals': [{'Ref': 'InstallDocuments'}, 'yes']}},
     'Resources': resources,
     'Outputs': {
         'RoleArn': {'Description': 'Paste this into the console to finish connecting.', 'Value': {'Fn::GetAtt': ['AccessRole', 'Arn']}},

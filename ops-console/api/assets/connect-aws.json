@@ -7,10 +7,29 @@
    "AllowedPattern": "^[A-Za-z0-9-]{32,64}$",
    "Description": "Your workspace's external ID (shown in the console)."
   },
+  "InstallDocuments": {
+   "Type": "String",
+   "AllowedValues": [
+    "yes",
+    "no"
+   ],
+   "Default": "yes",
+   "Description": "'no' only if this account and region already have the OpsConsole-* documents (e.g. published by infra/ops-console-ssm/deploy.sh)."
+  },
   "ConsolePrincipal": {
    "Type": "String",
    "AllowedPattern": "^arn:aws:iam::\\d{12}:(role|user)/[A-Za-z0-9+=,.@_/-]+$",
    "Description": "The Ops Console identity allowed to use the role (shown in the console)."
+  }
+ },
+ "Conditions": {
+  "InstallDocuments": {
+   "Fn::Equals": [
+    {
+     "Ref": "InstallDocuments"
+    },
+    "yes"
+   ]
   }
  },
  "Resources": {
@@ -348,6 +367,7 @@
   },
   "OpsConsoleCollectStatus": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-CollectStatus",
     "DocumentType": "Command",
@@ -411,6 +431,7 @@
   },
   "OpsConsoleDeploy": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-Deploy",
     "DocumentType": "Command",
@@ -506,6 +527,7 @@
   },
   "OpsConsoleAppLogs": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-AppLogs",
     "DocumentType": "Command",
@@ -640,6 +662,7 @@
   },
   "OpsConsoleBackups": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-Backups",
     "DocumentType": "Command",
@@ -702,6 +725,7 @@
   },
   "OpsConsoleBackupAction": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-BackupAction",
     "DocumentType": "Command",
@@ -831,6 +855,7 @@
   },
   "OpsConsoleRotateSecret": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-RotateSecret",
     "DocumentType": "Command",
@@ -1002,6 +1027,7 @@
   },
   "OpsConsoleCreateApp": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-CreateApp",
     "DocumentType": "Command",
@@ -1332,6 +1358,7 @@
   },
   "OpsConsoleAppDetail": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-AppDetail",
     "DocumentType": "Command",
@@ -1418,6 +1445,7 @@
   },
   "OpsConsoleSecurity": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-Security",
     "DocumentType": "Command",
@@ -1634,6 +1662,7 @@
   },
   "OpsConsoleSshKeys": {
    "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
    "Properties": {
     "Name": "OpsConsole-SshKeys",
     "DocumentType": "Command",
