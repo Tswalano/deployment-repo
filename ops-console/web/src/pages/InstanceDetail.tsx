@@ -170,6 +170,8 @@ export function InstanceDetail() {
           <>
           <span className={`${stateTone(i.ec2State ?? (s ? 'running' : null))} hidden sm:inline-flex`}>{i.ec2State ?? (s ? 'running' : 'unknown')}</span>
           <PowerControls instance={i} isConsoleHost={!!i.isConsoleHost} dryRun={!!data?.powerDryRun} onDone={(m) => { setPowerMsg(m); void refresh(); }} />
+          <Link to={`/instances/${i.id}/access`} className="btn-secondary" title="SSH access, keys, logins, OS updates">Access</Link>
+          {user?.role === 'admin' && !user.isDemo && i.ec2State !== 'stopped' && <Link to={`/instances/${i.id}/terminal`} className="btn-secondary hidden md:inline-flex">Terminal</Link>}
           {user?.role === 'admin' && !user.isDemo && <Link to={`/instances/${i.id}/new-app`} className="btn-primary hidden md:inline-flex">New app</Link>}
           <button className="btn-secondary" onClick={() => void refresh()} disabled={refreshing}>
             <svg viewBox="0 0 24 24" className={`h-4 w-4 ${refreshing ? 'animate-spin motion-reduce:animate-none' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5" /></svg>

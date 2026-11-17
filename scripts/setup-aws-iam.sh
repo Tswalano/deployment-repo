@@ -32,6 +32,7 @@ aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-cons
 aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-secrets --policy-document "$(render instance-ops-console-secrets.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-schedule-costs --policy-document "$(render instance-ops-console-schedule-costs.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-apps --policy-document "$(render instance-ops-console-apps.json)"
+aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-access --policy-document "$(render instance-ops-console-access.json)"
 aws iam put-role-policy --role-name lendify-instance-role --policy-name send-email-as-ops --policy-document "$(render instance-send-email-ops.json)"
 aws ec2 create-tags --region "$REGION" --resources "$INSTANCE_ID" --tags Key=ops-console,Value=managed
 aws iam attach-role-policy --role-name lendify-instance-role --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore

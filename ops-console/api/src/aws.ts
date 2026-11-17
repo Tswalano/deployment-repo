@@ -1,4 +1,4 @@
-import { DescribeInstancesCommand, EC2Client, RebootInstancesCommand, StartInstancesCommand, StopInstancesCommand, TerminateInstancesCommand } from '@aws-sdk/client-ec2';
+import { AuthorizeSecurityGroupIngressCommand, DescribeInstancesCommand, DescribeSecurityGroupsCommand, EC2Client, RevokeSecurityGroupIngressCommand, RebootInstancesCommand, StartInstancesCommand, StopInstancesCommand, TerminateInstancesCommand } from '@aws-sdk/client-ec2';
 import { CostExplorerClient, GetCostAndUsageCommand, GetCostForecastCommand } from '@aws-sdk/client-cost-explorer';
 import { ChangeResourceRecordSetsCommand, GetChangeCommand, ListHostedZonesByNameCommand, ListResourceRecordSetsCommand, Route53Client } from '@aws-sdk/client-route-53';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -6,7 +6,7 @@ import { GetScheduleCommand, ListSchedulesCommand, SchedulerClient, UpdateSchedu
 import type { RawCostRow } from './costs';
 import type { RawSchedule } from './schedule';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { DeleteParameterCommand, DescribeDocumentCommand, DescribeInstanceInformationCommand, DescribeParametersCommand, GetParameterCommand, PutParameterCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { DeleteParameterCommand, DescribeDocumentCommand, DescribeInstanceInformationCommand, DescribeParametersCommand, GetParameterCommand, PutParameterCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient, StartSessionCommand, TerminateSessionCommand } from '@aws-sdk/client-ssm';
 
 /** Everything the console needs from AWS, behind an interface so tests can use a fake. */
 export interface AwsProvider {
@@ -50,6 +50,14 @@ export interface AwsProvider {
     deleteARecord?(zoneId: string, name: string, ip: string): Promise<void>;
     /** The EC2 instance this console runs on (IMDSv2), or null when not on EC2. */
     selfInstanceId?(): Promise<string | null>;
+    /** Start a Session Manager shell (default SSM-SessionManagerRunShell document) on an instance. */
+    startSession?(region: string, id: string): Promise<{ sessionId: string; streamUrl: string; tokenValue: string }>;
+    terminateSession?(region: string, sessionId: string): Promise<void>;
+    /** Security groups attached to an instance, with their SSH (port 22) rules. */
+    sshAccess?(region: string, id: string): Promise<SecurityGroupAccess[]>;
+    /** Open / close port 22 for one CIDR on a security group (only groups tagged ops-console=managed, by IAM). */
+    authorizeSsh?(region: string, groupId: string, cidr: string, description: string): Promise<void>;
+    revokeSsh?(region: string, groupId: string, cidr: string): Promise<void>;
     /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
     presignGet(region: string, bucket: string, key: string, seconds: number, filename: string): Promise<string>;
 }
@@ -75,6 +83,16 @@ export interface Ec2Info {
     publicIp?: string | null;
 }
 
+export interface SshRule { cidr: string; description: string | null }
+export interface SecurityGroupAccess {
+    groupId: string; name: string; managedTag: boolean;
+    /** Rules that let port 22 in (also all-traffic rules). */
+    rules: SshRule[];
+    prefixLists: { id: string; description: string | null }[];
+    /** Rules that open port 22 to everyone (0.0.0.0/0 or ::/0). */
+    openToWorld: boolean;
+}
+
 export interface DnsRecord { name: string; type: string; values: string[] }
 
 const ec2: Record<string, EC2Client> = {};
@@ -91,6 +109,25 @@ const s3: Record<string, S3Client> = {};
 const s3c = (r: string) => (s3[r] ??= new S3Client({ region: r }));
 let selfId: string | null | undefined;
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+const sshPermission = (cidr: string, description?: string) => {
+    const v6 = cidr.includes(':');
+    const range = description ? { Description: description } : {};
+    return { IpProtocol: 'tcp', FromPort: 22, ToPort: 22, ...(v6 ? { Ipv6Ranges: [{ CidrIpv6: cidr, ...range }] } : { IpRanges: [{ CidrIp: cidr, ...range }] }) };
+};
+function sgError(err: unknown, region: string, groupId: string): string {
+    const name = (err as { name?: string }).name;
+    if (name === 'InvalidPermission.Duplicate') return 'That address already has SSH access on this security group (an existing rule).';
+    if (name === 'UnauthorizedOperation') return `Not permitted: the console may only change security groups tagged ops-console=managed (${groupId} isn't, or the IAM policy ops-console-access is missing).`;
+    if (name === 'RulesPerSecurityGroupLimitExceeded') return 'The security group has reached its rule limit.';
+    return awsErrorMessage(err, region);
+}
+function sessionError(err: unknown, region: string): string {
+    const name = (err as { name?: string }).name;
+    if (name === 'TargetNotConnected') return "The instance isn't connected to Session Manager (is the SSM agent running, and can the instance reach ssmmessages?).";
+    if (name === 'AccessDeniedException') return 'Not permitted: the console may only open terminals on instances tagged ops-console=managed (IAM policy ops-console-access).';
+    return awsErrorMessage(err, region);
+}
 
 /** Turn AWS SDK errors into something a person can act on (some arrive with the message "Unknown"). */
 export function awsErrorMessage(err: unknown, region: string): string {
@@ -306,6 +343,44 @@ export const realAws: AwsProvider = {
             throw err;
         }
     },
+    async startSession(region, id) {
+        const r = await ssmc(region).send(new StartSessionCommand({ Target: id, Reason: 'ops-console terminal' }))
+            .catch((err) => { throw new Error(sessionError(err, region)); });
+        if (!r.SessionId || !r.StreamUrl || !r.TokenValue) throw new Error('Session Manager did not return a session');
+        return { sessionId: r.SessionId, streamUrl: r.StreamUrl, tokenValue: r.TokenValue };
+    },
+    async terminateSession(region, sessionId) {
+        await ssmc(region).send(new TerminateSessionCommand({ SessionId: sessionId })).catch(() => undefined);
+    },
+    async sshAccess(region, id) {
+        const out = await ec2c(region).send(new DescribeInstancesCommand({ InstanceIds: [id] })).catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+        const ids = (out.Reservations?.[0]?.Instances?.[0]?.SecurityGroups ?? []).map((g) => g.GroupId!).filter(Boolean);
+        if (!ids.length) return [];
+        const sgs = await ec2c(region).send(new DescribeSecurityGroupsCommand({ GroupIds: ids })).catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+        return (sgs.SecurityGroups ?? []).map((g) => {
+            const perms = (g.IpPermissions ?? []).filter((p) => p.IpProtocol === '-1' || (p.IpProtocol === 'tcp' && (p.FromPort ?? 0) <= 22 && (p.ToPort ?? 0) >= 22));
+            const rules = perms.flatMap((p) => [
+                ...(p.IpRanges ?? []).map((r) => ({ cidr: r.CidrIp!, description: r.Description ?? null })),
+                ...(p.Ipv6Ranges ?? []).map((r) => ({ cidr: r.CidrIpv6!, description: r.Description ?? null })),
+            ]).filter((r) => r.cidr);
+            return {
+                groupId: g.GroupId!, name: g.GroupName ?? g.GroupId!, managedTag: !!g.Tags?.some((t) => t.Key === 'ops-console' && t.Value === 'managed'),
+                rules, prefixLists: perms.flatMap((p) => (p.PrefixListIds ?? []).map((l) => ({ id: l.PrefixListId!, description: l.Description ?? null }))),
+                openToWorld: rules.some((r) => r.cidr === '0.0.0.0/0' || r.cidr === '::/0'),
+            };
+        });
+    },
+    async authorizeSsh(region, groupId, cidr, description) {
+        await ec2c(region).send(new AuthorizeSecurityGroupIngressCommand({ GroupId: groupId, IpPermissions: [sshPermission(cidr, description)] }))
+            .catch((err) => { throw new Error(sgError(err, region, groupId)); });
+    },
+    async revokeSsh(region, groupId, cidr) {
+        await ec2c(region).send(new RevokeSecurityGroupIngressCommand({ GroupId: groupId, IpPermissions: [sshPermission(cidr)] }))
+            .catch((err) => {
+                if ((err as { name?: string }).name === 'InvalidPermission.NotFound') return;   // already gone
+                throw new Error(sgError(err, region, groupId));
+            });
+    },
     async presignGet(region, bucket, key, seconds, filename) {
         return getSignedUrl(s3c(region), new GetObjectCommand({
             Bucket: bucket, Key: key, ResponseContentDisposition: `attachment; filename="${filename.replace(/[^A-Za-z0-9_.-]/g, '')}"`,
@@ -353,6 +428,15 @@ const dryAware: AwsProvider = {
     async powerAction(region, id, action) {
         return realAws.powerAction!(region, id, action, true);
     },
+    // local test mode: ask EC2 whether the rule change *would* be allowed (DryRun), change nothing
+    async authorizeSsh(region, groupId, cidr, description) {
+        await ec2c(region).send(new AuthorizeSecurityGroupIngressCommand({ GroupId: groupId, IpPermissions: [sshPermission(cidr, description)], DryRun: true }))
+            .catch((err) => { if ((err as { name?: string }).name !== 'DryRunOperation') throw new Error(sgError(err, region, groupId)); });
+    },
+    async revokeSsh(region, groupId, cidr) {
+        await ec2c(region).send(new RevokeSecurityGroupIngressCommand({ GroupId: groupId, IpPermissions: [sshPermission(cidr)], DryRun: true }))
+            .catch((err) => { if (!['DryRunOperation', 'InvalidPermission.NotFound'].includes((err as { name?: string }).name ?? '')) throw new Error(sgError(err, region, groupId)); });
+    },
     async putParameter() { /* local test mode: never write app secrets */ },
     async upsertARecord() { return null; /* local test mode: never change DNS */ },
     async waitDnsChange() { return true; },
@@ -361,6 +445,9 @@ const dryAware: AwsProvider = {
     async runDocument(region, id, document, parameters, timeoutMs) {
         if (document === 'OpsConsole-RotateSecret') {
             return JSON.stringify({ ok: true, kind: parameters?.kind?.[0], target: parameters?.target?.[0], dryRun: true, updated: [], restarted: [], health: {} });
+        }
+        if (document === 'OpsConsole-SshKeys') {
+            return JSON.stringify({ ok: true, action: parameters?.action?.[0], user: parameters?.user?.[0], fingerprint: parameters?.fingerprint?.[0] || 'SHA256:(dry run)', dryRun: true });
         }
         if (document === 'OpsConsole-BackupAction' && parameters?.action?.[0] === 'run') {
             return JSON.stringify({ ok: true, seconds: 0, status: { at: new Date().toISOString(), ok: true, dryRun: true } });

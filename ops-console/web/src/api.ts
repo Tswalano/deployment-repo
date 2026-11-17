@@ -206,6 +206,30 @@ export interface NewAppCreation {
   port: number | null; tls: boolean | null; status: 'running' | 'success' | 'failed'; createdBy: string; createdAt: string; finishedAt: string | null;
 }
 
+export interface SshRule { cidr: string; description: string | null; grantId: number | null; expiresAt: string | null; temporary: boolean }
+export interface SecurityGroupView { groupId: string; name: string; managedTag: boolean; rules: SshRule[]; prefixLists: { id: string; description: string | null }[]; openToWorld: boolean }
+export interface SshGrant { id: number; groupId: string; cidr: string; reason: string | null; grantedBy: string; grantedAt: string; expiresAt: string; revokedAt: string | null; revokedBy: string | null; error: string | null }
+export interface SshAccessView { groups: SecurityGroupView[]; target: string | null; grants: SshGrant[]; simulated: boolean; yourIp: string | null; hours: number[] }
+export interface AuthorizedKey { type: string; bits: number | null; fingerprint: string | null; comment: string; options: boolean; blocked: boolean; error?: string }
+export interface SecuritySnapshot {
+  at: number;
+  os: { name: string | null; id: string | null; version: string | null; release: string | null; kernel: string };
+  updates: {
+    kind: 'release' | 'advisories' | null; current: string | null; currentDate: string | null; newer: { version: string; date: string | null }[];
+    advisories: { id: string; severity: string; package: string }[]; advisoryCount: number; severities: Record<string, number>;
+    command: string | null; error: string | null; rebootRequired: boolean | null; newestKernel: string | null; kernelPending: boolean;
+  };
+  sshd: Record<string, string>;
+  users: { user: string; uid: number; home: string; keys: AuthorizedKey[]; manageable: boolean }[];
+  logins: {
+    accepted: { at: number; user: string; ip: string; method: string; keyType: string | null; fingerprint: string | null }[]; acceptedTotal: number;
+    failed: { ip: string; count: number; count24h: number; last: number; users: string[] }[]; failedTotal: number; failed24h: number; failedIps: number; journal: boolean;
+  };
+  sessions: { user: string; tty: string; since: string; from: string | null }[];
+}
+export interface TerminalSession { id: number; username: string; ip: string | null; simulated: boolean; startedAt: string; endedAt: string | null; endReason: string | null }
+export interface SecurityView { at: string | null; snapshot: SecuritySnapshot | null; terminalSessions: TerminalSession[]; activeTerminals: { username: string; startedAt: string }[] }
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
@@ -304,6 +328,13 @@ export const api = {
     call<Detection>('GET', `/api/github/detect?${new URLSearchParams({ repo, branch, subdir })}`),
   newAppCheck: (id: number, project: string, subdomain: string) =>
     call<NewAppCheck>('GET', `/api/instances/${id}/new-app/check?${new URLSearchParams({ project, subdomain })}`),
+  security: (id: number) => call<SecurityView>('GET', `/api/instances/${id}/security`),
+  refreshSecurity: (id: number) => call<{ at: string; snapshot: SecuritySnapshot }>('POST', `/api/instances/${id}/security/refresh`),
+  sshAccess: (id: number) => call<SshAccessView>('GET', `/api/instances/${id}/ssh-access`),
+  grantSsh: (id: number, b: { ip?: string; hours: number; reason?: string }) => call<{ grant: SshGrant; simulated: boolean }>('POST', `/api/instances/${id}/ssh-access`, b),
+  revokeSsh: (id: number, grantId: number) => call<{ grant: SshGrant }>('DELETE', `/api/instances/${id}/ssh-access/${grantId}`),
+  sshKey: (id: number, b: { action: 'add'; user: string; key: string } | { action: 'remove'; user: string; fingerprint: string }) =>
+    call<{ ok: true; fingerprint: string | null; keys?: number; dryRun?: boolean }>('POST', `/api/instances/${id}/ssh-keys`, b),
   newAppHistory: (id: number) => call<{ creations: NewAppCreation[] }>('GET', `/api/instances/${id}/new-app`).then((r) => r.creations),
   createApp: (id: number, b: NewAppBody) => call<{ deployment: Deployment }>('POST', `/api/instances/${id}/new-app`, b).then((r) => r.deployment),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),

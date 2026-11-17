@@ -1,0 +1,40 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TerminalOnlyOnInstancesTaggedForTheConsole",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:*:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "StringEquals": { "ssm:resourceTag/ops-console": "managed" },
+        "BoolIfExists": { "ssm:SessionDocumentAccessCheck": "true" }
+      }
+    },
+    {
+      "Sid": "TerminalOnlyTheStandardShellDocument",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ssm:*:${ACCOUNT_ID}:document/SSM-SessionManagerRunShell"
+    },
+    {
+      "Sid": "EndOrResumeSessions",
+      "Effect": "Allow",
+      "Action": ["ssm:TerminateSession", "ssm:ResumeSession"],
+      "Resource": "arn:aws:ssm:*:${ACCOUNT_ID}:session/*"
+    },
+    {
+      "Sid": "SshRulesOnlyOnSecurityGroupsTaggedForTheConsole",
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress"],
+      "Resource": "arn:aws:ec2:*:${ACCOUNT_ID}:security-group/*",
+      "Condition": { "StringEquals": { "aws:ResourceTag/ops-console": "managed" } }
+    },
+    {
+      "Sid": "ReadSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeSecurityGroups",
+      "Resource": "*"
+    }
+  ]
+}
