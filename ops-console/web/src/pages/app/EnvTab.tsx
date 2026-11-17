@@ -96,7 +96,7 @@ export function EnvTab({ instanceId, project, isAdmin }: { instanceId: number; p
         <form onSubmit={add} className="card">
           <h2 className="font-medium text-slate-100">Add a variable</h2>
           <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] md:items-end">
-            <div><label className="label" htmlFor="env-k">Name</label><input id="env-k" className="input font-mono" placeholder="STRIPE_SECRET_KEY" value={newKey} onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))} maxLength={64} /></div>
+            <div><label className="label" htmlFor="env-k">Name</label><input id="env-k" className="input font-mono" placeholder="PAYSTACK_SECRET_KEY" value={newKey} onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))} maxLength={64} /></div>
             <div><label className="label" htmlFor="env-v">Value</label><input id="env-v" type="password" className="input font-mono" value={newVal} onChange={(e) => setNewVal(e.target.value)} autoComplete="off" spellCheck={false} /></div>
             <button className="btn-primary" disabled={busy !== null || !/^[A-Z][A-Z0-9_]*$/.test(newKey) || !newVal}>{busy === '__new' ? 'Saving…' : 'Add and restart'}</button>
           </div>
