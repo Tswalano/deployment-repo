@@ -16,6 +16,7 @@ import newapp from './routes/newapp';
 import instances from './routes/instances';
 import failures from './routes/failures';
 import connect from './routes/connect';
+import prepare from './routes/prepare';
 import { setWorkspaceResolver } from './aws';
 import { workspaceProvider } from './connections';
 import { config } from './config';
@@ -56,6 +57,7 @@ export function createApp() {
     app.route('/api/instances', envRoutes);
     app.route('/api', newapp);
     app.route('/api/instances', access);
+    app.route('/api/instances', prepare);
     app.route('/api/ssh-keys', myKeys);
     app.route('/api/instances', apps);
     app.route('/api/instances', instances);

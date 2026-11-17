@@ -15,6 +15,8 @@ process.env.COOKIE_SECURE = 'false';
 process.env.OPS_MULTI_TENANT = '1';
 process.env.PUBLIC_URL = ORIGIN;
 process.env.CONSOLE_PRINCIPAL_ARN = 'arn:aws:iam::111111111111:role/console-host';
+process.env.SERVER_BUNDLE_URL = 'https://ops-console-public-111111111111-af-south-1.s3.af-south-1.amazonaws.com/bundles/' + 'a'.repeat(64) + '.tar.gz';
+process.env.SERVER_BUNDLE_SHA256 = 'a'.repeat(64);
 
 const dist = (m) => require(path.join(__dirname, '..', 'dist', m));
 let pg, app, ip = 0;
@@ -287,4 +289,54 @@ test('usernames: generated from the email or chosen at sign-up; unique; sign in 
     assert.equal((await d.patch('/api/auth/profile', { username: 'dee', displayName: 'Dee Dlamini' })).status, 200);
     const after = (await d.get('/api/auth/me')).json.user;
     assert.deepEqual([after.username, after.displayName], ['dee', 'Dee Dlamini']);
+});
+
+test('prepare a fresh server: only through the customer role; agent password in THEIR account; web ports; pinned bundle; one at a time', async () => {
+    const conn = dist('connections');
+    let trustedExt = null;
+    conn.setAssumer(async (roleArn, externalId) => {
+        if (externalId !== trustedExt) throw new Error('AWS refused');
+        return { accessKeyId: 'AK2', secretAccessKey: 'S', sessionToken: 'T', expiration: new Date(Date.now() + 3600e3), accountId: roleArn.split(':')[4] };
+    });
+    const calls = [];
+    const params = {};
+    conn.setWorkspaceProviderFactory((c) => new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => {
+        calls.push({ account: c.role_arn.split(':')[4], prop: String(prop), args });
+        switch (prop) {
+            case 'documentsReady': return true;
+            case 'listInstances': return [{ id: 'i-0ccccccccccccccc7', name: 'fresh-1', state: 'running', type: 't4g.small', az: 'af-south-1a', publicIp: '203.0.113.7', platform: 'Linux/UNIX', managedTag: false, instanceProfile: null, ssmOnline: true, securityGroups: ['sg-0aa'], launchedAt: null }];
+            case 'describeInstance': return { name: 'fresh-1', state: 'running', type: 't4g.small', az: 'af-south-1a', managedTag: true, publicIp: '203.0.113.7' };
+            case 'ssmOnline': return true;
+            case 'getParameter': return params[args[1]] ?? null;
+            case 'putParameter': params[args[1]] = args[2]; return undefined;
+            case 'sshAccess': return [{ groupId: 'sg-0aa', name: 'web', managedTag: true, rules: [], prefixLists: [], openToWorld: false }, { groupId: 'sg-0bb', name: 'other', managedTag: false, rules: [], prefixLists: [], openToWorld: false }];
+            case 'openWebPorts': return args[1].flatMap((g) => [`${g}:80`, `${g}:443`]);
+            case 'sendDocument': return 'cmd-prep-1';
+            case 'getInvocation': return { status: 'running', detail: 'InProgress', stdout: '', stderr: '' };
+            default: return null;
+        }
+    }) }));
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    trustedExt = (await a.get('/api/aws-connection')).json.connection.externalId;
+    assert.equal((await a.post('/api/aws-connection/verify', { roleArn: 'arn:aws:iam::333333333333:role/OpsConsoleAccess-af-south-1' })).status, 200);
+    const add = await a.post('/api/aws-connection/servers', { awsInstanceId: 'i-0ccccccccccccccc7' });
+    assert.equal(add.status, 200, JSON.stringify(add.json));
+    const id = add.json.instance.id;
+
+    assert.equal((await a.get(`/api/instances/${id}/prepare`)).json.deployment, null);
+    const r = await a.post(`/api/instances/${id}/prepare`, { openWeb: true });
+    assert.equal(r.status, 202, JSON.stringify(r.json));
+    assert.match(params['/apps/ops-dashboard/PGPASSWORD'], /^[A-Za-z0-9_-]{32}$/, 'the agent password is generated and kept in the customer account');
+    assert.deepEqual(r.json.openedWeb, ['sg-0aa:80', 'sg-0aa:443'], 'web ports only on the tagged group');
+    const send = calls.find((x) => x.prop === 'sendDocument');
+    assert.deepEqual([send.args[2], send.args[3]], ['OpsConsole-PrepareServer', { bundleUrl: [process.env.SERVER_BUNDLE_URL], sha256: [process.env.SERVER_BUNDLE_SHA256] }]);
+    assert.ok(calls.every((x) => x.account === '333333333333'), "everything ran in the customer's own account");
+    assert.equal((await a.post(`/api/instances/${id}/prepare`, {})).status, 409, 'one run at a time');
+    const g = (await a.get(`/api/instances/${id}/prepare`)).json;
+    assert.deepEqual([g.deployment.action, g.deployment.status, g.configured], ['prepare', 'running', true]);
+
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+    assert.equal((await b.post(`/api/instances/${id}/prepare`, {})).status, 404, "another workspace's server doesn't exist for you");
 });

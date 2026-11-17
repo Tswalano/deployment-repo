@@ -328,6 +328,8 @@ export const api = {
   pendingDeployments: () => call<{ deployments: Deployment[] }>('GET', '/api/deployments?status=pending').then((r) => r.deployments),
   policy: () => call<{ policy: DeployPolicy; frozenNow: Record<EnvName, PolicyStatus['freeze']> }>('GET', '/api/policy'),
   savePolicy: (p: Partial<DeployPolicy>) => call<{ policy: DeployPolicy; frozenNow: Record<EnvName, PolicyStatus['freeze']> }>('PUT', '/api/policy', p),
+  prepareStatus: (id: number) => call<{ deployment: Deployment | null; configured: boolean }>('GET', `/api/instances/${id}/prepare`),
+  prepareServer: (id: number, openWeb: boolean) => call<{ deployment: Deployment; openedWeb: string[] }>('POST', `/api/instances/${id}/prepare`, { openWeb }),
   deployment: (id: number) => call<{ deployment: Deployment }>('GET', `/api/deployments/${id}`).then((r) => r.deployment),
   appDetail: (id: number, project: string, fetch = false) =>
     call<{ detail: AppDetailData; dbSeries: DbPoint[]; fetchedAt: string }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/detail${fetch ? '?fetch=1' : ''}`),

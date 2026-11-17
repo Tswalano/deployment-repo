@@ -103,3 +103,8 @@ KEYS_PARAMS='{
   "temporary":   {"type": "String", "default": "no", "allowedValues": ["yes", "no"]}
 }'
 upsert OpsConsole-SshKeys ssh-keys.sh "Ops Console: add or remove one public key of a login user (never root; keeps ec2-user's last key)" 60 "$KEYS_PARAMS"
+PREPARE_PARAMS='{
+  "bundleUrl": {"type": "String", "allowedPattern": "^https://ops-console-public-[0-9]{12}-[a-z0-9-]{1,30}[.]s3[.][a-z0-9-]{1,30}[.]amazonaws[.]com/bundles/[0-9a-f]{64}[.]tar[.]gz$"},
+  "sha256":    {"type": "String", "allowedPattern": "^[0-9a-f]{64}$"}
+}'
+upsert OpsConsole-PrepareServer prepare-server.sh "Ops Console: install what the console needs on a fresh Amazon Linux 2023 server (safe to re-run)" 1800 "$PREPARE_PARAMS"

@@ -353,8 +353,22 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
   - publish the template with `infra/saas/publish-template.sh`;
   - set `CONNECT_TEMPLATE_URL`;
   - `CONSOLE_PRINCIPAL_ARN` overrides the identity customers trust (default: the console's own role).
-- **Not yet:** preparing a fresh server (agent, nginx, Node, Postgres, pipeline) is Phase 12b-2, and GitHub per
-  workspace plus apps on the customer's own domain are 12b-3.
+- **Preparing a fresh server (12b-2):** a customer server without the status agent shows **Prepare server** on its
+  page. `OpsConsole-PrepareServer` (Amazon Linux 2023, safe to re-run) installs:
+  - nginx, git, certbot, the newest Node.js available, and PostgreSQL 15 (password logins, generated postgres
+    password in `~/.pgpass`);
+  - a swap file on small servers;
+  - the console's server files from a release bundle into `/opt/deploy`, the status agent and backups.
+
+  Three safeguards:
+  - **The bundle is verified:** `infra/saas/build-bundle.sh` builds it reproducibly and names it by its SHA-256. The
+    console passes the URL and checksum (`SERVER_BUNDLE_URL`, `SERVER_BUNDLE_SHA256`, printed by
+    `publish-template.sh`), and the server checks the checksum before unpacking.
+  - **The agent's password stays with the customer:** the console generates it and stores it in their account
+    (`/apps/ops-dashboard/PGPASSWORD`).
+  - **Web ports are optional:** 80/443 are opened only on the server's console-tagged security group, and only if the
+    customer ticks the box.
+- **Not yet (12b-3):** GitHub per workspace, and apps on the customer's own domain.
 
 ## Repository layout
 

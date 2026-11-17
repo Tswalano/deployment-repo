@@ -17,7 +17,13 @@ if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
   run aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
     "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false"
   run aws s3api put-bucket-policy --bucket "$BUCKET" --policy \
-    "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"TemplateOnly\",\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::$BUCKET/$KEY\"}]}"
+    "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"TemplateAndBundlesOnly\",\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"s3:GetObject\",\"Resource\":[\"arn:aws:s3:::$BUCKET/$KEY\",\"arn:aws:s3:::$BUCKET/bundles/*\"]}]}"
 fi
 run aws s3 cp ops-console/api/assets/connect-aws.json "s3://$BUCKET/$KEY" --content-type application/json --cache-control "max-age=300"
 echo "CONNECT_TEMPLATE_URL=https://$BUCKET.s3.$REGION.amazonaws.com/$KEY"
+
+# the server release bundle (immutable: named by its checksum)
+BUNDLE="$(bash infra/saas/build-bundle.sh | head -1)"; SHA="$(basename "$BUNDLE" .tar.gz)"
+run aws s3 cp "$BUNDLE" "s3://$BUCKET/bundles/$SHA.tar.gz" --content-type application/gzip --cache-control "max-age=31536000, immutable"
+echo "SERVER_BUNDLE_URL=https://$BUCKET.s3.$REGION.amazonaws.com/bundles/$SHA.tar.gz"
+echo "SERVER_BUNDLE_SHA256=$SHA"
