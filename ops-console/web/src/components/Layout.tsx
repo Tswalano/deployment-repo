@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NoWorkspace } from '../pages/Team';
 import { Onboarding } from '../pages/Onboarding';
+import { Footer } from './Footer';
 import { useTheme } from '../theme';
 import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
 
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
-const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/installed'];
+const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/installed', '/billing', '/billing/return'];
 
 type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; mobile?: boolean; group?: 'Operations' | 'Administration'; icon: JSX.Element };
 
@@ -166,6 +167,8 @@ export function Layout() {
     api.instances().then((l) => setSetupMode(l.length === 0)).catch(() => setSetupMode(false));
   }, [user, site.multiTenant]);
   const { pathname } = useLocation();
+  const [bill, setBill] = useState<{ active: boolean; reason: string | null } | null>(null);
+  useEffect(() => { if (user && site.multiTenant && user.workspaceId != null) api.billing().then((b) => setBill({ active: b.active, reason: b.reason })).catch(() => undefined); }, [user, site.multiTenant, pathname]);
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   const [alerts, setAlerts] = useState({ open: 0, critical: 0 });
   const [localMode, setLocalMode] = useState(false);
@@ -185,7 +188,10 @@ export function Layout() {
   const current = wss.find((w) => w.id === user.workspaceId);
   const trialDays = current?.plan === 'trial' && current.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(current.trialEndsAt) - Date.now()) / 86400e3)) : null;
   // with many customers the global Users page becomes the workspace's Team page (all members see it)
-  const TABS_HERE = site.multiTenant ? TABS.map((t) => (t.to === '/users' ? { ...t, to: '/team', label: 'Team', admin: false } : t)) : TABS;
+  const TABS_HERE = site.multiTenant
+    ? [...TABS.map((t) => (t.to === '/users' ? { ...t, to: '/team', label: 'Team', admin: false } : t)),
+       { to: '/billing', label: 'Billing', group: 'Administration' as const, admin: true, icon: <Icon d="M3 7h18v12H3zM3 11h18M7 15h3" /> }]
+    : TABS;
   const tabs = TABS_HERE.filter((t) => (!t.admin || user.role === 'admin') && (!t.deployer || ((user.role === 'admin' || user.role === 'deployer') && !user.isDemo)));
   const badge = (t: Tab) => t.to === '/alerts' && alerts.open > 0 && (
     <span className={`num ml-0.5 rounded-full px-1.5 text-2xs font-semibold ${alerts.critical ? 'bg-rose-500 text-white' : 'bg-amber-400 text-ink-950'}`}>{alerts.open}</span>
@@ -198,6 +204,12 @@ export function Layout() {
           Local test mode: live data from AWS, but deploys and “Back up now” are simulated and notifications are only logged.
         </div>
       )}
+      {bill && !bill.active && (
+        <div className="border-b border-rose-500/30 bg-rose-500/10 px-4 py-2 text-center text-xs text-rose-200">
+          Read-only: {bill.reason} Your servers and apps keep running.{' '}
+          {user.role === 'admin' && <NavLink to="/billing" className="underline underline-offset-2">Go to Billing</NavLink>}
+        </div>
+      )}
       {site.multiTenant && user.email && !user.emailVerified && (
         <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-200">
           Confirm your email: we sent a link to {user.email}.{' '}
@@ -206,7 +218,7 @@ export function Layout() {
       )}
       {trialDays != null && !setup && (   /* during setup the onboarding page shows the trial itself */
         <div className="border-b border-indigo-400/20 bg-indigo-500/10 px-4 py-2 text-center text-xs text-indigo-200">
-          Free trial: {trialDays === 0 ? 'ends today' : `${trialDays} day${trialDays === 1 ? '' : 's'} left`}. Plans and billing arrive soon; nothing is charged during the trial.
+          Free trial: {trialDays === 0 ? 'ends today' : `${trialDays} day${trialDays === 1 ? '' : 's'} left`}. Nothing is charged during the trial. {user.role === 'admin' && <NavLink to="/billing" className="underline underline-offset-2">Choose a plan</NavLink>}
         </div>
       )}
       {user.isDemo && (
@@ -225,6 +237,7 @@ export function Layout() {
           </NavLink>
           <div className="ml-auto flex items-center gap-2">
             {setup && <NavLink to="/team" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Team</NavLink>}
+            {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Billing</NavLink>}
             {setup && user.role === 'admin' && <NavLink to="/settings" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Settings</NavLink>}
             <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
@@ -246,6 +259,7 @@ export function Layout() {
       <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
         {setup && pathname === '/' ? <Onboarding /> : <Outlet />}
       </main>
+      <Footer />
 
       {/* Phones: only the views that make sense on a small screen */}
       {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">

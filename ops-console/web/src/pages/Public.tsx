@@ -3,7 +3,6 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Alert } from '../components/ui';
-import { PLANS } from '../plans';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong. Try again.');
 
@@ -29,108 +28,6 @@ function FormShell({ title, sub, children }: { title: string; sub?: ReactNode; c
         {sub && <p className="mt-2 text-center text-sm text-slate-400">{sub}</p>}
         <div className="mt-6">{children}</div>
       </div>
-    </div>
-  );
-}
-
-const FEATURES: [string, string][] = [
-  ['Deploy from GitHub', 'Pick a repository and a subdomain. It builds, starts and gets HTTPS, and every push to your branch deploys by itself, with automatic rollback if the new version is unhealthy.'],
-  ['Know when something breaks', 'Health checks every minute, uptime history, and alerts for downtime, disk, memory, certificates and failed deploys, by email, Slack or Discord.'],
-  ['Backups you can trust', 'Nightly database backups that are restore-tested automatically, with one-click downloads.'],
-  ['Get onto your server safely', 'A browser terminal with no open SSH port, and temporary, auto-expiring SSH access for your own laptop.'],
-  ['Costs under control', "See this month's AWS bill and forecast in Rand or dollars, get budget alerts, and stop servers on a schedule overnight."],
-  ['Built for teams', 'Invite your team with roles, require approvals for production deploys, set freeze windows, and keep a full audit log.'],
-];
-
-export function Landing() {
-  const { site } = useAuth();
-  return (
-    <div className="min-h-screen">
-      <header className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
-        <Brand />
-        <nav className="ml-auto flex items-center gap-2">
-          <a href="#pricing" className="hidden px-3 py-2 text-sm text-slate-400 hover:text-slate-200 sm:inline">Pricing</a>
-          <Link to="/login" className="btn-ghost">Sign in</Link>
-          <Link to="/signup" className="btn-primary">Start free trial</Link>
-        </nav>
-      </header>
-
-      <section className="mx-auto max-w-4xl px-4 pb-16 pt-14 text-center sm:px-6 sm:pt-20">
-        <p className="eyebrow justify-center text-indigo-300">Your own Heroku, on your own AWS</p>
-        <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-100 sm:text-5xl">Run your apps on your AWS servers, without the DevOps job</h1>
-        <p className="mx-auto mt-5 max-w-2xl text-base text-slate-400 sm:text-lg">
-          {site.productName} deploys your Node.js apps from GitHub to EC2 servers in your own AWS account, watches them, backs them up and lets your team in safely. You keep full control and pay AWS directly; we never hold your servers hostage.
-        </p>
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <Link to="/signup" className="btn-primary px-5 py-2.5">Start your {site.trialDays}-day free trial</Link>
-          <a href="#how" className="btn-secondary px-5 py-2.5">How it works</a>
-        </div>
-        <p className="mt-3 text-xs text-slate-500">No card needed for the trial.</p>
-      </section>
-
-      <section className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map(([t, d]) => (
-            <div key={t} className="card">
-              <h3 className="font-medium text-slate-100">{t}</h3>
-              <p className="mt-2 text-sm text-slate-400">{d}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section id="how" className="mx-auto max-w-4xl px-4 pb-16 sm:px-6">
-        <h2 className="text-center text-2xl font-semibold text-slate-100">How it works</h2>
-        <ol className="mt-8 grid gap-4 sm:grid-cols-3">
-          {[['Sign up', 'Create your workspace and invite your team.'],
-            ['Connect AWS', 'One click creates a narrowly scoped access role in your AWS account. Delete it any time to disconnect.'],
-            ['Deploy', 'Pick a server and a GitHub repository. Your app is live with HTTPS in minutes.']].map(([t, d], i) => (
-            <li key={t} className="card">
-              <span className="num grid h-7 w-7 place-items-center rounded-full bg-indigo-500/15 text-sm text-indigo-300">{i + 1}</span>
-              <h3 className="mt-3 font-medium text-slate-100">{t}</h3>
-              <p className="mt-1 text-sm text-slate-400">{d}</p>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      <section id="pricing" className="mx-auto max-w-4xl px-4 pb-16 sm:px-6">
-        <h2 className="text-center text-2xl font-semibold text-slate-100">Pricing</h2>
-        <p className="mt-2 text-center text-sm text-slate-400">Start with a {site.trialDays}-day free trial. Your AWS servers are billed by AWS, separately.</p>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2">
-          {PLANS.map((p) => (
-            <div key={p.id} className={`card flex flex-col ${'highlight' in p && p.highlight ? 'border-indigo-400/50' : ''}`}>
-              <div className="flex items-baseline justify-between">
-                <h3 className="font-medium text-slate-100">{p.name}</h3>
-                {'highlight' in p && p.highlight && <span className="pill-info">most popular</span>}
-              </div>
-              <p className="mt-1 text-sm text-slate-400">{p.blurb}</p>
-              <p className="mt-4"><span className="num text-3xl font-semibold text-slate-100">R{p.price}</span><span className="text-sm text-slate-500"> / month</span></p>
-              <ul className="mt-4 flex-1 space-y-2 text-sm text-slate-300">
-                {p.features.map((f) => <li key={f} className="flex gap-2"><span className="text-emerald-300">✓</span>{f}</li>)}
-              </ul>
-              <Link to={`/signup?plan=${p.id}`} className={`${'highlight' in p && p.highlight ? 'btn-primary' : 'btn-secondary'} mt-6`}>Start free trial</Link>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-3xl px-4 pb-20 sm:px-6">
-        <h2 className="text-center text-2xl font-semibold text-slate-100">Questions</h2>
-        <div className="mt-6 space-y-3">
-          {[['Who pays for the servers?', 'You do, directly to AWS, in your own account. We only charge for the console.'],
-            ['Can you get into my AWS account?', 'Only through the access role you create, which is limited to what the console needs (running its own fixed commands on servers you tag, reading costs, managing DNS records for your apps). Deleting the role cuts us off immediately.'],
-            ['What if I stop paying or leave?', 'Your servers and apps keep running: they live in your AWS account. The workspace becomes read-only until you subscribe again.'],
-            ['What can I deploy?', 'Node.js web apps today. Static front-ends (React, Vite) and more runtimes are on the way.']].map(([q, a]) => (
-            <details key={q} className="card group">
-              <summary className="cursor-pointer list-none font-medium text-slate-100">{q}</summary>
-              <p className="mt-2 text-sm text-slate-400">{a}</p>
-            </details>
-          ))}
-        </div>
-      </section>
-
-      <footer className="border-t border-ink-700 py-8 text-center text-xs text-slate-500">© {new Date().getFullYear()} {site.productName}</footer>
     </div>
   );
 }

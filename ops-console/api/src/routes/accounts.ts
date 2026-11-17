@@ -1,4 +1,5 @@
 import { Context, Hono } from 'hono';
+import { checkLimit } from '../billing';
 import { getCookie } from 'hono/cookie';
 import { cleanEmail, suggestUsername, usernameTaken, USERNAME_RE, acceptInvite, createWorkspace, forgotPassword, invite, inviteInfo, myWorkspaces, removeMember, renameWorkspace, resetPassword,
     sendVerification, setMemberRole, signUp, team, verifyEmail } from '../accounts';
@@ -132,6 +133,7 @@ teamRoutes.post('/invites', requireRole('admin'), denyDemo, rateLimit(30, 60 * 6
     const u = c.get('user')!;
     const b = await c.req.json().catch(() => ({}));
     try {
+        await checkLimit(u.workspaceId!, 'members');
         const r = await invite(u.workspaceId!, { id: u.id, name: u.displayName || u.username }, b.email, b.role);
         await audit({ id: u.id, username: u.username }, 'team.invite', r.email, { role: r.role }, c.get('ip'));
         return c.json({ ok: true, ...r });

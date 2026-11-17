@@ -1,4 +1,5 @@
 import { Context, Hono } from 'hono';
+import { checkLimit } from '../billing';
 import { audit } from '../audit';
 import { InstanceRow } from '../collector';
 import { db } from '../db';
@@ -35,6 +36,7 @@ newapp.post('/instances/:id/new-app', requireRole('admin'), denyDemo, rateLimit(
     const user = c.get('user')!;
     try {
         const v = validate(await c.req.json().catch(() => ({})));
+        await checkLimit(user.workspaceId ?? 1, 'apps');
         const d = await createApp(i, v, user);
         await audit({ id: user.id, username: user.username }, 'app.create', `${v.project} on ${i.name}`,
             { repo: v.repo, branch: v.branch, domain: `${v.subdomain}.${await appsDomain()}`, db: v.db, deployment: d.id, override: v.override || undefined }, c.get('ip'));

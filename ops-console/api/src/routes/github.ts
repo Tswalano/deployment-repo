@@ -77,6 +77,31 @@ github.delete('/', requireRole('admin'), denyDemo, appManager, async (c) => {
 });
 
 // ------------------------------------------------------------------ installing the app on a customer's GitHub (multi-customer)
+/** Link existing installations by signing in with GitHub (e.g. after moving the single-team console to multi-customer). */
+github.post('/authorize', requireRole('admin'), denyDemo, async (c) => {
+    const cfg = await githubConfig();
+    if (!cfg?.clientId) return c.json({ error: 'The GitHub App has no OAuth client set up yet (platform admin: Settings → GitHub).' }, 409);
+    const state = newState();
+    await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('github_install_state', $1, $2)
+                      ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+        [JSON.stringify({ state, at: Date.now() }), c.get('user')!.username]);
+    const q = new URLSearchParams({ client_id: cfg.clientId, state, redirect_uri: `${config.publicUrl}/github/installed` });
+    return c.json({ url: `https://github.com/login/oauth/authorize?${q}` });
+});
+
+/** Platform admin: give an existing GitHub App (created before installation linking) its OAuth client. */
+github.put('/oauth', requireRole('admin'), denyDemo, appManager, async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    const clientId = String(b.clientId ?? '').trim(), clientSecret = String(b.clientSecret ?? '').trim();
+    if (!/^(Iv[0-9.]+[A-Za-z0-9]{8,30}|[A-Za-z0-9]{16,40})$/.test(clientId) || !/^[A-Za-z0-9]{30,80}$/.test(clientSecret)) return c.json({ error: 'Paste the Client ID and a Client secret from the app\'s settings page on GitHub.' }, 400);
+    const cfg = await githubConfig();
+    if (!cfg) return c.json({ error: 'GitHub is not connected.' }, 409);
+    await saveGithubConfig({ ...cfg, clientId, clientSecret });
+    const user = c.get('user')!;
+    await audit({ id: user.id, username: user.username }, 'github.oauth', cfg.slug, { clientId }, c.get('ip'));
+    return c.json({ ok: true, callbackUrl: `${config.publicUrl}/github/installed` });
+});
+
 /** A one-time install link: GitHub sends the person back to /github/installed with ?code&installation_id&state. */
 github.post('/install', requireRole('admin'), denyDemo, async (c) => {
     const cfg = await githubConfig();
@@ -95,7 +120,7 @@ github.post('/installations', requireRole('admin'), denyDemo, rateLimit(10, 10 *
     if (!st || st.state !== b.state || Date.now() - st.at > 3_600_000) return c.json({ error: 'This install link has expired or was not started here. Start again from Settings → GitHub.' }, 400);
     const user = c.get('user')!;
     try {
-        const r = await linkInstallation(String(b.code ?? ''), Number(b.installationId), user.username);
+        const r = await linkInstallation(String(b.code ?? ''), b.installationId ? Number(b.installationId) : null, user.username);
         await db().query("DELETE FROM settings WHERE key = 'github_install_state'");
         repoCache.delete(user.workspaceId ?? 0);
         await audit({ id: user.id, username: user.username }, 'github.install', r.account, { installationId: Number(b.installationId) }, c.get('ip'));

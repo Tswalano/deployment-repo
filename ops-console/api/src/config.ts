@@ -44,6 +44,8 @@ export const config = {
     /** Server release bundle for OpsConsole-PrepareServer (from infra/saas/publish-template.sh). */
     serverBundleUrl: process.env.SERVER_BUNDLE_URL || '',
     /** Multi-customer mode: emails of the people who run the platform (they set up the shared GitHub App). */
+    /** Paystack secret key (multi-customer billing); test keys start with sk_test_. */
+    paystackSecret: process.env.PAYSTACK_SECRET_KEY || '',
     platformAdmins: (process.env.PLATFORM_ADMINS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     serverBundleSha256: process.env.SERVER_BUNDLE_SHA256 || '',
 };

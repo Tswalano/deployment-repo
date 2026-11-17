@@ -8,6 +8,7 @@ import { connection, connectionView, consolePrincipal, disconnect, ensureConnect
 import { db } from '../db';
 import { DeployError } from '../deploys';
 import { workspaceAppsDomain } from '../newapp';
+import { checkLimit } from '../billing';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
 
 /** Connect a workspace's own AWS account (multi-customer mode). Mounted at /api/aws-connection. */
@@ -104,6 +105,7 @@ connect.post('/servers', ...admin, rateLimit(20, 10 * 60_000, (c) => `addserver:
     try {
         const s = (await aws().listInstances!(conn.region)).find((x) => x.id === id);
         if (!s) return c.json({ error: 'That server was not found in your account.' }, 404);
+        if (!(await db().query('SELECT 1 FROM instances WHERE aws_instance_id = $1', [id])).rows.length) await checkLimit(user.workspaceId!, 'servers');
         if (/windows/i.test(s.platform)) return c.json({ error: 'Only Linux servers are supported.' }, 409);
         const steps: string[] = [];
         if (!s.managedTag) { await aws().tagManaged!(conn.region, id, s.securityGroups); steps.push('tagged ops-console=managed'); }

@@ -1,0 +1,102 @@
+import { Context, Hono, MiddlewareHandler } from 'hono';
+import { audit } from '../audit';
+import { billingEnabled, cancel, checkout, confirmCheckout, handlePaystackEvent, manageLink, PLANS, PlanId, standing, standingOf, verifyPaystackSignature, WorkspaceBilling } from '../billing';
+import { config } from '../config';
+import { db } from '../db';
+import { DeployError } from '../deploys';
+import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
+
+const billing = new Hono<Env>();
+const fail = (c: Context<Env>, err: unknown) => err instanceof DeployError ? c.json({ error: err.message, code: err.code }, err.status) : c.json({ error: 'Billing is unavailable right now.' }, 502);
+const multiOnly: MiddlewareHandler<Env> = async (c, next) => (config.multiTenant ? next() : c.json({ error: 'Not found' }, 404));
+
+billing.get('/', multiOnly, requireRole('viewer'), async (c) => {
+    const id = c.get('user')!.workspaceId!;
+    const { rows: [w] } = await db().query<WorkspaceBilling>('SELECT * FROM workspaces WHERE id = $1', [id]);
+    const s = standing(w);
+    const n = async (q: string, args: unknown[] = []) => (await db().query<{ n: number }>(q, args)).rows[0].n;
+    const usage = {
+        servers: await n('SELECT count(*)::int AS n FROM instances'),
+        apps: (await db().query<{ last_status: { apps?: unknown[] } | null }>('SELECT last_status FROM instances')).rows.reduce((a, r) => a + (r.last_status?.apps?.length ?? 0), 0),
+        members: await n('SELECT count(*)::int AS n FROM workspace_members WHERE workspace_id = $1', [id]),
+    };
+    const lim = (x: number) => (Number.isFinite(x) ? x : null);
+    return c.json({
+        enabled: billingEnabled(), plan: w.plan, status: w.billing_status, trialEndsAt: w.trial_ends_at, currentPeriodEnd: w.current_period_end,
+        graceUntil: w.grace_until, active: s.active, reason: s.reason, hasSubscription: !!w.subscription_code, billingEmail: w.billing_email,
+        limits: { servers: lim(s.limits.servers), apps: lim(s.limits.apps), members: lim(s.limits.members), approvals: s.limits.approvals }, usage,
+        plans: (Object.keys(PLANS) as PlanId[]).map((p) => ({ id: p, name: PLANS[p].name, price: PLANS[p].amount / 100, limits: PLANS[p].limits })),
+    });
+});
+
+billing.post('/checkout', multiOnly, requireRole('admin'), denyDemo, rateLimit(10, 10 * 60_000, (c) => `checkout:${c.get('user')!.id}`), async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    const user = c.get('user')!;
+    if (!user.email) return c.json({ error: 'Add an email address to your account first (Account page): Paystack sends receipts there.' }, 409);
+    try {
+        const r = await checkout(user.workspaceId!, b.plan, user.email);
+        await audit({ id: user.id, username: user.username }, 'billing.checkout', b.plan, { reference: r.reference }, c.get('ip'));
+        return c.json(r);
+    } catch (err) { return fail(c, err); }
+});
+
+billing.post('/confirm', multiOnly, requireRole('admin'), denyDemo, async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    const user = c.get('user')!;
+    try {
+        const w = await confirmCheckout(user.workspaceId!, String(b.reference ?? ''));
+        forgetStanding(user.workspaceId!);
+        await audit({ id: user.id, username: user.username }, 'billing.subscribed', w.plan, { reference: b.reference }, c.get('ip'));
+        return c.json({ ok: true, plan: w.plan, status: w.billing_status });
+    } catch (err) { return fail(c, err); }
+});
+
+billing.post('/cancel', multiOnly, requireRole('admin'), denyDemo, async (c) => {
+    const user = c.get('user')!;
+    try {
+        await cancel(user.workspaceId!);
+        forgetStanding(user.workspaceId!);
+        await audit({ id: user.id, username: user.username }, 'billing.cancel', null, {}, c.get('ip'));
+        return c.json({ ok: true });
+    } catch (err) { return fail(c, err); }
+});
+
+billing.get('/manage', multiOnly, requireRole('admin'), denyDemo, async (c) => {
+    try { return c.json({ url: await manageLink(c.get('user')!.workspaceId!) }); } catch (err) { return fail(c, err); }
+});
+
+/** Paystack → console. Public; authenticated by the HMAC-SHA512 signature; each event handled once. */
+billing.post('/paystack', rateLimit(120, 60_000, () => 'paystack-webhook'), async (c) => {
+    const body = await c.req.text();
+    if (!verifyPaystackSignature(body, c.req.header('x-paystack-signature'))) return c.json({ error: 'bad signature' }, 401);
+    let e: { event?: string; data?: Record<string, unknown> };
+    try { e = JSON.parse(body); } catch { return c.json({ error: 'bad json' }, 400); }
+    if (!e.event) return c.json({ ok: true });
+    const fresh = await handlePaystackEvent({ event: e.event, data: e.data ?? {} });
+    return c.json({ ok: true, duplicate: !fresh || undefined });
+});
+
+/**
+ * Multi-customer: a workspace that isn't paid up is read-only. Reads always work; so do signing in, your account,
+ * billing, switching or creating workspaces, and leaving one. Its servers and apps keep running regardless.
+ */
+const allowed = ['/api/auth/', '/api/account/', '/api/billing/', '/api/workspaces'];
+const standingCache = new Map<number, { at: number; active: boolean; reason: string | null }>();
+export const billingGuard: MiddlewareHandler<Env> = async (c, next) => {
+    const user = c.get('user');
+    if (!config.multiTenant || !user?.workspaceId || ['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) return next();
+    const path = c.req.path;
+    if (allowed.some((p) => path.startsWith(p)) || (c.req.method === 'DELETE' && path === `/api/team/members/${user.id}`)) return next();
+    let s = standingCache.get(user.workspaceId);
+    if (!s || Date.now() - s.at > 30_000) {
+        const st = await standingOf(user.workspaceId);
+        s = { at: Date.now(), active: st.active, reason: st.reason };
+        standingCache.set(user.workspaceId, s);
+    }
+    if (!s.active) return c.json({ error: `${s.reason} Your servers and apps keep running.`, code: 'billing_required' }, 402);
+    return next();
+};
+/** After a payment or cancellation, re-check at once. */
+export const forgetStanding = (workspaceId: number) => standingCache.delete(workspaceId);
+
+export default billing;

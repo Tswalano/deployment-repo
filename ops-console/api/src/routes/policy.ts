@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { checkLimit } from '../billing';
 import { audit } from '../audit';
 import { denyDemo, Env, requireRole } from '../middleware';
 import { activeFreeze, deployPolicy, ENVIRONMENTS, saveDeployPolicy, validatePolicy } from '../policy';
@@ -17,6 +18,9 @@ policy.put('/', requireRole('admin'), denyDemo, async (c) => {
     const next = validatePolicy(body, await deployPolicy());
     if (typeof next === 'string') return c.json({ error: next }, 400);
     const user = c.get('user')!;
+    if (Object.values(next.approvals).some(Boolean)) {
+        try { await checkLimit(user.workspaceId ?? 1, 'approvals'); } catch (err) { return c.json({ error: (err as Error).message, code: 'plan_limit' }, 409); }
+    }
     await saveDeployPolicy(next, user.username);
     await audit({ id: user.id, username: user.username }, 'policy.update', 'deploy policy',
         { approvals: next.approvals, rollbackNeedsApproval: next.rollbackNeedsApproval, rollbackAllowedInFreeze: next.rollbackAllowedInFreeze,

@@ -161,23 +161,28 @@ export async function recordDelivery(id: string, event: string, repo: string | n
  * and link the installation ONLY if GitHub lists it among the installations that user can access. (An installation
  * id alone proves nothing: it's a small number anyone could guess.)
  */
-export async function linkInstallation(code: string, installationId: number, by: string): Promise<{ account: string }> {
+export async function linkInstallation(code: string, installationId: number | null, by: string): Promise<{ account: string }> {
     const cfg = await githubConfig();
     if (!cfg?.clientId || !cfg.clientSecret) throw new Error('The GitHub App is not set up for installations yet.');
-    if (!/^[A-Za-z0-9_-]{8,100}$/.test(code) || !Number.isInteger(installationId) || installationId <= 0) throw new Error('Invalid GitHub response.');
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(code) || (installationId !== null && (!Number.isInteger(installationId) || installationId <= 0))) throw new Error('Invalid GitHub response.');
     const t = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'ops-console' },
         body: JSON.stringify({ client_id: cfg.clientId, client_secret: cfg.clientSecret, code }), signal: AbortSignal.timeout(15_000),
     }).then((r) => r.json() as Promise<{ access_token?: string; error_description?: string }>);
     if (!t.access_token) throw new Error(`GitHub didn't confirm the installation (${t.error_description ?? 'no token'}). Install the app again from the console.`);
-    let found: { id: number; account: { login: string; type: string } } | undefined;
-    for (let page = 1; page <= 10 && !found; page++) {
+    // the installations of THIS app that the signed-in GitHub user can access
+    const mine: { id: number; account: { login: string; type: string } }[] = [];
+    for (let page = 1; page <= 10; page++) {
         const r = await gh<{ installations: { id: number; account: { login: string; type: string } }[]; total_count: number }>(`/user/installations?per_page=100&page=${page}`, t.access_token, true);
-        found = r.installations.find((i) => i.id === installationId);
+        mine.push(...r.installations);
         if (r.installations.length < 100) break;
     }
-    if (!found) throw new Error("You don't have access to that GitHub installation.");
-    await db().query(`INSERT INTO github_installations (installation_id, account_login, account_type, linked_by) VALUES ($1, $2, $3, $4)
-                      ON CONFLICT (workspace_id, installation_id) DO UPDATE SET account_login = EXCLUDED.account_login`, [installationId, found.account.login, found.account.type, by]);
-    return { account: found.account.login };
+    // a fresh install links that installation; "Link with GitHub" (no id) links every one this person can access
+    const pick = installationId === null ? mine : mine.filter((i) => i.id === installationId);
+    if (!pick.length) throw new Error(installationId === null ? "Your GitHub account can't access any installation of the app yet: install it first." : "You don't have access to that GitHub installation.");
+    for (const f of pick) {
+        await db().query(`INSERT INTO github_installations (installation_id, account_login, account_type, linked_by) VALUES ($1, $2, $3, $4)
+                          ON CONFLICT (workspace_id, installation_id) DO UPDATE SET account_login = EXCLUDED.account_login`, [f.id, f.account.login, f.account.type, by]);
+    }
+    return { account: pick.map((f) => f.account.login).join(', ') };
 }

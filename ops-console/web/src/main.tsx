@@ -21,8 +21,10 @@ import { Access } from './pages/Access';
 const Terminal = lazy(() => import('./pages/Terminal').then((m) => ({ default: m.Terminal })));
 import { GithubCallback, GithubInstalled } from './components/GithubConnect';
 import { Users } from './pages/Users';
-import { AcceptInvite, ForgotPassword, Landing, ResetPassword, Signup, VerifyEmail } from './pages/Public';
+import { AcceptInvite, ForgotPassword, ResetPassword, Signup, VerifyEmail } from './pages/Public';
+import { Landing } from './pages/Landing';
 import { Team } from './pages/Team';
+import { Billing, BillingReturn } from './pages/Billing';
 import { useLocation } from 'react-router-dom';
 import type { Role } from './api';
 import './index.css';
@@ -67,6 +69,8 @@ function App() {
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />
         <Route path="team" element={<Team />} />
+        <Route path="billing" element={<Protected role="admin"><Billing /></Protected>} />
+        <Route path="billing/return" element={<Protected role="admin"><BillingReturn /></Protected>} />
         <Route path="audit" element={<Protected role="admin"><Audit /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
