@@ -48,6 +48,10 @@ export const config = {
     paystackSecret: process.env.PAYSTACK_SECRET_KEY || '',
     /** Seller details printed on invoices (lines separated by "|"), e.g. company, address, registration and VAT numbers. */
     invoiceSeller: process.env.INVOICE_SELLER || '',
+    /** Legal name shown in the footer, terms and privacy policy (default: the product name). */
+    legalEntity: process.env.LEGAL_ENTITY || '',
+    /** Support and privacy contact shown in the footer and legal pages ('' hides it). */
+    supportEmail: process.env.SUPPORT_EMAIL || '',
     platformAdmins: (process.env.PLATFORM_ADMINS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     serverBundleSha256: process.env.SERVER_BUNDLE_SHA256 || '',
 };

@@ -140,7 +140,7 @@ function SshAccessCard({ instanceId, ssh, error, canWrite, reload, onMessage }:
     <section className="card mb-6 space-y-4">
       <div>
         <h2 className="font-medium text-slate-100">Temporary SSH access</h2>
-        <p className="mt-1 text-sm text-slate-400">Opens port 22 for one address only, and closes it again automatically. You rarely need it: the <b className="font-medium text-slate-300">terminal</b> works without any open port.</p>
+        <p className="mt-1 text-sm text-slate-400">Opens port 22 for one address only, and closes it again automatically. It's rarely needed: the <b className="font-medium text-slate-300">terminal</b> works without any open port.</p>
       </div>
       {error && <Alert>{error}</Alert>}
       {fail && <Alert>{fail}</Alert>}
@@ -150,7 +150,7 @@ function SshAccessCard({ instanceId, ssh, error, canWrite, reload, onMessage }:
       {canWrite && ssh?.target && (
         <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,1.6fr)_auto] md:items-end">
           <div>
-            <label className="label" htmlFor="ssh-ip">Your IP address</label>
+            <label className="label" htmlFor="ssh-ip">IP address</label>
             <input id="ssh-ip" className="input num" placeholder={ssh.yourIp ?? 'e.g. 203.0.113.7'} value={ip} onChange={(e) => setIp(e.target.value)} />
           </div>
           <div>
@@ -174,7 +174,7 @@ function SshAccessCard({ instanceId, ssh, error, canWrite, reload, onMessage }:
           <thead><tr><th className="w-[22%]">Address</th><th className="w-[16%]">Closes in</th><th className="w-[16%]">Opened by</th><th>Reason</th><th className="w-[14%] text-right"></th></tr></thead>
           <tbody>{open.map((g) => (
             <tr key={g.id}>
-              <td className="num">{g.cidr}{ssh?.yourIp && !!g.cidr?.startsWith(`${ssh.yourIp}/`) && <span className="pill-info ml-2">you</span>}</td>
+              <td className="num">{g.cidr}{ssh?.yourIp && !!g.cidr?.startsWith(`${ssh.yourIp}/`) && <span className="ml-2 text-xs text-slate-500">(this browser)</span>}</td>
               <td title={g.expiresAt}>{until(g.expiresAt)}{g.error && <span className="pill-bad ml-2" title={g.error}>close failed, retrying</span>}</td>
               <td>{g.grantedBy}</td>
               <td title={g.reason ?? ''} className="text-slate-400">{g.reason ?? '—'}</td>
@@ -271,8 +271,8 @@ function KeysCard({ instanceId, sec, canWrite, onChanged }: { instanceId: number
               </select>
             </div>
             <div>
-              <label className="label" htmlFor="key-text">Public key (the contents of your .pub file)</label>
-              <textarea id="key-text" rows={3} className="input num text-xs" placeholder="ssh-ed25519 AAAAC3Nza… you@laptop" value={key} onChange={(e) => setKey(e.target.value)} />
+              <label className="label" htmlFor="key-text">Public key (contents of the .pub file)</label>
+              <textarea id="key-text" rows={3} className="input num text-xs" placeholder="ssh-ed25519 AAAAC3Nza… user@laptop" value={key} onChange={(e) => setKey(e.target.value)} />
             </div>
           </div>
           {looksPrivate && <Alert>That is a <b>private</b> key. Never paste it anywhere: use the matching <code>.pub</code> file (for example <code>~/.ssh/id_ed25519.pub</code>).</Alert>}
@@ -481,8 +481,8 @@ function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: Ssh
     try {
       const r = await api.laptopAccess(inst.id, { keyId, route, hours, ip: route === 'direct' ? ip.trim() || undefined : undefined });
       onMessage(r.permanent
-        ? `That key already has permanent access to ${inst.name}, so it was left as it is${r.ipGrant ? '; port 22 is open for your IP until ' + new Date(r.grant.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}.`
-        : `Your laptop can connect until ${new Date(r.grant.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.${r.simulated ? ' (Local test mode: nothing was changed on the server.)' : ''}`);
+        ? `That key already has permanent access to ${inst.name}, so it was left as it is${r.ipGrant ? '; port 22 is open for this IP until ' + new Date(r.grant.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}.`
+        : `The laptop can connect until ${new Date(r.grant.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.${r.simulated ? ' (Local test mode: nothing was changed on the server.)' : ''}`);
       await reload(); await loadKeys();
     } catch (e) { setFail(err(e)); }
     finally { setBusy(false); }
@@ -513,9 +513,9 @@ function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: Ssh
   return (
     <section className="card mb-6 space-y-4">
       <div>
-        <h2 className="font-medium text-slate-100">Connect from your laptop</h2>
+        <h2 className="font-medium text-slate-100">Connect from a laptop</h2>
         <p className="mt-1 text-sm text-slate-400">
-          Use your own SSH key and your own terminal, including tunnels and file copies. The console installs your public key for <b className="font-medium text-slate-300">ec2-user</b>, locked to one route and set to expire. When the time is up it removes the key and closes the port; even if that failed, the server itself refuses the key after it expires.
+          SSH from a laptop with its own key, including tunnels and file copies. The console installs the public key for <b className="font-medium text-slate-300">ec2-user</b>, locked to one route and set to expire. When the time is up it removes the key and closes the port; even if that failed, the server itself refuses the key after it expires.
         </p>
       </div>
       {fail && <Alert>{fail}</Alert>}
@@ -532,16 +532,16 @@ function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: Ssh
               {g.error && <span className="pill-bad" title={g.error}>clean-up failed, retrying</span>}
               <button className="btn-danger ml-auto px-2.5 py-1 text-xs" disabled={busy} onClick={() => void end(g)}>End now</button>
             </div>
-            <Copyable label="1. Add this to ~/.ssh/config on your laptop (once)" text={c.cfg} />
+            <Copyable label="1. Add this to ~/.ssh/config on the laptop (once)" text={c.cfg} />
             <div className="grid gap-3 md:grid-cols-3">
               <Copyable label="2. Connect" text={c.ssh} />
-              <Copyable label="Tunnel: the server's Postgres on your localhost:5433" text={c.tunnel} />
+              <Copyable label="Tunnel: the server's Postgres on localhost:5433" text={c.tunnel} />
               <Copyable label="Copy a file" text={c.copy} />
             </div>
-            {g.route === 'ssm' && <p className="text-xs text-slate-400">Needs the AWS CLI v2 and the Session Manager plugin on your laptop, and AWS credentials allowed to run <code>ssm:StartSession</code> on this instance with the <code>AWS-StartSSHSession</code> document.</p>}
+            {g.route === 'ssm' && <p className="text-xs text-slate-400">Needs the AWS CLI v2 and the Session Manager plugin on the laptop, and AWS credentials allowed to run <code>ssm:StartSession</code> on this instance with the <code>AWS-StartSSHSession</code> document.</p>}
             {ssh?.hostKeys.length ? (
-              <p className="text-xs text-slate-400">The first time, ssh asks you to confirm the server's fingerprint. Only answer yes if it is: {ssh.hostKeys.map((k) => <span key={k.type} className="num ml-1 text-slate-300">{k.type} {k.fingerprint}</span>)}</p>
-            ) : <p className="text-xs text-slate-500">Press Check now (top of the page) to see the server's fingerprints so you can verify the first connection.</p>}
+              <p className="text-xs text-slate-400">On the first connection ssh asks to confirm the server's fingerprint. Answer yes only if it is: {ssh.hostKeys.map((k) => <span key={k.type} className="num ml-1 text-slate-300">{k.type} {k.fingerprint}</span>)}</p>
+            ) : <p className="text-xs text-slate-500">Press Check now (top of the page) to show the server's fingerprints for verifying the first connection.</p>}
           </div>
         );
       })}
@@ -550,9 +550,9 @@ function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: Ssh
         <div className="space-y-3">
           {adding ? (
             <div className="space-y-2">
-              <label className="label" htmlFor="my-key">Your public key: on your laptop, run <code>cat ~/.ssh/id_ed25519.pub</code> (or create one with <code>ssh-keygen -t ed25519</code>) and paste the line</label>
-              <textarea id="my-key" rows={2} className="input num text-xs" placeholder="ssh-ed25519 AAAAC3Nza… you@laptop" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
-              {/PRIVATE KEY/.test(newKey) && <Alert>That is your <b>private</b> key: never paste it anywhere. Use the <code>.pub</code> file.</Alert>}
+              <label className="label" htmlFor="my-key">Public key: on the laptop, run <code>cat ~/.ssh/id_ed25519.pub</code> (or create one with <code>ssh-keygen -t ed25519</code>) and paste the line</label>
+              <textarea id="my-key" rows={2} className="input num text-xs" placeholder="ssh-ed25519 AAAAC3Nza… user@laptop" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+              {/PRIVATE KEY/.test(newKey) && <Alert>That is a <b>private</b> key: it must never be pasted anywhere. Use the <code>.pub</code> file.</Alert>}
               <div className="flex gap-2">
                 <button className="btn-secondary" disabled={!newKey.trim() || /PRIVATE KEY/.test(newKey) || busy} onClick={() => void saveKey()}>Save key</button>
                 {keys.length > 0 && <button className="btn-ghost" onClick={() => setAdding(false)}>Cancel</button>}
@@ -561,7 +561,7 @@ function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: Ssh
           ) : (
             <div className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,1fr)_auto] md:items-end">
               <div>
-                <label className="label" htmlFor="lap-key">Your key</label>
+                <label className="label" htmlFor="lap-key">Key</label>
                 <div className="flex gap-2">
                   <select id="lap-key" className="input" value={keyId ?? ''} onChange={(e) => setKeyId(Number(e.target.value))}>
                     {keys.map((k) => <option key={k.id} value={k.id}>{k.name} ({k.fingerprint.slice(7, 15)}…)</option>)}
@@ -587,7 +587,7 @@ function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: Ssh
               </div>
               <div>
                 {route === 'direct' ? <>
-                  <label className="label" htmlFor="lap-ip">Your IP</label>
+                  <label className="label" htmlFor="lap-ip">IP address</label>
                   <input id="lap-ip" className="input num" placeholder={ssh?.yourIp ?? 'e.g. 203.0.113.7'} value={ip} onChange={(e) => setIp(e.target.value)} />
                 </> : <p className="pb-2 text-xs text-slate-500">No port opens: works from any network, via AWS.</p>}
               </div>

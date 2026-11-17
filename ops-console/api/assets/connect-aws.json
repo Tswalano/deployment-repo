@@ -1,6 +1,6 @@
 {
  "AWSTemplateFormatVersion": "2010-09-09",
- "Description": "Ops Console access (one region). Creates a role only the console can use with your workspace's external ID, an instance profile for your servers, and the console's fixed commands. Delete the stack to disconnect.",
+ "Description": "Ops Console access. Creates a role only the console can use with your workspace's external ID, an instance profile for your servers, and the console's fixed commands. Delete the stack to disconnect.",
  "Parameters": {
   "ExternalId": {
    "Type": "String",
@@ -73,7 +73,7 @@
          "Effect": "Allow",
          "Action": "ssm:SendCommand",
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/OpsConsole-*"
+          "Fn::Sub": "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:document/OpsConsole-*"
          }
         },
         {
@@ -81,7 +81,7 @@
          "Effect": "Allow",
          "Action": "ssm:SendCommand",
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:instance/*"
          },
          "Condition": {
           "StringEquals": {
@@ -113,7 +113,7 @@
          "Sid": "PowerTaggedInstances",
          "Effect": "Allow",
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:instance/*"
          },
          "Condition": {
           "StringEquals": {
@@ -134,10 +134,10 @@
          "Action": "ec2:CreateTags",
          "Resource": [
           {
-           "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+           "Fn::Sub": "arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:instance/*"
           },
           {
-           "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+           "Fn::Sub": "arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:security-group/*"
           }
          ],
          "Condition": {
@@ -179,10 +179,10 @@
          ],
          "Resource": [
           {
-           "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/apps/*"
+           "Fn::Sub": "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:parameter/apps/*"
           },
           {
-           "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ops-console/git-tokens/*"
+           "Fn::Sub": "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:parameter/ops-console/git-tokens/*"
           }
          ]
         },
@@ -195,10 +195,8 @@
          ],
          "Resource": "*",
          "Condition": {
-          "StringEquals": {
-           "kms:ViaService": {
-            "Fn::Sub": "ssm.${AWS::Region}.amazonaws.com"
-           }
+          "StringLike": {
+           "kms:ViaService": "ssm.*.amazonaws.com"
           }
          }
         },
@@ -207,7 +205,7 @@
          "Effect": "Allow",
          "Action": "ssm:StartSession",
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:instance/*"
          },
          "Condition": {
           "StringEquals": {
@@ -223,7 +221,7 @@
          "Effect": "Allow",
          "Action": "ssm:StartSession",
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/SSM-SessionManagerRunShell"
+          "Fn::Sub": "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:document/SSM-SessionManagerRunShell"
          }
         },
         {
@@ -234,7 +232,7 @@
           "ssm:ResumeSession"
          ],
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:session/*"
+          "Fn::Sub": "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:session/*"
          }
         },
         {
@@ -245,7 +243,7 @@
           "ec2:RevokeSecurityGroupIngress"
          ],
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:security-group/*"
          },
          "Condition": {
           "StringEquals": {
@@ -266,7 +264,7 @@
          "Effect": "Allow",
          "Action": "scheduler:UpdateSchedule",
          "Resource": {
-          "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/*"
+          "Fn::Sub": "arn:${AWS::Partition}:scheduler:*:${AWS::AccountId}:schedule/*"
          }
         },
         {
@@ -339,10 +337,8 @@
          "Action": "kms:Decrypt",
          "Resource": "*",
          "Condition": {
-          "StringEquals": {
-           "kms:ViaService": {
-            "Fn::Sub": "ssm.${AWS::Region}.amazonaws.com"
-           }
+          "StringLike": {
+           "kms:ViaService": "ssm.*.amazonaws.com"
           }
          }
         }

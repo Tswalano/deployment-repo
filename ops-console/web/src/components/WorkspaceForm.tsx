@@ -14,7 +14,7 @@ export function WorkspaceForm() {
     <section className="card space-y-4">
       <div>
         <h2 className="font-medium text-slate-100">Workspace</h2>
-        <p className="mt-1 text-sm text-slate-400">Shown to your team and in invitation emails.</p>
+        <p className="mt-1 text-sm text-slate-400">Shown to the team and in invitation emails.</p>
       </div>
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       <form className="flex flex-wrap items-end gap-3" onSubmit={async (e) => {

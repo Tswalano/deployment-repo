@@ -73,7 +73,7 @@ function EmailBlock({ p, onSaved }: { p: Profile; onSaved: () => Promise<void> }
         <div className="text-slate-500">
           {p.emailVerifiedAt ? `Confirmed ${date(p.emailVerifiedAt)}.` : <>Not confirmed yet. {resent ? 'Link sent again.' : <button className="text-slate-300 underline underline-offset-2 hover:text-slate-100" onClick={() => { void api.resendVerification().then(() => setResent(true)); }}>Resend the link</button>}</>}
         </div>
-        <p className="pt-2 text-xs text-slate-500">This is the email you signed up with. Contact support if it needs to change.</p>
+        <p className="pt-2 text-xs text-slate-500">The sign-up email can't be changed here. Contact support to change it.</p>
       </div>
     );
   }
@@ -83,7 +83,7 @@ function EmailBlock({ p, onSaved }: { p: Profile; onSaved: () => Promise<void> }
       try { await api.setEmail(email.trim(), pw); setPw(''); await onSaved(); }
       catch (e2) { setMsg({ tone: 'bad', text: err(e2) }); } finally { setBusy(false); }
     }}>
-      <p className="text-sm text-slate-400">Add an email to reset your password and receive invitations. It can't be changed afterwards.</p>
+      <p className="text-sm text-slate-400">An email is needed for password resets and invitations. It can't be changed afterwards.</p>
       <div className="grid gap-4 sm:grid-cols-2">
         <div><label className="label" htmlFor="em-addr">Email</label><input id="em-addr" type="email" className="input" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         <div><label className="label" htmlFor="em-pw">Current password</label><input id="em-pw" type="password" className="input" autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} /></div>
@@ -107,7 +107,7 @@ function PasswordForm({ onChanged }: { onChanged: () => Promise<void> }) {
     try {
       await api.changePassword(current, next);
       setCurrent(''); setNext(''); setConfirm('');
-      setMsg({ tone: 'ok', text: 'Password changed. Your other sessions were signed out.' });
+      setMsg({ tone: 'ok', text: 'Password changed. Other sessions were signed out.' });
       await onChanged();
     } catch (e2) { setMsg({ tone: 'bad', text: err(e2) }); } finally { setBusy(false); }
   }
@@ -155,16 +155,16 @@ export function Account() {
 
       {p.isDemo ? <div className="mt-6"><Alert tone="warn">This is the read-only demo account: nothing here can be changed.</Alert></div> : (
         <div className="divide-y divide-ink-700 pt-6">
-          <Row title="Profile" sub="Your name and the username you can sign in with.">
+          <Row title="Profile" sub="Name and sign-in username.">
             <ProfileForm p={p} onSaved={saved} />
           </Row>
-          <Row title="Email" sub="Used to sign in, reset your password and receive invitations.">
+          <Row title="Email" sub="Used for sign-in, password resets and invitations.">
             <EmailBlock p={p} onSaved={saved} />
           </Row>
-          <Row title="Password" sub="At least 8 characters; a long passphrase is best. Changing it signs you out everywhere else.">
+          <Row title="Password" sub="At least 8 characters; a long passphrase is best. Changing it ends all other sessions.">
             <PasswordForm onChanged={load} />
           </Row>
-          <Row title="Account" sub="For your records.">
+          <Row title="Account" sub="Account history and access.">
             <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
               <div><dt className="text-slate-500">Member since</dt><dd className="mt-0.5 text-slate-200">{date(p.createdAt)}</dd></div>
               <div><dt className="text-slate-500">Last sign-in</dt><dd className="mt-0.5 text-slate-200">{p.lastLoginAt ? ago(p.lastLoginAt) : '—'}</dd></div>

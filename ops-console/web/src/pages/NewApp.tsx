@@ -305,7 +305,7 @@ export function NewApp() {
                 );
               })}
             </ol>
-            {job.status === 'running' && <p className="text-sm text-slate-400">This usually takes 2–5 minutes. You can leave or refresh this page and come back: progress is kept (the address of this page reopens it), and the result also arrives by email. The steps fill in when the run finishes.</p>}
+            {job.status === 'running' && <p className="text-sm text-slate-400">This usually takes 2–5 minutes. This page can be left or refreshed: progress is kept (the address of this page reopens it), and the result also arrives by email. The steps fill in when the run finishes.</p>}
             {job.status === 'success' && (
               <Alert tone="ok">
                 <a className="underline" href={`https://${summary?.domain ?? creation?.domain ?? domain}`} target="_blank" rel="noreferrer noopener">https://{summary?.domain ?? creation?.domain ?? domain}</a>

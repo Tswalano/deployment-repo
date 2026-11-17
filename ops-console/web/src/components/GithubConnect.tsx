@@ -31,7 +31,7 @@ function WorkspaceGithub({ s, reload }: { s: GithubStatus; reload: () => Promise
             </li>
           ))}
         </ul>
-      ) : <p className="text-sm text-slate-400">Not installed yet. Install the app on your GitHub account or organisation and choose which repositories it may read.</p>}
+      ) : <p className="text-sm text-slate-400">Not installed yet. Install the app on a GitHub account or organisation and choose which repositories it may read.</p>}
       <button className={s.installations?.length ? 'btn-secondary' : 'btn-primary'} disabled={busy} onClick={async () => {
         setBusy(true); setMsg(null);
         try { window.location.assign((await api.githubInstallLink()).url); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); setBusy(false); }
@@ -40,7 +40,7 @@ function WorkspaceGithub({ s, reload }: { s: GithubStatus; reload: () => Promise
               onClick={async () => { setBusy(true); setMsg(null); try { window.location.assign((await api.githubAuthorize()).url); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); setBusy(false); } }}>
         Link existing installations
       </button>
-      <p className="text-xs text-slate-500">GitHub asks you to authorise the app at the end: that's how the console confirms the installation is yours before linking it here.</p>
+      <p className="text-xs text-slate-500">At the end GitHub asks to authorise the app: that confirms the installation belongs to this workspace before it is linked.</p>
     </div>
   );
 }
@@ -84,7 +84,7 @@ export function GithubInstalled() {
   }, []);
   return (
     <div className="mx-auto max-w-lg py-10">
-      {state ? <Alert tone={state.tone}>{state.text}</Alert> : <p className="text-sm text-slate-400">Linking your GitHub installation…</p>}
+      {state ? <Alert tone={state.tone}>{state.text}</Alert> : <p className="text-sm text-slate-400">Linking the GitHub installation…</p>}
       <a className="btn-secondary mt-4" href="/settings#github">Back to Settings</a>
     </div>
   );
@@ -117,7 +117,7 @@ export function GithubConnect() {
       <section id="github" className="card space-y-4">
         <div>
           <h2 className="font-medium text-slate-100">GitHub</h2>
-          <p className="mt-1 text-sm text-slate-400">Deploy from your repositories, and on every push.</p>
+          <p className="mt-1 text-sm text-slate-400">Deploy from GitHub repositories, and on every push.</p>
         </div>
         <WorkspaceGithub s={s} reload={load} />
       </section>
@@ -135,12 +135,12 @@ export function GithubConnect() {
       {!s ? <p className="text-sm text-slate-500">Loading…</p> : !s.connected ? (
         <>
           <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-400">
-            <li>Click <b className="text-slate-200">Connect GitHub</b>. GitHub opens and asks you to create a private app called “Ops Console …” (read-only access to code).</li>
-            <li>GitHub sends you back here. Then install the app and pick the repositories it may see.</li>
+            <li>Click <b className="text-slate-200">Connect GitHub</b>. GitHub opens and asks to create a private app called “Ops Console …” (read-only access to code).</li>
+            <li>GitHub returns here. Then install the app and pick the repositories it may see.</li>
           </ol>
           <div className="flex flex-wrap items-end gap-3">
             <div>
-              <label className="label" htmlFor="gh-org">GitHub organisation <span className="text-slate-600">(optional, leave empty for your personal account)</span></label>
+              <label className="label" htmlFor="gh-org">GitHub organisation <span className="text-slate-600">(optional; leave empty for a personal account)</span></label>
               <input id="gh-org" className="input w-72" value={org} onChange={(e) => setOrg(e.target.value)} placeholder="e.g. Tswalano" />
             </div>
             <button className="btn-primary" onClick={() => void connect()} disabled={busy}><Mark />{busy ? 'Opening GitHub…' : 'Connect GitHub'}</button>
@@ -163,7 +163,7 @@ export function GithubConnect() {
             </a>
             <button className="btn-ghost" onClick={() => void load()}>I’ve installed it: refresh</button>
             <button className="btn-danger ml-auto" onClick={async () => {
-              if (!window.confirm('Disconnect GitHub? Auto-deploys stop. You can then delete the app on GitHub.')) return;
+              if (!window.confirm('Disconnect GitHub? Auto-deploys stop. The app can then be deleted on GitHub.')) return;
               try { const r = await api.githubDisconnect(); setMsg({ tone: 'ok', text: r.deleteAppUrl ? 'Disconnected. To remove the app from GitHub too, open its settings → Advanced → Delete.' : 'Disconnected.' }); await load(); }
               catch (e) { setMsg({ tone: 'bad', text: err(e) }); }
             }}>Disconnect</button>
@@ -181,7 +181,7 @@ export function GithubCallback() {
   const [state, setState] = useState<{ tone: 'ok' | 'bad'; text: string; installUrl?: string } | null>(null);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    if (q.get('installed')) { setState({ tone: 'ok', text: 'GitHub App installed. Your repositories are now available in the console.' }); return; }
+    if (q.get('installed')) { setState({ tone: 'ok', text: 'GitHub App installed. The repositories are now available in the console.' }); return; }
     const code = q.get('code'), st = q.get('state');
     if (!code || !st) { setState({ tone: 'bad', text: 'Missing code from GitHub. Start again from Settings → GitHub.' }); return; }
     api.githubExchange(code, st)

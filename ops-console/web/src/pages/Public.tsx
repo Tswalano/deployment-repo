@@ -60,10 +60,10 @@ export function Signup() {
   }
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   return (
-    <FormShell title="Create your account" sub={`${site.trialDays}-day free trial · no card needed`}>
+    <FormShell title="Create an account" sub={`${site.trialDays}-day free trial · no card needed`}>
       <form onSubmit={submit} className="card space-y-4" noValidate>
         {error && <Alert>{error}</Alert>}
-        <div><label className="label" htmlFor="su-name">Your name</label><input id="su-name" className="input" autoComplete="name" value={f.name} onChange={set('name')} required /></div>
+        <div><label className="label" htmlFor="su-name">Full name</label><input id="su-name" className="input" autoComplete="name" value={f.name} onChange={set('name')} required /></div>
         <div><label className="label" htmlFor="su-email">Work email</label><input id="su-email" type="email" className="input" autoComplete="email" value={f.email} onChange={set('email')} required /></div>
         <div>
           <label className="label" htmlFor="su-user">Username</label>
@@ -73,7 +73,7 @@ export function Signup() {
                    onChange={(e) => { setTouched(true); setF({ ...f, username: e.target.value.toLowerCase().replace(/\s+/g, '') }); }} />
           </div>
           <p className={`mt-1 text-xs ${avail === 'taken' || avail === 'format' ? 'text-rose-300' : 'text-slate-500'}`}>
-            {avail === 'taken' ? 'That username is taken.' : avail === 'format' ? '3–30 letters, numbers, dots, dashes or underscores.' : avail === 'ok' ? 'Available. You can sign in with it or with your email.' : 'You can sign in with it or with your email.'}
+            {avail === 'taken' ? 'That username is taken.' : avail === 'format' ? '3–30 letters, numbers, dots, dashes or underscores.' : avail === 'ok' ? 'Available. Sign-in works with the username or the email.' : 'Sign-in works with the username or the email.'}
           </p>
         </div>
         <div><label className="label" htmlFor="su-pw">Password</label><input id="su-pw" type="password" className="input" autoComplete="new-password" minLength={8} value={f.password} onChange={set('password')} required />
@@ -91,7 +91,7 @@ export function ForgotPassword() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   return (
-    <FormShell title="Reset your password" sub="We'll email you a link to choose a new one.">
+    <FormShell title="Reset password" sub="A link to choose a new password will be emailed.">
       {sent ? <div className="card text-sm text-slate-300">If <b>{email}</b> has an account, a reset link is on its way. It works once, for an hour. <div className="mt-4"><Link to="/login" className="text-indigo-300 hover:underline">Back to sign in</Link></div></div> : (
         <form className="card space-y-4" onSubmit={async (e) => { e.preventDefault(); setBusy(true); await api.forgotPassword(email).catch(() => undefined); setBusy(false); setSent(true); }}>
           <div><label className="label" htmlFor="fp-email">Email</label><input id="fp-email" type="email" className="input" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
@@ -111,7 +111,7 @@ export function ResetPassword() {
   const [busy, setBusy] = useState(false);
   return (
     <FormShell title="Choose a new password">
-      {done ? <div className="card text-sm text-slate-300">Password changed. You've been signed out everywhere. <div className="mt-4"><Link to="/login" className="btn-primary w-full">Sign in</Link></div></div> : (
+      {done ? <div className="card text-sm text-slate-300">Password changed. All sessions were signed out. <div className="mt-4"><Link to="/login" className="btn-primary w-full">Sign in</Link></div></div> : (
         <form className="card space-y-4" onSubmit={async (e) => { e.preventDefault(); setBusy(true); setError(null); try { await api.resetOwnPassword(q.get('token') ?? '', pw); setDone(true); } catch (e2) { setError(err(e2)); } finally { setBusy(false); } }}>
           {error && <Alert>{error}</Alert>}
           <div><label className="label" htmlFor="rp-pw">New password</label><input id="rp-pw" type="password" className="input" autoComplete="new-password" minLength={8} value={pw} onChange={(e) => setPw(e.target.value)} required /></div>
@@ -130,10 +130,10 @@ export function VerifyEmail() {
     api.verifyEmail(q.get('token') ?? '').then(async () => { setState('ok'); await refresh(); }).catch((e) => setState(err(e)));
   }, [q, refresh]);
   return (
-    <FormShell title="Confirm your email">
+    <FormShell title="Email confirmation">
       <div className="card text-sm text-slate-300">
-        {state === 'busy' ? 'Checking the link…' : state === 'ok' ? 'Thanks, your email is confirmed.' : <Alert>{state}</Alert>}
-        <div className="mt-4"><Link to={user ? '/' : '/login'} className="btn-primary w-full">{user ? 'Go to your workspace' : 'Sign in'}</Link></div>
+        {state === 'busy' ? 'Checking the link…' : state === 'ok' ? 'The email address is confirmed.' : <Alert>{state}</Alert>}
+        <div className="mt-4"><Link to={user ? '/' : '/login'} className="btn-primary w-full">{user ? 'Open the console' : 'Sign in'}</Link></div>
       </div>
     </FormShell>
   );
@@ -157,17 +157,17 @@ export function AcceptInvite() {
   if (!info) return <FormShell title="Join a workspace">{error ? <Alert>{error}</Alert> : <div className="card text-sm text-slate-400">Loading…</div>}</FormShell>;
   const wrongUser = user && user.email?.toLowerCase() !== info.email.toLowerCase();
   return (
-    <FormShell title={`Join ${info.workspace}`} sub={<>You've been invited as <b>{info.role}</b> ({info.email}).</>}>
+    <FormShell title={`Join ${info.workspace}`} sub={<>Invitation for {info.email} as <b>{info.role}</b>.</>}>
       <div className="card space-y-4">
         {error && <Alert>{error}</Alert>}
         {user ? (wrongUser
-          ? <Alert tone="warn">You're signed in as {user.email ?? user.username}. Sign out and sign in as {info.email} to accept.</Alert>
+          ? <Alert tone="warn">Signed in as {user.email ?? user.username}. Sign out and sign in as {info.email} to accept.</Alert>
           : <button className="btn-primary w-full" disabled={busy} onClick={() => void accept()}>{busy ? 'Joining…' : `Join ${info.workspace}`}</button>)
           : info.hasAccount ? (
             <p className="text-sm text-slate-300">{info.email} already has an account. <Link to={`/login?next=${encodeURIComponent(`/invite?token=${token}`)}`} className="text-indigo-300 hover:underline">Sign in</Link> to accept.</p>
           ) : (
             <form className="space-y-4" onSubmit={accept}>
-              <div><label className="label" htmlFor="ai-name">Your name</label><input id="ai-name" className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></div>
+              <div><label className="label" htmlFor="ai-name">Full name</label><input id="ai-name" className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></div>
               <div><label className="label" htmlFor="ai-pw">Choose a password</label><input id="ai-pw" type="password" className="input" autoComplete="new-password" minLength={8} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} required /></div>
               <button className="btn-primary w-full" disabled={busy || !f.name || f.password.length < 8}>{busy ? 'Joining…' : 'Create account and join'}</button>
             </form>

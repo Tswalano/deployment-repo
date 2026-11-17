@@ -145,6 +145,7 @@ export async function confirmCheckout(workspaceId: number, reference: string): P
     if (Number(meta.workspace_id) !== workspaceId) throw new DeployError('That payment belongs to another workspace.', 403);
     if (t.status !== 'success') throw new DeployError(`The payment was not completed (${t.status}).`, 409);
     if (!meta.plan || !PLANS[meta.plan] || t.amount !== PLANS[meta.plan].amount || t.currency !== 'ZAR') throw new DeployError('The payment does not match a plan.', 409);
+    const before = await ws(workspaceId);   // a plan switch: the previous subscription stops renewing once the new one exists
     await activate(workspaceId, meta.plan, t.customer?.customer_code ?? null, t.customer?.email ?? null);
     await recordInvoice(workspaceId, t);
     // link the subscription now (Cancel / Update card need it) instead of waiting for the subscription.create webhook
@@ -156,6 +157,10 @@ export async function confirmCheckout(workspaceId: number, reference: string): P
         if (sub) {
             await asSystem(() => db().query(`UPDATE workspaces SET subscription_code = $2, subscription_token = $3, current_period_end = coalesce($4::timestamptz, current_period_end) WHERE id = $1`,
                 [workspaceId, sub.subscription_code, sub.email_token, sub.next_payment_date]));
+            if (before.subscription_code && before.subscription_token && before.subscription_code !== sub.subscription_code) {
+                await paystack('/subscription/disable', { method: 'POST', body: { code: before.subscription_code, token: before.subscription_token } })
+                    .catch((err) => console.error('could not stop the previous subscription:', (err as Error).message));
+            }
         }
     }
     return ws(workspaceId);

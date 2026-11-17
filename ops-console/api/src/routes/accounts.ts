@@ -33,7 +33,8 @@ account.get('/username-suggestion', rateLimit(60, 60_000, (c) => `usugg:${ip(c)}
     try { return c.json({ username: await suggestUsername(cleanEmail(c.req.query('email'))) }); } catch { return c.json({ username: null }); }
 });
 
-account.get('/config', (c) => c.json({ multiTenant: config.multiTenant, productName: config.productName, trialDays: config.trialDays }));
+account.get('/config', (c) => c.json({ multiTenant: config.multiTenant, productName: config.productName, trialDays: config.trialDays,
+    legalEntity: config.legalEntity || config.productName, supportEmail: config.supportEmail || null }));
 
 account.post('/signup', multiOnly, rateLimit(5, 60 * 60_000, (c) => `signup:${ip(c)}`), async (c) => {
     const b = await c.req.json().catch(() => ({}));

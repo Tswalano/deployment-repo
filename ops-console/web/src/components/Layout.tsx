@@ -206,13 +206,13 @@ export function Layout() {
       )}
       {bill && !bill.active && (
         <div className="border-b border-rose-500/30 bg-rose-500/10 px-4 py-2 text-center text-xs text-rose-200">
-          Read-only: {bill.reason} Your servers and apps keep running.{' '}
+          Read-only: {bill.reason} Servers and apps keep running.{' '}
           {user.role === 'admin' && <NavLink to="/billing" className="underline underline-offset-2">Go to Billing</NavLink>}
         </div>
       )}
       {site.multiTenant && user.email && !user.emailVerified && (
         <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-200">
-          Confirm your email: we sent a link to {user.email}.{' '}
+          Email confirmation pending: a link was sent to {user.email}.{' '}
           {resent ? 'Sent again.' : <button className="underline underline-offset-2" onClick={() => { void api.resendVerification().then(() => setResent(true)); }}>Send it again</button>}
         </div>
       )}
@@ -223,7 +223,7 @@ export function Layout() {
       )}
       {user.isDemo && (
         <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-center text-xs text-amber-200">
-          Read-only demo — you can look at everything; nothing you do changes anything.
+          Read-only demo: everything is visible; nothing can be changed.
         </div>
       )}
       <header className="sticky top-0 z-20 border-b border-ink-700 bg-ink-950/90 backdrop-blur">
@@ -238,7 +238,6 @@ export function Layout() {
           <div className="ml-auto flex items-center gap-2">
             {setup && <NavLink to="/team" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Team</NavLink>}
             {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Billing</NavLink>}
-            {setup && user.role === 'admin' && <NavLink to="/settings" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Settings</NavLink>}
             <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
         </div>
@@ -259,7 +258,7 @@ export function Layout() {
       <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
         {setup && pathname === '/' ? <Onboarding /> : <Outlet />}
       </main>
-      <Footer />
+      <Footer setup={setup} />
 
       {/* Phones: only the views that make sense on a small screen */}
       {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">

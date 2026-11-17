@@ -41,7 +41,7 @@ export function FailedDeployments() {
     <section className="card mb-5 border-rose-500/30 p-0">
       <div className="px-5 pt-4">
         <h2 className="font-medium text-slate-100">Failed deployments</h2>
-        <p className="mt-1 text-sm text-slate-400">Not fixed by a later successful deploy yet. Retry, roll back, or dismiss what you've dealt with (that also clears its alert).</p>
+        <p className="mt-1 text-sm text-slate-400">Not fixed by a later successful deploy yet. Retry, roll back, or dismiss what has been handled (that also clears its alert).</p>
       </div>
       {msg && <div className="px-5 pt-3"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
       <ul className="divide-y divide-ink-800 px-5 pb-2">

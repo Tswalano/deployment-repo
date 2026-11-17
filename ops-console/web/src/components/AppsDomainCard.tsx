@@ -16,7 +16,7 @@ export function AppsDomainCard() {
     <section className="card space-y-4">
       <div>
         <h2 className="font-medium text-slate-100">Apps domain</h2>
-        <p className="mt-1 text-sm text-slate-400">New apps get an address under this domain, for example <code>shop.{current ?? 'acme.com'}</code>. Its DNS must be a hosted zone in Route 53 in your connected AWS account; the console adds and removes the apps' records there.</p>
+        <p className="mt-1 text-sm text-slate-400">New apps get an address under this domain, for example <code>shop.{current ?? 'acme.com'}</code>. Its DNS must be a hosted zone in Route 53 in the connected AWS account; the console adds and removes the apps' records there.</p>
       </div>
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       <form className="flex flex-wrap items-end gap-3" onSubmit={async (e) => {

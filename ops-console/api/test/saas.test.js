@@ -552,3 +552,47 @@ test('invoices: one per payment (confirm + renewals via webhook, never twice), P
     assert.equal(other.status, 404, "another workspace's invoice doesn't exist for you");
     assert.deepEqual((await b.get('/api/billing/invoices')).json.invoices, []);
 });
+
+test('cutover: workspace 1 connected through the role before the switch, existing GitHub installations linked, apps domain set; internal admins are platform admins', async () => {
+    const conn = dist('connections');
+    const cut = dist('cutover');
+    const { db, withWorkspace } = dist('db');
+    conn.setAssumer(async (roleArn, externalId) => {
+        const want = (await withWorkspace(1, () => db().query('SELECT external_id FROM aws_connections'))).rows[0]?.external_id;
+        if (externalId !== want) throw new Error('AWS refused');
+        return { accessKeyId: 'AK1', secretAccessKey: 'S', sessionToken: 'T', expiration: new Date(Date.now() + 3600e3), accountId: roleArn.split(':')[4] };
+    });
+    conn.setWorkspaceProviderFactory(() => new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async () => (prop === 'documentsReady' ? true : null)) }));
+    const realFetch = global.fetch;
+    global.fetch = async (url, init) => (String(url).includes('/app/installations') && !String(url).includes('access_tokens')
+        ? new Response(JSON.stringify([{ id: 4242, account: { login: 'platform-org' }, repository_selection: 'all' }]), { status: 200 }) : realFetch(url, init));
+    process.env.APPS_HOSTED_ZONE_ID = 'ZPLATFORM';
+    const log = console.log; const out = []; console.log = (...a) => out.push(a.join(' '));
+    try {
+        await cut.cutoverPrepare('af-south-1');
+        assert.match(out.join('\n'), /InstallDocuments,ParameterValue=no/);
+        await cut.cutoverConnect('arn:aws:iam::111111111111:role/OpsConsoleAccess-af-south-1');
+    } finally { console.log = log; global.fetch = realFetch; delete process.env.APPS_HOSTED_ZONE_ID; }
+    const c = (await withWorkspace(1, () => db().query("SELECT status, account_id FROM aws_connections"))).rows[0];
+    assert.deepEqual([c.status, c.account_id], ['connected', '111111111111']);
+    const gh = (await withWorkspace(1, () => db().query('SELECT installation_id, account_login FROM github_installations'))).rows;
+    assert.deepEqual(gh.map((r) => [Number(r.installation_id), r.account_login]), [[4242, 'platform-org']]);
+    const dom = (await withWorkspace(1, () => db().query("SELECT value FROM settings WHERE key = 'apps_domain'"))).rows[0].value;
+    assert.deepEqual(dom, { domain: 'glenify.studio', zoneId: 'ZPLATFORM' });
+    // nothing leaked into another workspace
+    assert.equal((await withWorkspace(2, () => db().query('SELECT count(*)::int AS n FROM github_installations WHERE installation_id = 4242'))).rows[0].n, 0);
+
+    // owner tool: set-email (taken emails refused)
+    await assert.rejects(cut.setEmail('dee', 'alice@example.com'), /already uses/);
+    await cut.setEmail('dee', 'dee3@example.com');
+
+    // admins of the internal workspace manage the platform's GitHub App (no PLATFORM_ADMINS needed)
+    const { rows: [alice] } = await db().query("SELECT id FROM users WHERE username = 'alice'");
+    await db().query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (1, $1, 'admin') ON CONFLICT DO NOTHING", [alice.id]);
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const before = (await a.get('/api/github')).json.canManageApp;
+    assert.equal((await a.post('/api/workspaces/switch', { id: 1 })).status, 200);
+    assert.equal((await a.get('/api/github')).json.canManageApp, true);
+    assert.equal(before, false, 'in a customer workspace the same person is not a platform admin');
+});
