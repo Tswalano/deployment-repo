@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth';
@@ -16,6 +16,9 @@ import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
 import { Settings } from './pages/Settings';
 import { NewApp } from './pages/NewApp';
+import { Access } from './pages/Access';
+// the terminal (xterm.js) loads only when opened
+const Terminal = lazy(() => import('./pages/Terminal').then((m) => ({ default: m.Terminal })));
 import { GithubCallback } from './components/GithubConnect';
 import { Users } from './pages/Users';
 import type { Role } from './api';
@@ -26,6 +29,7 @@ function Protected({ children, role }: { children: JSX.Element; role?: Role }) {
   if (loading) return <div className="grid h-screen place-items-center text-sm text-slate-500">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (role === 'admin' && user.role !== 'admin') return <Navigate to="/" replace />;
+  if (role === 'deployer' && (user.role === 'viewer' || user.isDemo)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -38,6 +42,8 @@ function App() {
         <Route path="instances" element={<Instances />} />
         <Route path="instances/:id" element={<InstanceDetail />} />
         <Route path="instances/:id/apps/:project" element={<AppDetail />} />
+        <Route path="instances/:id/access" element={<Protected role="deployer"><Access /></Protected>} />
+        <Route path="instances/:id/terminal" element={<Protected role="admin"><Suspense fallback={<div className="text-sm text-slate-500">Loading the terminal…</div>}><Terminal /></Suspense></Protected>} />
         <Route path="instances/:id/new-app" element={<Protected role="admin"><NewApp /></Protected>} />
         <Route path="activity" element={<Activity />} />
         <Route path="alerts" element={<Alerts />} />

@@ -156,9 +156,6 @@ export function Layout() {
             <span className="text-sm font-semibold tracking-tight text-slate-100">Ops Console</span>
           </NavLink>
           <div className="ml-auto flex items-center gap-2">
-            <span className="hidden items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200 sm:inline-flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Production
-            </span>
             <UserMenu pages={tabs} />
           </div>
         </div>

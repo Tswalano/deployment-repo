@@ -214,4 +214,11 @@ test('costs: deployers/admins only; cached so Cost Explorer is called sparingly;
     open = (await dist('db').db().query("SELECT 1 FROM alerts WHERE rule = 'cost_budget' AND resolved_at IS NULL")).rows;
     assert.equal(open.length, 0, 'resolved once the budget is raised');
     assert.equal((await a.get('/api/costs')).json.settings.zarRate, 18.5);
+    // currency: a partial save keeps the budget; ZAR needs a rate
+    assert.equal((await a.put('/api/costs/settings', { currency: 'ZAR' })).status, 200);
+    const st = (await a.get('/api/costs')).json.settings;
+    assert.deepEqual([st.currency, st.zarRate, st.monthlyBudget], ['ZAR', 18.5, forecast + 100]);
+    assert.equal((await a.put('/api/costs/settings', { currency: 'ZAR', zarRate: null })).status, 400);
+    assert.equal((await a.put('/api/costs/settings', { currency: 'EUR' })).status, 400);
+    assert.equal((await a.put('/api/costs/settings', { currency: 'USD' })).status, 200);
 });

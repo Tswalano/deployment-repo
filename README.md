@@ -283,6 +283,31 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
   `kms:Decrypt` via SSM in any region). Local test mode simulates the run and never changes DNS.
 - After deploying this, also run `./deploy.sh ops-dashboard install` so the ops agent lists console-created apps.
 
+### Server access (Ops Console)
+- **Instance → Access** (deployers see it, admins change it): temporary SSH, authorized keys, SSH logins, sessions
+  and OS updates. **Instance → Terminal** (admins): a browser shell through SSM Session Manager as `ssm-user`
+  (sudo available), with no inbound port needed. It closes after 20 min idle or 2 h. Who opened a session and when is
+  recorded (`terminal_sessions` and the audit log); keystrokes are not.
+- **Temporary SSH** opens port 22 for one public address (/32 or /128, never a range) on the instance's security
+  group tagged `ops-console=managed`, for 30 min to 8 h. The console closes it within a minute of expiry, and still
+  does so after a restart because the grants are kept in `ssh_grants`. Rules the console didn't open, such as
+  `scripts/allow-my-ip.sh`'s `admin-ssh` rule, are shown but never changed.
+- **Keys:** `OpsConsole-SshKeys` adds or removes one public key of a login user. It never touches root, refuses
+  ec2-user's last key, and keeps `authorized_keys.ops-console.bak`.
+- **Security snapshot:** `OpsConsole-Security` is read-only and refreshed on demand and every 6 h when viewed. It
+  reports keys with fingerprints, logins from the sshd journal (matched to keys, so "last used" works), failed
+  attempts per address, effective sshd settings, reboot needed, and updates. On Amazon Linux 2023 that means newer
+  releases (`dnf check-release-update`). The full `--releasever=latest updateinfo` query needs about 0.5 GB of memory,
+  so it is never run; the upgrade command is shown to run in the terminal instead.
+- **Setup (once):**
+  - IAM: `infra/iam/instance-ops-console-access.json` (StartSession only on tagged instances with the standard shell
+    document; security group changes only on tagged groups).
+  - Tag the groups: `infra/ops-console-access/tag-security-groups.sh <region>` (`--dry-run` first).
+  - Publish the documents: `infra/ops-console-ssm/deploy.sh <region>`.
+  - Re-run `server/install-ops-console.sh expose <domain>` so nginx passes the terminal's WebSocket through.
+- **Local test mode:** the terminal is a simulated shell (set `OPS_TERMINAL_REAL=1` for a real session), SSH rule
+  changes are EC2 dry runs, and key changes are simulated.
+
 ## Repository layout
 
 ```
