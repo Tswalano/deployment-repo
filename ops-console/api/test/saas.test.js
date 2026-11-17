@@ -14,6 +14,7 @@ process.env.ALLOWED_ORIGINS = ORIGIN;
 process.env.COOKIE_SECURE = 'false';
 process.env.OPS_MULTI_TENANT = '1';
 process.env.PUBLIC_URL = ORIGIN;
+process.env.CONSOLE_PRINCIPAL_ARN = 'arn:aws:iam::111111111111:role/console-host';
 
 const dist = (m) => require(path.join(__dirname, '..', 'dist', m));
 let pg, app, ip = 0;
@@ -32,7 +33,7 @@ function client() {
         if (set) cookie = set.split(';')[0];
         return { status: res.status, json: await res.json().catch(() => null) };
     };
-    return { get: (u) => call('GET', u), post: (u, b) => call('POST', u, b ?? {}), patch: (u, b) => call('PATCH', u, b), del: (u) => call('DELETE', u) };
+    return { cookieHeader: () => cookie, get: (u) => call('GET', u), post: (u, b) => call('POST', u, b ?? {}), patch: (u, b) => call('PATCH', u, b), del: (u) => call('DELETE', u) };
 }
 const tokenFrom = (text, route) => new RegExp(`${route}\\?token=([A-Za-z0-9_-]+)`).exec(text)?.[1];
 
@@ -181,6 +182,88 @@ test('background jobs run once per workspace, each isolated', async () => {
     const byWs = Object.fromEntries(seen);
     assert.deepEqual(byWs[A], ['acme-web']);
     assert.deepEqual(byWs[B], ['bob-web']);
+});
+
+// ---------------------------------------------------------------- Phase 12b: connect a workspace's own AWS account
+test('connect AWS: per-workspace external ID, verified by assuming the role; servers are added in the customer account only', async () => {
+    const conn = dist('connections');
+    // customer roles in their accounts: each trusts exactly one external ID
+    const trusted = {};
+    const assumed = [];
+    conn.setAssumer(async (roleArn, externalId, region) => {
+        assumed.push([roleArn, externalId, region]);
+        if (trusted[roleArn] !== externalId) throw new Error("AWS refused: the role doesn't exist, doesn't trust this console, or the external ID doesn't match.");
+        return { accessKeyId: 'AK', secretAccessKey: 'SK', sessionToken: 'ST', expiration: new Date(Date.now() + 3600e3), accountId: roleArn.split(':')[4] };
+    });
+    const calls = [];
+    const servers = [
+        { id: 'i-0aaaaaaaaaaaaaaa9', name: 'shop-1', state: 'running', type: 't4g.small', az: 'af-south-1a', publicIp: '203.0.113.9', platform: 'Linux/UNIX', managedTag: false, instanceProfile: null, ssmOnline: false, securityGroups: ['sg-0123'], launchedAt: null },
+        { id: 'i-0bbbbbbbbbbbbbbb8', name: 'win', state: 'running', type: 't3.medium', az: 'af-south-1a', publicIp: null, platform: 'Windows', managedTag: false, instanceProfile: null, ssmOnline: false, securityGroups: [], launchedAt: null },
+    ];
+    conn.setWorkspaceProviderFactory((c, credentials) => new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => {
+        const creds = await credentials();
+        calls.push({ account: c.role_arn.split(':')[4], prop: String(prop), args, key: creds.accessKeyId });
+        if (prop === 'documentsReady') return true;
+        if (prop === 'listInstances') return servers;
+        if (prop === 'describeInstance') return { name: 'shop-1', state: 'running', type: 't4g.small', az: 'af-south-1a', managedTag: true, publicIp: '203.0.113.9' };
+        return null;
+    }) }));
+    const hostBefore = awsCalls.length;
+
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice@example.com', password: 'correct-horse-1' })).status, 200);
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+
+    const ca = (await a.get('/api/aws-connection')).json;
+    const cb = (await b.get('/api/aws-connection')).json;
+    assert.equal(ca.connection.status, 'pending');
+    assert.match(ca.connection.externalId, /^oc-[0-9a-f]{40}$/);
+    assert.notEqual(ca.connection.externalId, cb.connection.externalId, 'every workspace has its own external ID');
+    assert.equal(ca.principal, 'arn:aws:iam::111111111111:role/console-host');
+    assert.equal((await app.request('/api/aws-connection/template', { headers: { origin: ORIGIN } })).status, 401);
+
+    // template download carries this workspace's values
+    const raw = await app.request('/api/aws-connection/template', { headers: { origin: ORIGIN, cookie: a.cookieHeader() } });
+    const body = JSON.parse(await raw.text());
+    assert.equal(body.Parameters.ExternalId.Default, ca.connection.externalId);
+    assert.equal(body.Parameters.ConsolePrincipal.Default, 'arn:aws:iam::111111111111:role/console-host');
+    assert.ok(body.Resources.AccessRole && Object.values(body.Resources).filter((r) => r.Type === 'AWS::SSM::Document').length >= 10);
+
+    // Alice's account: the role trusts Alice's external ID only
+    const aliceRole = 'arn:aws:iam::222222222222:role/OpsConsoleAccess-af-south-1';
+    trusted[aliceRole] = ca.connection.externalId;
+    assert.equal((await a.post('/api/aws-connection/verify', { roleArn: 'not-an-arn' })).status, 400);
+    const v = await a.post('/api/aws-connection/verify', { roleArn: aliceRole });
+    assert.equal(v.status, 200, JSON.stringify(v.json));
+    assert.deepEqual([v.json.connection.status, v.json.connection.accountId], ['connected', '222222222222']);
+
+    // Bob pastes Alice's role: assumed with BOB's external ID, which Alice's role doesn't trust
+    const steal = await b.post('/api/aws-connection/verify', { roleArn: aliceRole });
+    assert.equal(steal.status, 409);
+    assert.deepEqual(assumed.at(-1).slice(0, 2), [aliceRole, cb.connection.externalId]);
+    assert.equal((await b.get('/api/aws-connection/servers')).status, 409, 'Bob still has no AWS access');
+
+    // servers in Alice's account: list, add (tag + instance profile), Windows refused
+    const list = (await a.get('/api/aws-connection/servers')).json;
+    assert.deepEqual(list.servers.map((x) => [x.id, x.linux, x.added]), [['i-0aaaaaaaaaaaaaaa9', true, false], ['i-0bbbbbbbbbbbbbbb8', false, false]]);
+    assert.equal((await a.post('/api/aws-connection/servers', { awsInstanceId: 'i-0bbbbbbbbbbbbbbb8' })).status, 409);
+    const add = await a.post('/api/aws-connection/servers', { awsInstanceId: 'i-0aaaaaaaaaaaaaaa9', environment: 'staging' });
+    assert.equal(add.status, 200, JSON.stringify(add.json));
+    assert.deepEqual(add.json.steps, ['tagged ops-console=managed', 'attached OpsConsoleInstance-af-south-1']);
+    const tag = calls.find((x) => x.prop === 'tagManaged');
+    assert.deepEqual([tag.account, tag.args], ['222222222222', ['af-south-1', 'i-0aaaaaaaaaaaaaaa9', ['sg-0123']]]);
+    assert.ok(calls.every((x) => x.account === '222222222222' && x.key === 'AK'), "every call ran on Alice's assumed role");
+    assert.ok((await a.get('/api/instances')).json.instances.some((i) => i.awsInstanceId === 'i-0aaaaaaaaaaaaaaa9'));
+    assert.ok(!(await b.get('/api/instances')).json.instances.some((i) => i.awsInstanceId === 'i-0aaaaaaaaaaaaaaa9'));
+    assert.equal(awsCalls.length, hostBefore, "the console host's own AWS identity was never used for a customer");
+
+    // disconnect: access stops at once; the external ID changes so the old role can't be reconnected by accident
+    assert.equal((await a.post('/api/aws-connection/disconnect')).status, 200);
+    const after = (await a.get('/api/aws-connection')).json.connection;
+    assert.equal(after.status, 'disconnected');
+    assert.notEqual(after.externalId, ca.connection.externalId);
+    assert.equal((await a.get('/api/aws-connection/servers')).status, 409);
 });
 
 test('usernames: generated from the email or chosen at sign-up; unique; sign in with either; change on the profile', async () => {

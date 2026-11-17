@@ -15,12 +15,18 @@ import envRoutes from './routes/env';
 import newapp from './routes/newapp';
 import instances from './routes/instances';
 import failures from './routes/failures';
+import connect from './routes/connect';
+import { setWorkspaceResolver } from './aws';
+import { workspaceProvider } from './connections';
+import { config } from './config';
 import access, { myKeys } from './routes/access';
 import users from './routes/users';
 import { account, teamRoutes, workspaces } from './routes/accounts';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
+    // multi-customer mode: AWS calls run in the CURRENT workspace's own account (or are refused when it has none)
+    if (config.multiTenant) setWorkspaceResolver(workspaceProvider);
     const app = new Hono<Env>();
 
     app.use('*', secureHeaders({
@@ -55,6 +61,7 @@ export function createApp() {
     app.route('/api/instances', instances);
     app.route('/api/deployments', deployments);
     app.route('/api/failures', failures);
+    app.route('/api/aws-connection', connect);
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);
     app.route('/api/backups', backups);

@@ -1,0 +1,1863 @@
+{
+ "AWSTemplateFormatVersion": "2010-09-09",
+ "Description": "Ops Console access (one region). Creates a role only the console can use with your workspace's external ID, an instance profile for your servers, and the console's fixed commands. Delete the stack to disconnect.",
+ "Parameters": {
+  "ExternalId": {
+   "Type": "String",
+   "AllowedPattern": "^[A-Za-z0-9-]{32,64}$",
+   "Description": "Your workspace's external ID (shown in the console)."
+  },
+  "InstallDocuments": {
+   "Type": "String",
+   "AllowedValues": [
+    "yes",
+    "no"
+   ],
+   "Default": "yes",
+   "Description": "'no' only if this account and region already have the OpsConsole-* documents (e.g. published by infra/ops-console-ssm/deploy.sh)."
+  },
+  "ConsolePrincipal": {
+   "Type": "String",
+   "AllowedPattern": "^arn:aws:iam::\\d{12}:(role|user)/[A-Za-z0-9+=,.@_/-]+$",
+   "Description": "The Ops Console identity allowed to use the role (shown in the console)."
+  }
+ },
+ "Conditions": {
+  "InstallDocuments": {
+   "Fn::Equals": [
+    {
+     "Ref": "InstallDocuments"
+    },
+    "yes"
+   ]
+  }
+ },
+ "Resources": {
+  "AccessRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "RoleName": {
+     "Fn::Sub": "OpsConsoleAccess-${AWS::Region}"
+    },
+    "Description": "Used by Ops Console for this account. Delete this stack to disconnect.",
+    "MaxSessionDuration": 3600,
+    "AssumeRolePolicyDocument": {
+     "Version": "2012-10-17",
+     "Statement": [
+      {
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": {
+         "Ref": "ConsolePrincipal"
+        }
+       },
+       "Action": "sts:AssumeRole",
+       "Condition": {
+        "StringEquals": {
+         "sts:ExternalId": {
+          "Ref": "ExternalId"
+         }
+        }
+       }
+      }
+     ]
+    },
+    "Policies": [
+     {
+      "PolicyName": "ops-console",
+      "PolicyDocument": {
+       "Version": "2012-10-17",
+       "Statement": [
+        {
+         "Sid": "RunOnlyOurDocuments",
+         "Effect": "Allow",
+         "Action": "ssm:SendCommand",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/OpsConsole-*"
+         }
+        },
+        {
+         "Sid": "OnlyOnTaggedInstances",
+         "Effect": "Allow",
+         "Action": "ssm:SendCommand",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+         },
+         "Condition": {
+          "StringEquals": {
+           "ssm:resourceTag/ops-console": "managed"
+          }
+         }
+        },
+        {
+         "Sid": "ReadStatus",
+         "Effect": "Allow",
+         "Resource": "*",
+         "Action": [
+          "ssm:GetCommandInvocation",
+          "ssm:DescribeInstanceInformation",
+          "ssm:DescribeDocument",
+          "ssm:DescribeParameters",
+          "ec2:DescribeInstances",
+          "ec2:DescribeSecurityGroups",
+          "ce:GetCostAndUsage",
+          "ce:GetCostForecast",
+          "scheduler:ListSchedules",
+          "scheduler:GetSchedule",
+          "route53:ListHostedZonesByName",
+          "route53:ListResourceRecordSets",
+          "route53:GetChange"
+         ]
+        },
+        {
+         "Sid": "PowerTaggedInstances",
+         "Effect": "Allow",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+         },
+         "Condition": {
+          "StringEquals": {
+           "aws:ResourceTag/ops-console": "managed"
+          }
+         },
+         "Action": [
+          "ec2:StartInstances",
+          "ec2:StopInstances",
+          "ec2:RebootInstances",
+          "ec2:TerminateInstances",
+          "ec2:AssociateIamInstanceProfile"
+         ]
+        },
+        {
+         "Sid": "TagServersYouAdd",
+         "Effect": "Allow",
+         "Action": "ec2:CreateTags",
+         "Resource": [
+          {
+           "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+          },
+          {
+           "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+          }
+         ],
+         "Condition": {
+          "StringEquals": {
+           "aws:RequestTag/ops-console": "managed"
+          },
+          "ForAllValues:StringEquals": {
+           "aws:TagKeys": [
+            "ops-console"
+           ]
+          }
+         }
+        },
+        {
+         "Sid": "GiveServersTheInstanceProfile",
+         "Effect": "Allow",
+         "Action": "iam:PassRole",
+         "Resource": {
+          "Fn::GetAtt": [
+           "InstanceRole",
+           "Arn"
+          ]
+         },
+         "Condition": {
+          "StringEquals": {
+           "iam:PassedToService": "ec2.amazonaws.com"
+          }
+         }
+        },
+        {
+         "Sid": "AppSettings",
+         "Effect": "Allow",
+         "Action": [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+          "ssm:PutParameter",
+          "ssm:DeleteParameter"
+         ],
+         "Resource": [
+          {
+           "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/apps/*"
+          },
+          {
+           "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ops-console/git-tokens/*"
+          }
+         ]
+        },
+        {
+         "Sid": "EncryptSettingsViaSsm",
+         "Effect": "Allow",
+         "Action": [
+          "kms:Decrypt",
+          "kms:Encrypt"
+         ],
+         "Resource": "*",
+         "Condition": {
+          "StringEquals": {
+           "kms:ViaService": {
+            "Fn::Sub": "ssm.${AWS::Region}.amazonaws.com"
+           }
+          }
+         }
+        },
+        {
+         "Sid": "TerminalOnTaggedInstances",
+         "Effect": "Allow",
+         "Action": "ssm:StartSession",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+         },
+         "Condition": {
+          "StringEquals": {
+           "ssm:resourceTag/ops-console": "managed"
+          },
+          "BoolIfExists": {
+           "ssm:SessionDocumentAccessCheck": "true"
+          }
+         }
+        },
+        {
+         "Sid": "TerminalShellDocument",
+         "Effect": "Allow",
+         "Action": "ssm:StartSession",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/SSM-SessionManagerRunShell"
+         }
+        },
+        {
+         "Sid": "EndSessions",
+         "Effect": "Allow",
+         "Action": [
+          "ssm:TerminateSession",
+          "ssm:ResumeSession"
+         ],
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:session/*"
+         }
+        },
+        {
+         "Sid": "SshRulesOnTaggedGroups",
+         "Effect": "Allow",
+         "Action": [
+          "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:RevokeSecurityGroupIngress"
+         ],
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+         },
+         "Condition": {
+          "StringEquals": {
+           "aws:ResourceTag/ops-console": "managed"
+          }
+         }
+        },
+        {
+         "Sid": "AppDnsRecords",
+         "Effect": "Allow",
+         "Action": "route53:ChangeResourceRecordSets",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:route53:::hostedzone/*"
+         }
+        },
+        {
+         "Sid": "KeepRunningTonight",
+         "Effect": "Allow",
+         "Action": "scheduler:UpdateSchedule",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/*"
+         }
+        },
+        {
+         "Sid": "SchedulesKeepTheirRole",
+         "Effect": "Allow",
+         "Action": "iam:PassRole",
+         "Resource": {
+          "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/*"
+         },
+         "Condition": {
+          "StringEquals": {
+           "iam:PassedToService": "scheduler.amazonaws.com"
+          }
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "InstanceRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "RoleName": {
+     "Fn::Sub": "OpsConsoleInstance-${AWS::Region}"
+    },
+    "Description": "For servers managed by Ops Console: Session Manager and their own app settings.",
+    "AssumeRolePolicyDocument": {
+     "Version": "2012-10-17",
+     "Statement": [
+      {
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "ec2.amazonaws.com"
+       },
+       "Action": "sts:AssumeRole"
+      }
+     ]
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+     }
+    ],
+    "Policies": [
+     {
+      "PolicyName": "app-settings",
+      "PolicyDocument": {
+       "Version": "2012-10-17",
+       "Statement": [
+        {
+         "Effect": "Allow",
+         "Action": [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath"
+         ],
+         "Resource": [
+          {
+           "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/apps/*"
+          },
+          {
+           "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ops-console/git-tokens/*"
+          }
+         ]
+        },
+        {
+         "Effect": "Allow",
+         "Action": "kms:Decrypt",
+         "Resource": "*",
+         "Condition": {
+          "StringEquals": {
+           "kms:ViaService": {
+            "Fn::Sub": "ssm.${AWS::Region}.amazonaws.com"
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "InstanceProfile": {
+   "Type": "AWS::IAM::InstanceProfile",
+   "Properties": {
+    "InstanceProfileName": {
+     "Fn::Sub": "OpsConsoleInstance-${AWS::Region}"
+    },
+    "Roles": [
+     {
+      "Ref": "InstanceRole"
+     }
+    ]
+   }
+  },
+  "OpsConsoleCollectStatus": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-CollectStatus",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: read-only status snapshot (no parameters)",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "60",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-CollectStatus: read-only status snapshot of this instance, for the Ops Console.",
+         "# Runs as root via SSM, takes NO parameters, changes nothing. Output: base64(gzip(JSON)).",
+         "#   source \"agent\": the local ops agent (127.0.0.1:9100, the per-instance dashboard), compacted",
+         "#   source \"basic\": host metrics only, when no agent is installed",
+         "set -u",
+         "export LC_ALL=C",
+         "if raw=\"$(curl -sf -m 8 http://127.0.0.1:9100/api/status 2>/dev/null)\" && [ -n \"$raw\" ]; then",
+         "  src=agent",
+         "else",
+         "  src=basic",
+         "  raw=\"$(python3 - <<'PY'",
+         "import json, os, socket, subprocess, time",
+         "mem = {}",
+         "for line in open('/proc/meminfo'):",
+         "    k, v = line.split(':', 1); mem[k] = int(v.split()[0]) * 1024",
+         "st = os.statvfs('/')",
+         "up = float(open('/proc/uptime').read().split()[0])",
+         "units = subprocess.run(['systemctl', 'list-units', '--type=service', '--state=running', '--no-legend', '--plain'],",
+         "                       capture_output=True, text=True).stdout.splitlines()",
+         "print(json.dumps({",
+         "  'host': {'hostname': socket.gethostname(), 'uptime_seconds': int(up), 'cpus': os.cpu_count(),",
+         "           'load': [round(x, 2) for x in os.getloadavg()],",
+         "           'memory': {'total': mem['MemTotal'], 'available': mem['MemAvailable'], 'used': mem['MemTotal'] - mem['MemAvailable']},",
+         "           'swap': {'total': mem['SwapTotal'], 'used': mem['SwapTotal'] - mem['SwapFree']},",
+         "           'disk': {'total': st.f_blocks * st.f_frsize, 'used': (st.f_blocks - st.f_bfree) * st.f_frsize, 'free': st.f_bavail * st.f_frsize}},",
+         "  'running_services': len(units),",
+         "}))",
+         "PY",
+         ")\"",
+         "fi",
+         "printf '%s' \"$raw\" | SRC=\"$src\" python3 -c '",
+         "import json, os, sys",
+         "d = json.load(sys.stdin)",
+         "for p in d.get(\"projects\", []):                     # never ship log lines off the box",
+         "    (p.get(\"warnings_24h\") or {}).pop(\"last\", None)",
+         "d[\"deploy_events\"] = (d.get(\"deploy_events\") or [])[:15]",
+         "print(json.dumps({\"source\": os.environ[\"SRC\"], \"data\": d}, separators=(\",\", \":\")))",
+         "' | gzip -9c | base64 -w0"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  "OpsConsoleDeploy": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-Deploy",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: deploy or roll back one project via server/pipeline.sh",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "1800",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-Deploy: deploy or roll back ONE project with the existing pipeline (server/pipeline.sh).",
+         "# Runs as root via SSM; the pipeline itself runs as ec2-user, exactly like a CI or manual deploy",
+         "# (same lock, pre-deploy DB backup, migrations, health check and auto-rollback).",
+         "# SSM substitutes the double-brace parameters below textually. Each one is limited by an allowedPattern in the",
+         "# document AND re-checked here, and none can contain quotes, spaces or shell metacharacters.",
+         "# Output: the pipeline log without colour codes (last 20 KB). Exit code: the pipeline's.",
+         "set -u",
+         "ACTION='{{ action }}'",
+         "PROJECT='{{ project }}'",
+         "REF='{{ ref }}'",
+         "ACTOR='{{ actor }}'",
+         "",
+         "fail() { echo \"ops-console: $*\"; exit 2; }",
+         "case \"$ACTION\" in deploy|rollback) ;; *) fail \"unknown action\" ;; esac",
+         "[[ \"$PROJECT\" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || fail \"invalid project\"",
+         "[[ -f \"/opt/deploy/projects/$PROJECT.conf\" || -f \"/opt/deploy-state/projects/$PROJECT.conf\" ]] || fail \"unknown project '$PROJECT'\"",
+         "[[ -z \"$REF\" || \"$REF\" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ ]] || fail \"invalid ref\"",
+         "[[ \"$REF\" == *..* ]] && fail \"invalid ref\"",
+         "if [[ \"$ACTION\" == rollback && -n \"$REF\" && ! \"$REF\" =~ ^[0-9a-f]{7,40}$ ]]; then fail \"rollback takes a commit sha\"; fi",
+         "[[ \"$ACTOR\" =~ ^[A-Za-z0-9._@:-]{1,64}$ ]] || fail \"invalid actor\"",
+         "",
+         "# Apps cloned over HTTPS from a GitHub App repo: the console leaves a short-lived, repo-scoped token in SSM",
+         "# (/ops-console/git-tokens/<project>). It is written to a 0600 file and handed to git through GIT_ASKPASS:",
+         "# never in argv, a URL, the output or a log. The console deletes the parameter when the deploy finishes.",
+         "GITENV=()",
+         "TOKDIR=/run/ops-console/git",
+         "IMDS_TOKEN=\"$(curl -s -m 2 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)\"",
+         "REGION=\"$(curl -s -m 2 -H \"X-aws-ec2-metadata-token: $IMDS_TOKEN\" http://169.254.169.254/latest/meta-data/placement/region)\"",
+         "if tok=\"$(aws ssm get-parameter --region \"$REGION\" --name \"/ops-console/git-tokens/$PROJECT\" --with-decryption --query Parameter.Value --output text 2>/dev/null)\" && [[ -n \"$tok\" && \"$tok\" != None ]]; then",
+         "  install -d -m 0700 -o ec2-user -g ec2-user \"$TOKDIR\"",
+         "  ( umask 077; printf '%s' \"$tok\" > \"$TOKDIR/$PROJECT.token\" ); chown ec2-user: \"$TOKDIR/$PROJECT.token\"",
+         "  printf '#!/bin/sh\\ncase \"$1\" in Username*) echo x-access-token ;; *) cat \"$OPS_GIT_TOKEN_FILE\" ;; esac\\n' > \"$TOKDIR/askpass.sh\"",
+         "  chmod 0700 \"$TOKDIR/askpass.sh\"; chown ec2-user: \"$TOKDIR/askpass.sh\"",
+         "  GITENV=(GIT_ASKPASS=\"$TOKDIR/askpass.sh\" OPS_GIT_TOKEN_FILE=\"$TOKDIR/$PROJECT.token\" GIT_TERMINAL_PROMPT=0)",
+         "fi",
+         "unset tok",
+         "",
+         "args=(\"$ACTION\" \"$PROJECT\")",
+         "[[ -n \"$REF\" ]] && args+=(\"$REF\")",
+         "LOG=\"$(mktemp /tmp/opsconsole-deploy.XXXXXX)\"",
+         "runuser -u ec2-user -- env -i HOME=/home/ec2-user USER=ec2-user LOGNAME=ec2-user LANG=C.UTF-8 \\",
+         "  PATH=/usr/local/bin:/usr/bin:/bin DEPLOY_ACTOR=\"$ACTOR\" DEPLOY_TRIGGER=ops-console \"${GITENV[@]}\" \\",
+         "  bash /opt/deploy/server/pipeline.sh \"${args[@]}\" >\"$LOG\" 2>&1 </dev/null",
+         "rc=$?",
+         "rm -f \"$TOKDIR/$PROJECT.token\"",
+         "sed 's/\\x1b\\[[0-9;]*m//g' \"$LOG\" | tail -c 20000",
+         "rm -f \"$LOG\"",
+         "exit $rc"
+        ]
+       }
+      }
+     ],
+     "parameters": {
+      "action": {
+       "type": "String",
+       "allowedValues": [
+        "deploy",
+        "rollback"
+       ]
+      },
+      "project": {
+       "type": "String",
+       "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+      },
+      "ref": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$"
+      },
+      "actor": {
+       "type": "String",
+       "allowedPattern": "^[A-Za-z0-9._@:-]{1,64}$"
+      }
+     }
+    }
+   }
+  },
+  "OpsConsoleAppLogs": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-AppLogs",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: filtered log entries of one project (secrets masked)",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "60",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-AppLogs: recent log entries of ONE project's systemd unit, read-only.",
+         "# Filters: level (all|warning|error), since (15m|1h|6h|24h|7d|boot), q (plain-text search), lines (10-1000).",
+         "# Uses the local ops agent (levels inferred from the text, as journald stores stdout as INFO);",
+         "# falls back to journalctl if the agent is down. Obvious secrets (bearer tokens, password/token/secret/",
+         "# api-key values, passwords inside URLs) are masked before anything leaves the box.",
+         "# Output: base64(gzip(JSON {entries:[{ts,level,source,message}], by_level, source})), under 24 KB.",
+         "set -u",
+         "export LC_ALL=C",
+         "PROJECT='{{ project }}'",
+         "LINES='{{ lines }}'",
+         "LEVEL='{{ level }}'",
+         "SINCE='{{ since }}'",
+         "Q='{{ q }}'",
+         "",
+         "fail() { echo \"ops-console: $*\" >&2; exit 2; }",
+         "[[ \"$PROJECT\" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || fail \"invalid project\"",
+         "[[ \"$LINES\" =~ ^[0-9]{2,4}$ ]] && (( LINES >= 10 && LINES <= 1000 )) || fail \"lines must be 10-1000\"",
+         "case \"$LEVEL\" in all|warning|error) ;; *) fail \"invalid level\" ;; esac",
+         "case \"$SINCE\" in 15m|1h|6h|24h|7d|boot) ;; *) fail \"invalid since\" ;; esac",
+         "[[ \"$Q\" =~ ^[A-Za-z0-9\\ ._:/@#=-]{0,60}$ ]] || fail \"invalid search\"",
+         "CONF=\"/opt/deploy/projects/$PROJECT.conf\"; [[ -f \"$CONF\" ]] || CONF=\"/opt/deploy-state/projects/$PROJECT.conf\"",
+         "[[ -f \"$CONF\" ]] || fail \"unknown project '$PROJECT'\"",
+         "SERVICE=\"$(sed -n 's/^SERVICE=\"\\([A-Za-z0-9_.@-]*\\)\".*/\\1/p' \"$CONF\" | head -1)\"",
+         "[[ -n \"$SERVICE\" ]] || fail \"no SERVICE in $PROJECT.conf\"",
+         "",
+         "P=\"$PROJECT\" N=\"$LINES\" LV=\"$LEVEL\" S=\"$SINCE\" Q=\"$Q\" U=\"$SERVICE\" python3 -I -c '",
+         "import base64, gzip, json, os, re, subprocess, urllib.parse, urllib.request",
+         "e = os.environ",
+         "prio = {\"all\": 7, \"warning\": 4, \"error\": 3}[e[\"LV\"]]",
+         "qs = urllib.parse.urlencode({\"lines\": e[\"N\"], \"priority\": prio, \"since\": e[\"S\"], \"q\": e[\"Q\"]})",
+         "source = \"agent\"",
+         "try:",
+         "    with urllib.request.urlopen(\"http://127.0.0.1:9100/api/app/%s/logs?%s\" % (e[\"P\"], qs), timeout=25) as r:",
+         "        entries = json.load(r)[\"entries\"]",
+         "except Exception:",
+         "    source = \"journalctl\"",
+         "    since = {\"15m\": \"-15min\", \"1h\": \"-1h\", \"6h\": \"-6h\", \"24h\": \"-24h\", \"7d\": \"-7d\"}.get(e[\"S\"])",
+         "    cmd = [\"journalctl\", \"-u\", e[\"U\"], \"-o\", \"json\", \"--no-pager\", \"-q\", \"-n\", e[\"N\"]] + ([\"--since\", since] if since else [\"-b\"])",
+         "    entries = []",
+         "    for line in subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout.splitlines():",
+         "        try: j = json.loads(line)",
+         "        except ValueError: continue",
+         "        msg = j.get(\"MESSAGE\", \"\")",
+         "        if isinstance(msg, list): msg = bytes(msg).decode(errors=\"replace\")",
+         "        if e[\"Q\"] and e[\"Q\"].lower() not in msg.lower(): continue",
+         "        lvl = int(j.get(\"PRIORITY\", 6))",
+         "        if lvl > prio: continue",
+         "        entries.append({\"ts\": int(j.get(\"__REALTIME_TIMESTAMP\", \"0\")) // 1000, \"priority\": lvl,",
+         "                        \"source\": j.get(\"SYSLOG_IDENTIFIER\", \"\"), \"message\": msg})",
+         "R = [",
+         "    (re.compile(r\"\\x1b\\[[0-9;?]*[A-Za-z]\"), \"\"),",
+         "    (re.compile(r\"([Bb]earer\\s+)[A-Za-z0-9._~+/=-]+\"), r\"\\1[redacted]\"),",
+         "    (re.compile(r\"((?:password|passwd|secret|token|api[_-]?key|authorization)[\\\"\\x27]?\\s*[:=]\\s*[\\\"\\x27]?)[^\\\"\\x27\\s,}]+\", re.I), r\"\\1[redacted]\"),",
+         "    (re.compile(r\"(://[^:/@\\s]+:)[^@/\\s]+@\"), r\"\\1[redacted]@\"),",
+         "]",
+         "def clean(m):",
+         "    for rx, rep in R: m = rx.sub(rep, m)",
+         "    return m[:1000]",
+         "name = {0: \"error\", 1: \"error\", 2: \"error\", 3: \"error\", 4: \"warning\", 5: \"info\", 6: \"info\", 7: \"debug\"}",
+         "out = [{\"ts\": x.get(\"ts\"), \"level\": name.get(int(x.get(\"priority\", 6)), \"info\"), \"source\": (x.get(\"source\") or \"\")[:40],",
+         "        \"message\": clean(x.get(\"message\") or \"\")} for x in entries]",
+         "counts = {}",
+         "for x in out: counts[x[\"level\"]] = counts.get(x[\"level\"], 0) + 1",
+         "def pack(items):",
+         "    raw = json.dumps({\"entries\": items, \"by_level\": counts, \"source\": source, \"truncated\": len(items) < len(out)}, separators=(\",\", \":\"))",
+         "    return base64.b64encode(gzip.compress(raw.encode(), 9)).decode()",
+         "blob = pack(out)",
+         "while len(blob) > 22000 and out:",
+         "    out = out[len(out) // 4 or 1:]          # keep the newest entries",
+         "    blob = pack(out)",
+         "print(blob, end=\"\")",
+         "'"
+        ]
+       }
+      }
+     ],
+     "parameters": {
+      "project": {
+       "type": "String",
+       "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+      },
+      "lines": {
+       "type": "String",
+       "default": "200",
+       "allowedPattern": "^[0-9]{2,4}$"
+      },
+      "level": {
+       "type": "String",
+       "default": "all",
+       "allowedValues": [
+        "all",
+        "warning",
+        "error"
+       ]
+      },
+      "since": {
+       "type": "String",
+       "default": "24h",
+       "allowedValues": [
+        "15m",
+        "1h",
+        "6h",
+        "24h",
+        "7d",
+        "boot"
+       ]
+      },
+      "q": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^[A-Za-z0-9 ._:/@#=-]{0,60}$"
+      }
+     }
+    }
+   }
+  },
+  "OpsConsoleBackups": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-Backups",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: read-only inventory of database backups (no parameters)",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "60",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-Backups: read-only inventory of the nightly database dumps on this instance.",
+         "# No parameters. Lists files under /var/backups/app-db (names, sizes, times only, never contents),",
+         "# the last run's status, the timer schedule, restore-test results and free disk space.",
+         "# Output: base64(gzip(JSON)).",
+         "set -u",
+         "export LC_ALL=C",
+         "NEXT=\"$(systemctl show db-backup.timer -p NextElapseUSecRealtime --value 2>/dev/null)\"",
+         "LAST=\"$(systemctl show db-backup.timer -p LastTriggerUSec --value 2>/dev/null)\"",
+         "ACTIVE=\"$(systemctl is-active db-backup.service 2>/dev/null)\"",
+         "NEXT=\"$NEXT\" LAST=\"$LAST\" ACTIVE=\"$ACTIVE\" python3 -I -c '",
+         "import base64, gzip, json, os",
+         "root = \"/var/backups/app-db\"",
+         "def load(p):",
+         "    try:",
+         "        with open(p) as f: return json.load(f)",
+         "    except Exception: return None",
+         "files = []",
+         "if os.path.isdir(root):",
+         "    for db in sorted(os.listdir(root)):",
+         "        d = os.path.join(root, db)",
+         "        if not os.path.isdir(d): continue",
+         "        for name in os.listdir(d):",
+         "            if not (name.endswith(\".dump\") or name.endswith(\".sql\")): continue",
+         "            st = os.stat(os.path.join(d, name))",
+         "            files.append({\"db\": db, \"file\": name, \"bytes\": st.st_size, \"mtime\": int(st.st_mtime)})",
+         "files.sort(key=lambda x: (x[\"db\"], -x[\"mtime\"]))",
+         "vfs = os.statvfs(\"/\")",
+         "out = {",
+         "    \"status\": load(\"/opt/deploy-state/backups.json\"),",
+         "    \"verifications\": (load(\"/opt/deploy-state/backup-verify.json\") or [])[-100:],",
+         "    \"files\": files,",
+         "    \"timer\": {\"next\": os.environ.get(\"NEXT\") or None, \"last\": os.environ.get(\"LAST\") or None, \"running\": os.environ.get(\"ACTIVE\") == \"activating\"},",
+         "    \"disk_free\": vfs.f_bavail * vfs.f_frsize,",
+         "    \"location\": root,",
+         "}",
+         "print(base64.b64encode(gzip.compress(json.dumps(out, separators=(\",\", \":\")).encode(), 9)).decode(), end=\"\")",
+         "'"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  "OpsConsoleBackupAction": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-BackupAction",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: run a backup, restore-test a dump into a throwaway DB, or export one for download",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "600",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-BackupAction: one backup operation. Never writes to a live database.",
+         "#   action=run     start db-backup.service now (the same nightly pg_dump job) and wait for it",
+         "#   action=verify  restore <db>/<file> into a throwaway database \"opsverify_<db>_<epoch>\", count its tables",
+         "#                  and rows, compare with the live database, then DROP the throwaway database",
+         "#   action=export  copy <db>/<file> to s3://<bucket>/<key> (private, encrypted) for a short-lived download link",
+         "# Parameters are pinned by allowedPattern in the document and re-checked here. Output: one JSON line.",
+         "set -u",
+         "export LC_ALL=C",
+         "ACTION='{{ action }}'",
+         "DB='{{ db }}'",
+         "FILE='{{ file }}'",
+         "BUCKET='{{ bucket }}'",
+         "KEY='{{ key }}'",
+         "ROOT=/var/backups/app-db",
+         "RESULTS=/opt/deploy-state/backup-verify.json",
+         "",
+         "fail() { printf '{\"ok\":false,\"error\":\"%s\"}\\n' \"$*\"; exit 2; }",
+         "case \"$ACTION\" in run|verify|export) ;; *) fail \"unknown action\" ;; esac",
+         "",
+         "if [[ \"$ACTION\" == run ]]; then",
+         "  t0=$SECONDS",
+         "  systemctl start db-backup.service; rc=$?",
+         "  python3 -I -c 'import json,sys; s=json.load(open(\"/opt/deploy-state/backups.json\")); print(json.dumps({\"ok\": sys.argv[1]==\"0\" and s.get(\"ok\") is True, \"seconds\": int(sys.argv[2]), \"status\": s}))' \"$rc\" \"$((SECONDS - t0))\" \\",
+         "    || fail \"backup finished with code $rc but no status was written\"",
+         "  exit 0",
+         "fi",
+         "",
+         "[[ \"$DB\" =~ ^[a-z0-9_]{1,40}$ && \"$DB\" != _globals ]] || fail \"invalid database\"",
+         "[[ \"$FILE\" =~ ^[A-Za-z0-9_.-]{1,120}\\.dump$ ]] || fail \"invalid file\"",
+         "PATH_=\"$ROOT/$DB/$FILE\"",
+         "[[ -f \"$PATH_\" && \"$(realpath \"$PATH_\")\" == \"$ROOT/$DB/$FILE\" ]] || fail \"no such backup\"",
+         "",
+         "if [[ \"$ACTION\" == export ]]; then",
+         "  [[ \"$BUCKET\" =~ ^ops-console-transfer-[0-9]{12}-[a-z0-9-]{1,30}$ ]] || fail \"invalid bucket\"",
+         "  [[ \"$KEY\" =~ ^downloads/[0-9a-f]{32}/[A-Za-z0-9_.-]{1,120}$ ]] || fail \"invalid key\"",
+         "  sum=\"$(sha256sum \"$PATH_\" | cut -d' ' -f1)\"",
+         "  aws s3 cp --only-show-errors --sse AES256 --content-type application/octet-stream \"$PATH_\" \"s3://$BUCKET/$KEY\" 2>&1 >/dev/null | head -c 300 > /tmp/opsexport.err",
+         "  [[ -s /tmp/opsexport.err ]] && { e=\"$(tr -d '\"\\n' < /tmp/opsexport.err)\"; rm -f /tmp/opsexport.err; fail \"upload failed: $e\"; }",
+         "  rm -f /tmp/opsexport.err",
+         "  printf '{\"ok\":true,\"bytes\":%s,\"sha256\":\"%s\"}\\n' \"$(stat -c %s \"$PATH_\")\" \"$sum\"",
+         "  exit 0",
+         "fi",
+         "",
+         "# ---- verify: restore into a throwaway database as ec2-user (credentials in ~/.pgpass)",
+         "SCRATCH=\"opsverify_${DB:0:30}_$(date +%s)\"",
+         "pg() { runuser -u ec2-user -- env -i HOME=/home/ec2-user PATH=/usr/bin:/bin \"$@\"; }",
+         "psqlq() { pg psql -X -q -tA -h localhost -U postgres -w -v ON_ERROR_STOP=1 \"$@\"; }",
+         "cleanup() { psqlq -d postgres -c \"DROP DATABASE IF EXISTS \\\"$SCRATCH\\\" WITH (FORCE)\" >/dev/null 2>&1; }",
+         "trap cleanup EXIT",
+         "COUNT_SQL=\"SELECT count(*), coalesce(sum((xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name), false, true, '')))[1]::text::bigint), 0)",
+         "           FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema')\"",
+         "t0=$SECONDS",
+         "psqlq -d postgres -c \"CREATE DATABASE \\\"$SCRATCH\\\"\" >/dev/null 2>/tmp/opsverify.err || fail \"could not create scratch database: $(tr -d '\"\\n' < /tmp/opsverify.err | head -c 200)\"",
+         "pg pg_restore -h localhost -U postgres -w --no-owner --no-acl --exit-on-error -d \"$SCRATCH\" \"$PATH_\" 2>/tmp/opsverify.err",
+         "rc=$?",
+         "err=\"$(tr -d '\"\\\\\\n' < /tmp/opsverify.err | head -c 300)\"; rm -f /tmp/opsverify.err",
+         "read -r tables rows < <(psqlq -d \"$SCRATCH\" -F ' ' -c \"$COUNT_SQL\" 2>/dev/null || echo \"0 0\")",
+         "read -r live_tables live_rows < <(psqlq -d \"$DB\" -F ' ' -c \"$COUNT_SQL\" 2>/dev/null || echo \"0 0\")",
+         "secs=$((SECONDS - t0))",
+         "cleanup",
+         "ok=false; [[ $rc == 0 && ${tables:-0} -gt 0 ]] && ok=true",
+         "line=\"$(printf '{\"at\":\"%s\",\"db\":\"%s\",\"file\":\"%s\",\"ok\":%s,\"tables\":%s,\"rows\":%s,\"live_tables\":%s,\"live_rows\":%s,\"seconds\":%s,\"error\":\"%s\"}' \\",
+         "  \"$(date -u +%FT%TZ)\" \"$DB\" \"$FILE\" \"$ok\" \"${tables:-0}\" \"${rows:-0}\" \"${live_tables:-0}\" \"${live_rows:-0}\" \"$secs\" \"$err\")\"",
+         "python3 -I -c '",
+         "import json, os, sys",
+         "p, line = sys.argv[1], json.loads(sys.argv[2])",
+         "try: data = json.load(open(p))",
+         "except Exception: data = []",
+         "data = (data + [line])[-200:]",
+         "tmp = p + \".tmp\"",
+         "with open(tmp, \"w\") as f: json.dump(data, f)",
+         "os.chmod(tmp, 0o644); os.replace(tmp, p)",
+         "' \"$RESULTS\" \"$line\"",
+         "echo \"$line\""
+        ]
+       }
+      }
+     ],
+     "parameters": {
+      "action": {
+       "type": "String",
+       "allowedValues": [
+        "run",
+        "verify",
+        "export"
+       ]
+      },
+      "db": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^[a-z0-9_]{1,40}$"
+      },
+      "file": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^[A-Za-z0-9_.-]{1,120}[.]dump$"
+      },
+      "bucket": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^ops-console-transfer-[0-9]{12}-[a-z0-9-]{1,30}$"
+      },
+      "key": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^downloads/[0-9a-f]{32}/[A-Za-z0-9_.-]{1,120}$"
+      }
+     }
+    }
+   }
+  },
+  "OpsConsoleRotateSecret": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-RotateSecret",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: rotate a DB password or JWT secret, or reload an app's secrets, with automatic restore",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "600",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-RotateSecret: rotate or reload one app's secrets ON the instance, with automatic restore.",
+         "#   kind=db-password target=<postgres role>  new password for a role used by the apps' DATABASE_URLs:",
+         "#        SSM values (DATABASE_URL / DATABASE_PASSWORD of every app using that role) \u2192 ALTER ROLE \u2192 ~ec2-user/.pgpass",
+         "#        \u2192 restart every affected app \u2192 health checks. Any failure restores the old values, password and .pgpass.",
+         "#   kind=jwt         target=<service>      new JWT_SECRET for one app (signs everyone out of it) \u2192 restart \u2192 health",
+         "#   kind=reload      target=<service>      re-read SSM (after a value was changed in the console) \u2192 restart \u2192 health",
+         "# New values are generated here and go straight to SSM: they never appear in the command, its output or any log.",
+         "# Output: one JSON line (names of parameters changed, services restarted, health codes; never values).",
+         "set -u",
+         "export LC_ALL=C",
+         "KIND='{{ kind }}'",
+         "TARGET='{{ target }}'",
+         "case \"$KIND\" in db-password|jwt|reload) ;; *) echo '{\"ok\":false,\"error\":\"unknown kind\"}'; exit 2 ;; esac",
+         "[[ \"$TARGET\" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || { echo '{\"ok\":false,\"error\":\"invalid target\"}'; exit 2; }",
+         "exec python3 -I - \"$KIND\" \"$TARGET\" <<'PY'",
+         "import json, os, re, secrets, subprocess, sys, time, urllib.request",
+         "kind, target = sys.argv[1], sys.argv[2]",
+         "out = {\"ok\": False, \"kind\": kind, \"target\": target, \"updated\": [], \"restarted\": [], \"health\": {}, \"restored\": False}",
+         "def done(**kw):",
+         "    out.update(kw); print(json.dumps(out)); sys.exit(0 if out[\"ok\"] else 1)",
+         "",
+         "def imds(path):",
+         "    tok = urllib.request.urlopen(urllib.request.Request(\"http://169.254.169.254/latest/api/token\", method=\"PUT\",",
+         "          headers={\"X-aws-ec2-metadata-token-ttl-seconds\": \"60\"}), timeout=2).read().decode()",
+         "    return urllib.request.urlopen(urllib.request.Request(\"http://169.254.169.254/latest/meta-data/\" + path,",
+         "          headers={\"X-aws-ec2-metadata-token\": tok}), timeout=2).read().decode()",
+         "REGION = imds(\"placement/region\")",
+         "def aws(*a):",
+         "    return subprocess.run([\"aws\", *a, \"--region\", REGION, \"--output\", \"json\"], capture_output=True, text=True, check=True).stdout",
+         "def put(name, value):   # value via --cli-input-json on stdin: never on a command line",
+         "    subprocess.run([\"aws\", \"ssm\", \"put-parameter\", \"--region\", REGION, \"--cli-input-json\", \"file:///dev/stdin\"],",
+         "                   input=json.dumps({\"Name\": name, \"Value\": value, \"Type\": \"SecureString\", \"Overwrite\": True}),",
+         "                   capture_output=True, text=True, check=True)",
+         "",
+         "# projects on this instance: SERVICE and HEALTH_URL from /opt/deploy/projects/*.conf",
+         "apps = {}",
+         "for d in (\"/opt/deploy/projects\", \"/opt/deploy-state/projects\"):   # repo projects, then console-created apps",
+         "  for f in (sorted(os.listdir(d)) if os.path.isdir(d) else []):",
+         "    if not f.endswith(\".conf\") or f.startswith(\"_\"): continue",
+         "    conf = dict(re.findall(r'^([A-Z_]+)=\"([^\"]*)\"', open(os.path.join(d, f)).read(), re.M))",
+         "    if conf.get(\"SERVICE\") and conf[\"SERVICE\"] not in apps: apps[conf[\"SERVICE\"]] = conf.get(\"HEALTH_URL\")",
+         "params = {p[\"Name\"]: p[\"Value\"] for p in json.loads(aws(\"ssm\", \"get-parameters-by-path\", \"--path\", \"/apps\", \"--recursive\", \"--with-decryption\"))[\"Parameters\"]}",
+         "",
+         "def health(svc):",
+         "    url = apps.get(svc)",
+         "    if not url: return 0",
+         "    for _ in range(45):",
+         "        try:",
+         "            code = urllib.request.urlopen(url, timeout=3).status",
+         "            if 200 <= code < 300: return code",
+         "        except urllib.error.HTTPError as e: code = e.code",
+         "        except Exception: code = 0",
+         "        time.sleep(2)",
+         "    return code",
+         "def restart(svcs):",
+         "    for s in svcs:",
+         "        subprocess.run([\"systemctl\", \"restart\", f\"app-secrets@{s}\"], check=True)",
+         "        subprocess.run([\"systemctl\", \"restart\", s], check=True)",
+         "    return {s: health(s) for s in svcs}",
+         "",
+         "def psql_as_ec2user(sql):",
+         "    subprocess.run([\"runuser\", \"-u\", \"ec2-user\", \"--\", \"env\", \"-i\", \"HOME=/home/ec2-user\", \"PATH=/usr/bin:/bin\",",
+         "                    \"psql\", \"-X\", \"-q\", \"-h\", \"localhost\", \"-U\", \"postgres\", \"-w\", \"-d\", \"postgres\", \"-v\", \"ON_ERROR_STOP=1\"],",
+         "                   input=sql, capture_output=True, text=True, check=True)",
+         "def quote_ident(x): return '\"' + x.replace('\"', '\"\"') + '\"'",
+         "def quote_lit(x): return \"'\" + x.replace(\"'\", \"''\") + \"'\"",
+         "PGPASS = \"/home/ec2-user/.pgpass\"",
+         "def pgpass_set(role, pw):",
+         "    if not os.path.exists(PGPASS): return None",
+         "    old = open(PGPASS).read()",
+         "    lines = [(\":\".join(l.split(\":\")[:4] + [pw]) if len(l.split(\":\")) >= 5 and l.split(\":\")[3] == role else l) for l in old.splitlines()]",
+         "    open(PGPASS, \"w\").write(\"\\n\".join(lines) + \"\\n\"); os.chmod(PGPASS, 0o600)",
+         "    return old",
+         "def url_user(url):",
+         "    m = re.match(r\"^[a-z]+://([^:/@]+):\", url or \"\"); return m.group(1) if m else None",
+         "def url_with_pw(url, user, pw):",
+         "    scheme, rest = url.split(\"://\", 1); _, host = rest.rsplit(\"@\", 1)",
+         "    return f\"{scheme}://{user}:{pw}@{host}\"",
+         "",
+         "snapshot, pg_old, role_old_pw = {}, None, None",
+         "try:",
+         "    if kind == \"reload\":",
+         "        if target not in apps: done(error=f\"unknown service {target}\")",
+         "        h = restart([target]); out[\"restarted\"] = [target]; out[\"health\"] = h",
+         "        done(ok=all(200 <= c < 300 for c in h.values()) or not apps.get(target))",
+         "",
+         "    if kind == \"jwt\":",
+         "        name = f\"/apps/{target}/JWT_SECRET\"",
+         "        if target not in apps or name not in params: done(error=f\"{target} has no JWT_SECRET\")",
+         "        snapshot[name] = params[name]",
+         "        put(name, secrets.token_urlsafe(48)); out[\"updated\"] = [name]",
+         "        h = restart([target]); out[\"restarted\"] = [target]; out[\"health\"] = h",
+         "        if not all(200 <= c < 300 for c in h.values()): raise RuntimeError(f\"{target} unhealthy after rotation\")",
+         "        done(ok=True)",
+         "",
+         "    # db-password",
+         "    role = target",
+         "    if role in (\"opsconsole\", \"ops_monitor\"): done(error=\"that role belongs to the console, not an app\")",
+         "    urls = {n: v for n, v in params.items() if n.endswith(\"/DATABASE_URL\") and n.split(\"/\")[2] in apps and url_user(v) == role}",
+         "    pws = {n: v for n, v in params.items() if n.endswith(\"/DATABASE_PASSWORD\") and n.split(\"/\")[2] in apps",
+         "           and params.get(n.rsplit(\"/\", 1)[0] + \"/DATABASE_USER\") == role}",
+         "    if not urls and not pws: done(error=f\"no app uses the database role {role}\")",
+         "    affected = sorted({n.split(\"/\")[2] for n in list(urls) + list(pws)})",
+         "    role_old_pw = next((re.match(r\"^[a-z]+://[^:]+:(.*)@[^@]+$\", v).group(1) for v in urls.values()), None) or next(iter(pws.values()))",
+         "    new = \"\".join(c if c.isalnum() else \"x\" for c in secrets.token_urlsafe(32))",
+         "    snapshot = {**urls, **pws}",
+         "    for n, v in urls.items(): put(n, url_with_pw(v, role, new))",
+         "    for n in pws: put(n, new)",
+         "    out[\"updated\"] = sorted(snapshot)",
+         "    psql_as_ec2user(f\"ALTER ROLE {quote_ident(role)} WITH PASSWORD {quote_lit(new)};\\n\")",
+         "    pg_old = pgpass_set(role, new)",
+         "    h = restart(affected); out[\"restarted\"] = affected; out[\"health\"] = h",
+         "    if not all(200 <= c < 300 for c in h.values()): raise RuntimeError(\"an app is unhealthy after rotation: \" + \", \".join(f\"{s}={c}\" for s, c in h.items()))",
+         "    done(ok=True)",
+         "except SystemExit:",
+         "    raise",
+         "except Exception as e:",
+         "    err = str(e) if not isinstance(e, subprocess.CalledProcessError) else f\"{e.cmd[0]} {e.cmd[1] if len(e.cmd) > 1 else ''} failed: {(e.stderr or '')[:200]}\"",
+         "    # restore: SSM values, role password, .pgpass, then restart what we touched",
+         "    try:",
+         "        for n, v in snapshot.items(): put(n, v)",
+         "        if kind == \"db-password\" and role_old_pw:",
+         "            psql_as_ec2user(f\"ALTER ROLE {quote_ident(target)} WITH PASSWORD {quote_lit(role_old_pw)};\\n\")",
+         "        if pg_old is not None:",
+         "            open(PGPASS, \"w\").write(pg_old); os.chmod(PGPASS, 0o600)",
+         "        if out[\"restarted\"] or snapshot:",
+         "            out[\"health_after_restore\"] = restart(out[\"restarted\"] or sorted({n.split('/')[2] for n in snapshot}))",
+         "        out[\"restored\"] = bool(snapshot)",
+         "    except Exception as e2:",
+         "        err += f\" | RESTORE FAILED: {str(e2)[:200]}\"",
+         "    done(ok=False, error=err.replace(new if 'new' in dir() else '\\0', '[redacted]')[:500])",
+         "PY"
+        ]
+       }
+      }
+     ],
+     "parameters": {
+      "kind": {
+       "type": "String",
+       "allowedValues": [
+        "db-password",
+        "jwt",
+        "reload"
+       ]
+      },
+      "target": {
+       "type": "String",
+       "allowedPattern": "^[a-z_][a-z0-9_-]{0,30}$"
+      }
+     }
+    }
+   }
+  },
+  "OpsConsoleCreateApp": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-CreateApp",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: set up a new Node.js app from a GitHub repository and deploy it (rolls back on failure)",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "1800",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-CreateApp: set up a NEW Node.js app on this instance from a GitHub repository, then deploy it.",
+         "#   clone (as ec2-user, private repos through a short-lived token the console leaves in SSM) \u2192 pick a free port \u2192",
+         "#   project conf in /opt/deploy-state/projects (survives deploy.sh's rsync) \u2192 SSM /apps/<p>/{PORT,NODE_ENV}",
+         "#   \u2192 optional Postgres role + database (password generated here, DATABASE_URL straight to SSM)",
+         "#   \u2192 systemd unit \u2192 nginx vhost \u2192 HTTPS (certbot) once DNS points here \u2192 pipeline.sh deploy <p>.",
+         "# Anything that fails rolls back everything this run created. Refuses if the project, unit, folder or vhost exists.",
+         "# Every parameter is pinned by allowedPattern in the document and re-checked here.",
+         "# Output: the run log (colour-free, last 20 KB) and a final JSON summary line. Secrets are never printed.",
+         "set -u",
+         "export LC_ALL=C",
+         "PROJECT='{{ project }}'",
+         "REPO='{{ repo }}'",
+         "BRANCH='{{ branch }}'",
+         "SUBDIR='{{ appSubdir }}'",
+         "START='{{ startScript }}'",
+         "BUILD='{{ build }}'",
+         "MIGRATE='{{ migrateScript }}'",
+         "HEALTH='{{ healthPath }}'",
+         "DOMAIN='{{ domain }}'",
+         "DB='{{ db }}'",
+         "MEM='{{ memoryMb }}'",
+         "ACTOR='{{ actor }}'",
+         "",
+         "LOG=\"$(mktemp /tmp/opsconsole-create.XXXXXX)\"",
+         "exec 3>&1 >\"$LOG\" 2>&1",
+         "STEP=validate",
+         "CREATED=()          # what to undo on failure, in order",
+         "PORT=\"\"; TLS=false; DBNAME=\"\"; DBROLE=\"\"",
+         "TOKDIR=/run/ops-console/git",
+         "STATE_PROJ=/opt/deploy-state/projects",
+         "log() { printf '[%s] %s\\n' \"$(date -u +%H:%M:%S)\" \"$*\"; }",
+         "",
+         "summary() { # summary <ok> [error]",
+         "  rm -f \"$TOKDIR/$PROJECT.token\"",
+         "  sed 's/\\x1b\\[[0-9;]*m//g' \"$LOG\" | tail -c 20000 >&3",
+         "  python3 -I -c 'import json,sys; ok=sys.argv[1]==\"true\"; print(json.dumps({\"ok\": ok, \"step\": sys.argv[2], \"error\": sys.argv[3] or None, \"port\": int(sys.argv[4]) if sys.argv[4] else None, \"tls\": sys.argv[5]==\"true\", \"database\": sys.argv[6] or None, \"domain\": sys.argv[7]}))' \\",
+         "    \"$1\" \"$STEP\" \"${2:-}\" \"$PORT\" \"$TLS\" \"$DBNAME\" \"$DOMAIN\" >&3",
+         "  rm -f \"$LOG\"",
+         "}",
+         "",
+         "undo() {",
+         "  log \"rolling back what this run created\"",
+         "  local i",
+         "  for (( i=${#CREATED[@]}-1; i>=0; i-- )); do",
+         "    case \"${CREATED[$i]}\" in",
+         "      unit)   systemctl disable --now \"$PROJECT\" 2>/dev/null; rm -f \"/etc/systemd/system/$PROJECT.service\"; rm -rf \"/etc/systemd/system/app-secrets@$PROJECT.service.d\"; rm -f \"/run/app-secrets/$PROJECT.env\"; systemctl daemon-reload ;;",
+         "      vhost)  rm -f \"/etc/nginx/conf.d/$PROJECT.conf\"; nginx -t 2>/dev/null && systemctl reload nginx ;;",
+         "      cert)   certbot delete --cert-name \"$DOMAIN\" --non-interactive 2>/dev/null ;;",
+         "      db)     printf 'DROP DATABASE IF EXISTS \"%s\" WITH (FORCE);\\nDROP ROLE IF EXISTS \"%s\";\\n' \"$DBNAME\" \"$DBROLE\" | pgsu >/dev/null 2>&1 ;;",
+         "      ssm)    for k in PORT NODE_ENV DATABASE_URL; do aws ssm delete-parameter --region \"$REGION\" --name \"/apps/$PROJECT/$k\" 2>/dev/null; done ;;",
+         "      conf)   rm -f \"$STATE_PROJ/$PROJECT.conf\"; rm -rf \"/opt/deploy-state/$PROJECT\" ;;   # the pipeline's history/backups dir for this new app",
+         "      clone)  rm -rf \"/opt/apps/$PROJECT\" ;;",
+         "    esac",
+         "  done",
+         "}",
+         "",
+         "fail() { log \"\u2718 $*\"; undo; summary false \"$*\"; exit 1; }",
+         "pgsu() { runuser -u ec2-user -- env -i HOME=/home/ec2-user PATH=/usr/bin:/bin psql -X -q -h localhost -U postgres -w -d postgres -v ON_ERROR_STOP=1; }",
+         "asec2() { runuser -u ec2-user -- env -i HOME=/home/ec2-user USER=ec2-user LANG=C.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin \"${GITENV[@]}\" \"$@\"; }",
+         "",
+         "# ------------------------------------------------------------------ validate (again; the document already did)",
+         "[[ \"$PROJECT\" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || fail \"invalid project name\"",
+         "[[ \"$REPO\" =~ ^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$ ]] || fail \"invalid repository\"",
+         "[[ \"$BRANCH\" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$ && \"$BRANCH\" != *..* ]] || fail \"invalid branch\"",
+         "[[ -z \"$SUBDIR\" || ( \"$SUBDIR\" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]{0,99}$ && \"$SUBDIR\" != *..* ) ]] || fail \"invalid app folder\"",
+         "[[ \"$START\" =~ ^[a-z0-9:_-]{1,40}$ ]] || fail \"invalid start script\"",
+         "[[ -z \"$MIGRATE\" || \"$MIGRATE\" =~ ^[a-z0-9:_-]{1,40}$ ]] || fail \"invalid migrate script\"",
+         "[[ \"$BUILD\" == yes || \"$BUILD\" == no ]] || fail \"invalid build flag\"",
+         "[[ \"$DB\" == yes || \"$DB\" == no ]] || fail \"invalid db flag\"",
+         "[[ \"$HEALTH\" =~ ^/[A-Za-z0-9._~/-]{0,100}$ ]] || fail \"invalid health path\"",
+         "[[ \"$DOMAIN\" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,24}$ ]] || fail \"invalid domain\"",
+         "[[ \"$MEM\" =~ ^[0-9]{2,4}$ ]] && (( MEM >= 64 && MEM <= 2048 )) || fail \"memory must be 64-2048 MB\"",
+         "[[ \"$ACTOR\" =~ ^[A-Za-z0-9._@:-]{1,64}$ ]] || fail \"invalid actor\"",
+         "",
+         "STEP=checks",
+         "[[ -e \"/opt/deploy/projects/$PROJECT.conf\" || -e \"$STATE_PROJ/$PROJECT.conf\" ]] && fail \"a project called $PROJECT already exists\"",
+         "[[ -e \"/opt/apps/$PROJECT\" ]] && fail \"/opt/apps/$PROJECT already exists\"",
+         "# a pipeline state dir without a project conf is left over from an earlier failed attempt: set it aside, never delete it",
+         "if [[ -d \"/opt/deploy-state/$PROJECT\" ]]; then",
+         "  install -d -m 0755 /opt/deploy-state/.leftovers",
+         "  mv \"/opt/deploy-state/$PROJECT\" \"/opt/deploy-state/.leftovers/$PROJECT-$(date -u +%Y%m%dT%H%M%SZ)\"",
+         "  log \"moved an old pipeline state dir for $PROJECT to /opt/deploy-state/.leftovers/\"",
+         "fi",
+         "systemctl cat \"$PROJECT.service\" >/dev/null 2>&1 && fail \"a systemd unit $PROJECT.service already exists\"",
+         "[[ -e \"/etc/nginx/conf.d/$PROJECT.conf\" ]] && fail \"an nginx site $PROJECT.conf already exists\"",
+         "grep -rqsl -E \"server_name[^;]*[[:space:]]$DOMAIN[[:space:];]\" /etc/nginx/conf.d/ && fail \"nginx already serves $DOMAIN\"",
+         "IMDS_TOKEN=\"$(curl -s -m 2 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 120' http://169.254.169.254/latest/api/token)\"",
+         "md() { curl -s -m 2 -H \"X-aws-ec2-metadata-token: $IMDS_TOKEN\" \"http://169.254.169.254/latest/meta-data/$1\"; }",
+         "REGION=\"$(md placement/region)\"; MYIP=\"$(md public-ipv4)\"",
+         "[[ -n \"$REGION\" ]] || fail \"cannot read the instance region\"",
+         "",
+         "# ------------------------------------------------------------------ port",
+         "STEP=port",
+         "PORT=\"$(python3 -I - <<'PY'",
+         "import glob, re, subprocess",
+         "used = set()",
+         "for f in glob.glob(\"/opt/deploy/projects/*.conf\") + glob.glob(\"/opt/deploy-state/projects/*.conf\"):",
+         "    m = re.search(r'HEALTH_URL=\"https?://[^/:]+:(\\d+)', open(f).read())",
+         "    if m: used.add(int(m.group(1)))",
+         "for line in subprocess.run([\"ss\", \"-ltnH\"], capture_output=True, text=True).stdout.splitlines():",
+         "    m = re.search(r\":(\\d+)\\s\", line.split()[3] + \" \") if len(line.split()) > 3 else None",
+         "    if m: used.add(int(m.group(1)))",
+         "print(next(p for p in range(5000, 6000) if p not in used))",
+         "PY",
+         ")\" || fail \"no free port\"",
+         "log \"port $PORT\"",
+         "",
+         "# ------------------------------------------------------------------ clone",
+         "STEP=clone",
+         "GITENV=(GIT_TERMINAL_PROMPT=0)",
+         "if tok=\"$(aws ssm get-parameter --region \"$REGION\" --name \"/ops-console/git-tokens/$PROJECT\" --with-decryption --query Parameter.Value --output text 2>/dev/null)\" && [[ -n \"$tok\" && \"$tok\" != None ]]; then",
+         "  install -d -m 0700 -o ec2-user -g ec2-user \"$TOKDIR\"",
+         "  ( umask 077; printf '%s' \"$tok\" > \"$TOKDIR/$PROJECT.token\" ); chown ec2-user: \"$TOKDIR/$PROJECT.token\"",
+         "  printf '#!/bin/sh\\ncase \"$1\" in Username*) echo x-access-token ;; *) cat \"$OPS_GIT_TOKEN_FILE\" ;; esac\\n' > \"$TOKDIR/askpass.sh\"",
+         "  chmod 0700 \"$TOKDIR/askpass.sh\"; chown ec2-user: \"$TOKDIR/askpass.sh\"",
+         "  GITENV+=(GIT_ASKPASS=\"$TOKDIR/askpass.sh\" OPS_GIT_TOKEN_FILE=\"$TOKDIR/$PROJECT.token\")",
+         "fi",
+         "unset tok",
+         "install -d -m 0755 -o ec2-user -g ec2-user /opt/apps",
+         "CREATED+=(clone)",
+         "asec2 git clone --quiet --branch \"$BRANCH\" \"https://github.com/$REPO.git\" \"/opt/apps/$PROJECT\" || fail \"git clone failed (does the GitHub App have access to $REPO?)\"",
+         "APPDIR=\"/opt/apps/$PROJECT${SUBDIR:+/$SUBDIR}\"",
+         "[[ -f \"$APPDIR/package.json\" ]] || fail \"no package.json in ${SUBDIR:-the repository root}\"",
+         "log \"cloned $REPO@$BRANCH ($(asec2 git -C \"/opt/apps/$PROJECT\" rev-parse --short HEAD))\"",
+         "",
+         "# ------------------------------------------------------------------ database (optional)",
+         "if [[ \"$DB\" == yes ]]; then",
+         "  STEP=database",
+         "  DBNAME=\"${PROJECT//-/_}\"; DBROLE=\"${DBNAME}_user\"",
+         "  if printf \"SELECT 1 FROM pg_database WHERE datname='%s' UNION SELECT 1 FROM pg_roles WHERE rolname='%s';\\n\" \"$DBNAME\" \"$DBROLE\" | runuser -u ec2-user -- env -i HOME=/home/ec2-user PATH=/usr/bin:/bin psql -X -tA -h localhost -U postgres -w -d postgres | grep -q 1; then",
+         "    DBNAME=\"\"; fail \"a database or role for $PROJECT already exists\"",
+         "  fi",
+         "  PW=\"$(python3 -I -c 'import secrets; print(\"\".join(c if c.isalnum() else \"x\" for c in secrets.token_urlsafe(32)))')\"",
+         "  CREATED+=(db)",
+         "  printf 'CREATE ROLE \"%s\" LOGIN PASSWORD '\"'\"'%s'\"'\"' CONNECTION LIMIT 20;\\nCREATE DATABASE \"%s\" OWNER \"%s\";\\nREVOKE CONNECT ON DATABASE \"%s\" FROM PUBLIC;\\nGRANT CONNECT ON DATABASE \"%s\" TO \"%s\";\\n' \\",
+         "    \"$DBROLE\" \"$PW\" \"$DBNAME\" \"$DBROLE\" \"$DBNAME\" \"$DBNAME\" \"$DBROLE\" | pgsu >/dev/null || fail \"could not create the database\"",
+         "  CREATED+=(ssm)",
+         "  python3 -I -c 'import json,sys; print(json.dumps({\"Name\": sys.argv[1], \"Value\": sys.argv[2], \"Type\": \"SecureString\", \"Overwrite\": True}))' \\",
+         "    \"/apps/$PROJECT/DATABASE_URL\" \"postgresql://$DBROLE:$PW@127.0.0.1:5432/$DBNAME\" \\",
+         "    | aws ssm put-parameter --region \"$REGION\" --cli-input-json file:///dev/stdin >/dev/null || fail \"could not save DATABASE_URL\"",
+         "  unset PW",
+         "  log \"database $DBNAME (role $DBROLE); DATABASE_URL saved to SSM\"",
+         "fi",
+         "",
+         "# ------------------------------------------------------------------ settings in SSM",
+         "STEP=settings",
+         "[[ \" ${CREATED[*]} \" == *\" ssm \"* ]] || CREATED+=(ssm)",
+         "aws ssm put-parameter --region \"$REGION\" --name \"/apps/$PROJECT/PORT\" --type String --value \"$PORT\" --overwrite >/dev/null || fail \"could not save PORT\"",
+         "aws ssm put-parameter --region \"$REGION\" --name \"/apps/$PROJECT/NODE_ENV\" --type String --value production --overwrite >/dev/null || fail \"could not save NODE_ENV\"",
+         "",
+         "# ------------------------------------------------------------------ project conf (pipeline + ops agent)",
+         "STEP=conf",
+         "install -d -m 0755 -o ec2-user -g ec2-user \"$STATE_PROJ\"",
+         "INSTALL=\"npm ci --no-audit --no-fund\"; [[ -f \"$APPDIR/package-lock.json\" ]] || INSTALL=\"npm install --no-audit --no-fund\"",
+         "CREATED+=(conf)",
+         "cat > \"$STATE_PROJ/$PROJECT.conf\" <<CONF",
+         "# Created by the Ops Console (OpsConsole-CreateApp) for $REPO; kept in the state dir so deploy.sh never removes it.",
+         "SERVICE=\"$PROJECT\"",
+         "SOURCE_DIR=\"/opt/apps/$PROJECT\"",
+         "BRANCH=\"$BRANCH\"",
+         "APP_SUBDIR=\"${SUBDIR:-.}\"",
+         "INSTALL_CMD=\"$INSTALL\"",
+         "BUILD_CMD=\"$([[ \"$BUILD\" == yes ]] && echo \"npm run build\")\"",
+         "MIGRATE_CMD=\"$([[ -n \"$MIGRATE\" ]] && echo \"npm run $MIGRATE\")\"",
+         "DB_NAME=\"$DBNAME\"",
+         "HEALTH_URL=\"http://127.0.0.1:$PORT$HEALTH\"",
+         "DOMAIN=\"$DOMAIN\"",
+         "CONF",
+         "chown ec2-user: \"$STATE_PROJ/$PROJECT.conf\"; chmod 0644 \"$STATE_PROJ/$PROJECT.conf\"",
+         "",
+         "# ------------------------------------------------------------------ systemd unit",
+         "STEP=service",
+         "EXEC=\"/usr/bin/npm run $START\"; [[ \"$START\" == start ]] && EXEC=\"/usr/bin/npm start\"",
+         "CREATED+=(unit)",
+         "cat > \"/etc/systemd/system/$PROJECT.service\" <<UNIT",
+         "# Created by the Ops Console for $REPO. Secrets: SSM /apps/$PROJECT/* loaded by app-secrets@$PROJECT.",
+         "[Unit]",
+         "Description=$PROJECT ($REPO)",
+         "Wants=network-online.target",
+         "Requires=app-secrets@$PROJECT.service",
+         "After=network-online.target postgresql.service app-secrets@$PROJECT.service",
+         "",
+         "[Service]",
+         "Type=simple",
+         "User=ec2-user",
+         "WorkingDirectory=$APPDIR",
+         "EnvironmentFile=/run/app-secrets/$PROJECT.env",
+         "Environment=NODE_ENV=production PORT=$PORT",
+         "ExecStart=$EXEC",
+         "Restart=on-failure",
+         "RestartSec=5",
+         "SuccessExitStatus=143",
+         "MemoryMax=${MEM}M",
+         "",
+         "[Install]",
+         "WantedBy=multi-user.target",
+         "UNIT",
+         "# the secrets loader defaults to af-south-1: pin this instance's region for this app",
+         "install -d -m 0755 \"/etc/systemd/system/app-secrets@$PROJECT.service.d\"",
+         "printf '[Service]\\nEnvironment=AWS_REGION=%s\\n' \"$REGION\" > \"/etc/systemd/system/app-secrets@$PROJECT.service.d/region.conf\"",
+         "systemctl daemon-reload && systemctl enable --quiet \"$PROJECT\" || fail \"could not install the systemd unit\"",
+         "# load /apps/$PROJECT/* now: the first deploy's migrations read DATABASE_* from it, and it proves SSM access works",
+         "systemctl restart \"app-secrets@$PROJECT\" || fail \"could not load the app's settings from SSM (instance role permissions in $REGION?)\"",
+         "",
+         "# ------------------------------------------------------------------ nginx + HTTPS",
+         "STEP=nginx",
+         "CREATED+=(vhost)",
+         "cat > \"/etc/nginx/conf.d/$PROJECT.conf\" <<NGX",
+         "# Created by the Ops Console for $REPO",
+         "server {",
+         "    listen 80;",
+         "    server_name $DOMAIN;",
+         "    client_max_body_size 20m;",
+         "    location / {",
+         "        proxy_pass         http://127.0.0.1:$PORT;",
+         "        proxy_http_version 1.1;",
+         "        proxy_set_header   Host \\$host;",
+         "        proxy_set_header   X-Forwarded-For \\$remote_addr;",
+         "        proxy_set_header   X-Forwarded-Proto \\$scheme;",
+         "        proxy_set_header   Upgrade \\$http_upgrade;",
+         "        proxy_set_header   Connection \"upgrade\";",
+         "        proxy_read_timeout 60s;",
+         "    }",
+         "}",
+         "NGX",
+         "nginx -t && systemctl reload nginx || fail \"nginx rejected the new site\"",
+         "",
+         "STEP=https",
+         "# The console already waited for Route 53 to report the record live; this instance's resolver may still hold an old",
+         "# \"no such name\" answer for a few minutes. Let's Encrypt checks public DNS, so try the certificate either way.",
+         "resolved=false",
+         "for _ in $(seq 1 60); do [[ \"$(getent hosts \"$DOMAIN\" | awk '{print $1}' | head -1)\" == \"$MYIP\" ]] && { resolved=true; break; }; sleep 5; done",
+         "$resolved || log \"this instance doesn't resolve $DOMAIN yet (DNS cache); trying the certificate anyway\"",
+         "CREATED+=(cert)",
+         "if certbot --nginx -d \"$DOMAIN\" --non-interactive --agree-tos --redirect --register-unsafely-without-email; then TLS=true; log \"HTTPS certificate issued for $DOMAIN\"",
+         "else log \"\u26a0 certbot failed; the app is reachable over HTTP only for now (re-run: sudo certbot --nginx -d $DOMAIN)\"; fi",
+         "",
+         "# ------------------------------------------------------------------ first deploy (install, build, migrate, start, health)",
+         "STEP=deploy",
+         "asec2 DEPLOY_ACTOR=\"$ACTOR\" DEPLOY_TRIGGER=ops-console bash /opt/deploy/server/pipeline.sh deploy \"$PROJECT\" \"$BRANCH\" </dev/null || fail \"the first deploy failed (see the pipeline output above)\"",
+         "",
+         "STEP=done",
+         "log \"\u2714 $PROJECT is live at http$([[ $TLS == true ]] && echo s)://$DOMAIN\"",
+         "summary true",
+         "exit 0"
+        ]
+       }
+      }
+     ],
+     "parameters": {
+      "project": {
+       "type": "String",
+       "allowedPattern": "^[a-z][a-z0-9-]{1,30}$"
+      },
+      "repo": {
+       "type": "String",
+       "allowedPattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+      },
+      "branch": {
+       "type": "String",
+       "allowedPattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$"
+      },
+      "appSubdir": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^[A-Za-z0-9_][A-Za-z0-9_./-]{0,99}$"
+      },
+      "startScript": {
+       "type": "String",
+       "allowedPattern": "^[a-z0-9:_-]{1,40}$"
+      },
+      "build": {
+       "type": "String",
+       "allowedValues": [
+        "yes",
+        "no"
+       ]
+      },
+      "migrateScript": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^[a-z0-9:_-]{1,40}$"
+      },
+      "healthPath": {
+       "type": "String",
+       "default": "/",
+       "allowedPattern": "^/[A-Za-z0-9._~/-]{0,100}$"
+      },
+      "domain": {
+       "type": "String",
+       "allowedPattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,24}$"
+      },
+      "db": {
+       "type": "String",
+       "allowedValues": [
+        "yes",
+        "no"
+       ]
+      },
+      "memoryMb": {
+       "type": "String",
+       "default": "256",
+       "allowedPattern": "^[0-9]{2,4}$"
+      },
+      "actor": {
+       "type": "String",
+       "allowedPattern": "^[A-Za-z0-9._@:-]{1,64}$"
+      }
+     }
+    }
+   }
+  },
+  "OpsConsoleAppDetail": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-AppDetail",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: read-only detail of one project (unit, health, git, deploys, database)",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "60",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-AppDetail: full read-only view of ONE project from the local ops agent (127.0.0.1:9100/api/app/<p>):",
+         "# unit, health, git (commits, commits waiting on origin), deploy history, database metrics and tables.",
+         "# fetch=yes first runs `git fetch origin <branch>` as ec2-user so \"commits waiting\" is current",
+         "# (it only updates remote-tracking refs; the working tree and the running app are untouched).",
+         "# Output: base64(gzip(JSON)), compacted to stay under SSM's 24 KB output limit.",
+         "set -u",
+         "export LC_ALL=C",
+         "PROJECT='{{ project }}'",
+         "FETCH='{{ fetch }}'",
+         "",
+         "fail() { echo \"ops-console: $*\" >&2; exit 2; }",
+         "[[ \"$PROJECT\" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || fail \"invalid project\"",
+         "[[ \"$FETCH\" == yes || \"$FETCH\" == no ]] || fail \"invalid fetch\"",
+         "CONF=\"/opt/deploy/projects/$PROJECT.conf\"; [[ -f \"$CONF\" ]] || CONF=\"/opt/deploy-state/projects/$PROJECT.conf\"",
+         "[[ -f \"$CONF\" ]] || fail \"unknown project '$PROJECT'\"",
+         "",
+         "fetch_error=\"\"",
+         "if [[ \"$FETCH\" == yes ]]; then",
+         "  SRC=\"$(sed -n 's/^SOURCE_DIR=\"\\([A-Za-z0-9_./-]*\\)\".*/\\1/p' \"$CONF\" | head -1)\"",
+         "  BR=\"$(sed -n 's/^BRANCH=\"\\([A-Za-z0-9._/-]*\\)\".*/\\1/p' \"$CONF\" | head -1)\"; BR=\"${BR:-main}\"",
+         "  if [[ -n \"$SRC\" && -d \"$SRC/.git\" ]]; then",
+         "    timeout 25 runuser -u ec2-user -- env -i HOME=/home/ec2-user PATH=/usr/bin:/bin \\",
+         "      git -C \"$SRC\" fetch --quiet origin \"$BR\" </dev/null >/dev/null 2>&1 || fetch_error=\"git fetch failed\"",
+         "  else",
+         "    fetch_error=\"no git checkout\"",
+         "  fi",
+         "fi",
+         "",
+         "curl -sf -m 30 \"http://127.0.0.1:9100/api/app/$PROJECT\" | FETCH_ERROR=\"$fetch_error\" python3 -I -c '",
+         "import json, os, sys",
+         "d = json.load(sys.stdin)",
+         "cut = lambda xs, n: (xs or [])[:n]",
+         "d[\"deploys\"] = cut(d.get(\"deploys\"), 30)",
+         "g = d.get(\"git\") or {}",
+         "for k, n in ((\"commits\", 15), (\"upstream_commits\", 20), (\"dirty_files\", 20)):",
+         "    if k in g: g[k] = cut(g[k], n)",
+         "h = d.get(\"health\") or {}",
+         "if h.get(\"body\"): h[\"body\"] = h[\"body\"][:800]",
+         "w = d.get(\"warnings_24h\")",
+         "if isinstance(w, dict): w.pop(\"last\", None)",
+         "db = d.get(\"database\") or {}",
+         "if isinstance(db.get(\"tables\"), list): db[\"tables\"] = db[\"tables\"][:60]",
+         "if isinstance(db.get(\"connections\"), list): db[\"connections\"] = db[\"connections\"][:20]",
+         "d[\"fetch_error\"] = os.environ.get(\"FETCH_ERROR\") or None",
+         "sys.stdout.write(json.dumps(d, separators=(\",\", \":\")))",
+         "' | gzip -9c | base64 -w0",
+         "[[ \"${PIPESTATUS[0]}\" == 0 ]] || fail \"ops agent unavailable on 127.0.0.1:9100\""
+        ]
+       }
+      }
+     ],
+     "parameters": {
+      "project": {
+       "type": "String",
+       "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+      },
+      "fetch": {
+       "type": "String",
+       "default": "no",
+       "allowedValues": [
+        "no",
+        "yes"
+       ]
+      }
+     }
+    }
+   }
+  },
+  "OpsConsoleSecurity": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-Security",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: read-only security snapshot (keys, SSH logins, sshd settings, OS updates; no parameters)",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "180",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-Security: read-only security snapshot of this instance. No parameters.",
+         "#   - who can log in: authorized_keys of every login user (type, fingerprint, comment; never the key itself)",
+         "#   - SSH logins of the last 7 days (from the sshd journal, with the key fingerprint used) and failed attempts",
+         "#   - who is logged in now, the effective sshd settings",
+         "#   - OS updates: on Amazon Linux 2023, newer releases (that is how AL2023 ships fixes); elsewhere, pending",
+         "#     security advisories; and whether a reboot is needed",
+         "# Uses only cheap package queries: never `dnf --releasever=latest updateinfo` (\u22480.5 GB of memory on small boxes).",
+         "# Output: base64(gzip(JSON)).",
+         "set -u",
+         "export LC_ALL=C",
+         "exec nice -n 10 python3 -I - <<'PY'",
+         "import base64, gzip, json, os, pwd, re, subprocess, time",
+         "",
+         "def run(cmd, timeout=90, stdin=None):",
+         "    try:",
+         "        p = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout)",
+         "        return p.returncode, p.stdout, p.stderr",
+         "    except Exception as e:",
+         "        return -1, \"\", str(e)",
+         "",
+         "out = {\"at\": int(time.time())}",
+         "",
+         "# ---------------------------------------------------------------- OS",
+         "osr = {}",
+         "try:",
+         "    for line in open(\"/etc/os-release\"):",
+         "        k, _, v = line.strip().partition(\"=\")",
+         "        osr[k] = v.strip('\"')",
+         "except Exception:",
+         "    pass",
+         "rc, rel, _ = run([\"rpm\", \"-q\", \"--qf\", \"%{VERSION}\", \"system-release\"], 10)",
+         "out[\"os\"] = {\"name\": osr.get(\"PRETTY_NAME\"), \"id\": osr.get(\"ID\"), \"version\": osr.get(\"VERSION_ID\"),",
+         "             \"release\": rel.strip() if rc == 0 else None, \"kernel\": os.uname().release}",
+         "",
+         "# ---------------------------------------------------------------- updates",
+         "def release_date(v):",
+         "    m = re.search(r\"\\.(\\d{8})$\", v or \"\")",
+         "    return f\"{m.group(1)[:4]}-{m.group(1)[4:6]}-{m.group(1)[6:]}\" if m else None",
+         "",
+         "upd = {\"kind\": None, \"current\": None, \"currentDate\": None, \"newer\": [], \"advisories\": [], \"advisoryCount\": 0,",
+         "       \"severities\": {}, \"command\": None, \"error\": None}",
+         "al2023 = osr.get(\"ID\") == \"amzn\" and (osr.get(\"VERSION_ID\") or \"\").startswith(\"2023\")",
+         "if al2023:",
+         "    upd[\"kind\"] = \"release\"",
+         "    upd[\"current\"] = out[\"os\"][\"release\"]; upd[\"currentDate\"] = release_date(upd[\"current\"])",
+         "    rc, so, se = run([\"dnf\", \"check-release-update\"], 90)",
+         "    vers = sorted(set(re.findall(r\"Version (2023\\.\\d+\\.\\d{8}):\", so + se)))",
+         "    upd[\"newer\"] = [{\"version\": v, \"date\": release_date(v)} for v in vers]",
+         "    if rc not in (0, 100) and not vers: upd[\"error\"] = (se or so).strip()[-300:] or f\"dnf exited {rc}\"",
+         "    if vers: upd[\"command\"] = f\"sudo dnf upgrade --releasever={vers[-1]}\"",
+         "# security advisories in the enabled repos (the real answer on AL2/RHEL-likes; usually empty on a locked AL2023 release)",
+         "if os.path.exists(\"/usr/bin/dnf\") or os.path.exists(\"/usr/bin/yum\"):",
+         "    tool = \"dnf\" if os.path.exists(\"/usr/bin/dnf\") else \"yum\"",
+         "    rc, so, se = run([tool, \"-q\", \"updateinfo\", \"list\", \"--security\"] if tool == \"dnf\" else [\"yum\", \"-q\", \"updateinfo\", \"list\", \"security\"], 120)",
+         "    if rc == 0:",
+         "        seen = set()",
+         "        for line in so.splitlines():",
+         "            m = re.match(r\"^(\\S+)\\s+(\\S+?)(?:/Sec\\.)?\\s+(\\S+)$\", line.strip())",
+         "            if not m: continue",
+         "            adv, sev, pkg = m.groups()",
+         "            sev = sev.split(\"/\")[0]",
+         "            upd[\"severities\"][sev] = upd[\"severities\"].get(sev, 0) + 1",
+         "            if (adv, pkg) not in seen and len(upd[\"advisories\"]) < 60:",
+         "                seen.add((adv, pkg)); upd[\"advisories\"].append({\"id\": adv, \"severity\": sev, \"package\": pkg})",
+         "        upd[\"advisoryCount\"] = sum(upd[\"severities\"].values())",
+         "        if not upd[\"kind\"]: upd[\"kind\"] = \"advisories\"",
+         "        if upd[\"advisoryCount\"] and not upd[\"command\"]: upd[\"command\"] = f\"sudo {tool} upgrade --security\"",
+         "    elif not upd[\"error\"] and not al2023:",
+         "        upd[\"error\"] = (se or so).strip()[-300:] or f\"{tool} exited {rc}\"",
+         "rc, so, _ = run([\"needs-restarting\", \"-r\"], 60)",
+         "upd[\"rebootRequired\"] = True if rc == 1 else False if rc == 0 else None",
+         "rc, so, _ = run([\"rpm\", \"-q\", \"--last\", \"kernel\"], 10)",
+         "newest_kernel = so.split()[0].replace(\"kernel-\", \"\", 1) if rc == 0 and so.strip() else None",
+         "upd[\"newestKernel\"] = newest_kernel",
+         "upd[\"kernelPending\"] = bool(newest_kernel and newest_kernel != os.uname().release)",
+         "out[\"updates\"] = upd",
+         "",
+         "# ---------------------------------------------------------------- sshd settings",
+         "rc, so, _ = run([\"sshd\", \"-T\"], 10)",
+         "cfg = {}",
+         "for line in so.splitlines():",
+         "    k, _, v = line.partition(\" \")",
+         "    if k in (\"port\", \"permitrootlogin\", \"passwordauthentication\", \"pubkeyauthentication\", \"kbdinteractiveauthentication\", \"maxauthtries\", \"x11forwarding\"):",
+         "        cfg[k] = v.strip()",
+         "out[\"sshd\"] = cfg",
+         "",
+         "# ---------------------------------------------------------------- host keys (to verify a first SSH connection)",
+         "host_keys = []",
+         "for f in sorted(os.listdir(\"/etc/ssh\")) if os.path.isdir(\"/etc/ssh\") else []:",
+         "    if f.startswith(\"ssh_host_\") and f.endswith(\"_key.pub\"):",
+         "        rc, so, _ = run([\"ssh-keygen\", \"-lf\", os.path.join(\"/etc/ssh\", f)], 10)",
+         "        m = re.match(r\"^\\d+ (SHA256:\\S+) .*\\((\\w+)\\)$\", so.strip())",
+         "        if m: host_keys.append({\"type\": m.group(2), \"fingerprint\": m.group(1)})",
+         "out[\"hostKeys\"] = host_keys",
+         "",
+         "# ---------------------------------------------------------------- authorized keys of every login user",
+         "TYPES = (\"ssh-ed25519\", \"ssh-rsa\", \"ecdsa-sha2-nistp256\", \"ecdsa-sha2-nistp384\", \"ecdsa-sha2-nistp521\",",
+         "         \"sk-ssh-ed25519@openssh.com\", \"sk-ecdsa-sha2-nistp256@openssh.com\", \"ssh-dss\")",
+         "def split_key(line):",
+         "    \"\"\"(options, type, blob, comment) of an authorized_keys line, or None.\"\"\"",
+         "    parts = line.split()",
+         "    for i, p in enumerate(parts):",
+         "        if p in TYPES and i + 1 < len(parts):",
+         "            return \" \".join(parts[:i]), p, parts[i + 1], \" \".join(parts[i + 2:])",
+         "    return None",
+         "def fingerprint(typ, blob):",
+         "    rc, so, _ = run([\"ssh-keygen\", \"-lf\", \"-\"], 10, f\"{typ} {blob}\\n\")",
+         "    m = re.match(r\"^(\\d+) (SHA256:\\S+)\", so.strip())",
+         "    return (m.group(2), int(m.group(1))) if m else (None, None)",
+         "",
+         "users = []",
+         "for pw in pwd.getpwall():",
+         "    if pw.pw_shell.endswith((\"nologin\", \"false\", \"sync\", \"shutdown\", \"halt\")): continue",
+         "    if not (pw.pw_uid == 0 or pw.pw_uid >= 1000) or not os.path.isdir(pw.pw_dir): continue",
+         "    path = os.path.join(pw.pw_dir, \".ssh\", \"authorized_keys\")",
+         "    keys = []",
+         "    try:",
+         "        lines = open(path).read().splitlines()",
+         "    except FileNotFoundError:",
+         "        lines = []",
+         "    except Exception as e:",
+         "        lines = []; keys.append({\"error\": str(e)[:120]})",
+         "    for line in lines:",
+         "        line = line.strip()",
+         "        if not line or line.startswith(\"#\"): continue",
+         "        k = split_key(line)",
+         "        if not k: continue",
+         "        opts, typ, blob, comment = k",
+         "        fp, bits = fingerprint(typ, blob)",
+         "        exp = re.search(r'expiry-time=\"(\\d{8,14})', opts)",
+         "        src = re.search(r'from=\"([^\"]*)\"', opts)",
+         "        expires = None",
+         "        if exp:",
+         "            try: expires = int(time.mktime(time.strptime(exp.group(1)[:12].ljust(12, \"0\"), \"%Y%m%d%H%M\")))",
+         "            except Exception: expires = None",
+         "        keys.append({\"type\": typ, \"bits\": bits, \"fingerprint\": fp, \"comment\": comment[:100],",
+         "                     \"options\": bool(opts), \"blocked\": \"command=\" in opts, \"expires\": expires, \"from\": src.group(1)[:200] if src else None})",
+         "    users.append({\"user\": pw.pw_name, \"uid\": pw.pw_uid, \"home\": pw.pw_dir, \"keys\": keys,",
+         "                  \"manageable\": pw.pw_uid != 0 and (pw.pw_uid >= 1000)})",
+         "out[\"users\"] = users",
+         "",
+         "# ---------------------------------------------------------------- SSH logins (journal, 7 days)",
+         "rc, so, _ = run([\"journalctl\", \"-u\", \"sshd\", \"--since\", \"-7 days\", \"-n\", \"20000\", \"-o\", \"json\", \"--no-pager\", \"-q\",",
+         "                 \"--output-fields=MESSAGE,__REALTIME_TIMESTAMP\"], 60)",
+         "accepted, fails = [], {}",
+         "now = time.time()",
+         "ACC = re.compile(r\"^Accepted (\\S+) for (\\S+) from (\\S+) port \\d+ \\S+(?:: (\\S+) (\\S+))?\")",
+         "FAIL = [re.compile(r\"^Invalid user (\\S*) from (\\S+)\"),",
+         "        re.compile(r\"^Failed \\S+ for (?:invalid user )?(\\S+) from (\\S+)\"),",
+         "        re.compile(r\"^Connection closed by authenticating user (\\S+) (\\S+)\"),",
+         "        re.compile(r\"^Disconnected from authenticating user (\\S+) (\\S+)\")]",
+         "for line in so.splitlines():",
+         "    try:",
+         "        e = json.loads(line)",
+         "    except Exception:",
+         "        continue",
+         "    msg = e.get(\"MESSAGE\")",
+         "    if not isinstance(msg, str): continue",
+         "    ts = int(e.get(\"__REALTIME_TIMESTAMP\", \"0\")) / 1e6",
+         "    m = ACC.match(msg)",
+         "    if m:",
+         "        method, user, ip, ktype, fp = m.groups()",
+         "        accepted.append({\"at\": int(ts), \"user\": user, \"ip\": ip, \"method\": method, \"keyType\": ktype, \"fingerprint\": fp})",
+         "        continue",
+         "    for r in FAIL:",
+         "        m = r.match(msg)",
+         "        if m:",
+         "            user, ip = m.groups()",
+         "            f = fails.setdefault(ip, {\"ip\": ip, \"count\": 0, \"count24h\": 0, \"last\": 0, \"users\": []})",
+         "            f[\"count\"] += 1",
+         "            if now - ts < 86400: f[\"count24h\"] += 1",
+         "            f[\"last\"] = max(f[\"last\"], int(ts))",
+         "            if user and user not in f[\"users\"] and len(f[\"users\"]) < 5: f[\"users\"].append(user[:32])",
+         "            break",
+         "accepted.sort(key=lambda x: -x[\"at\"])",
+         "top = sorted(fails.values(), key=lambda x: -x[\"count\"])",
+         "out[\"logins\"] = {\"accepted\": accepted[:50], \"acceptedTotal\": len(accepted),",
+         "                 \"failed\": top[:15], \"failedTotal\": sum(f[\"count\"] for f in top), \"failed24h\": sum(f[\"count24h\"] for f in top),",
+         "                 \"failedIps\": len(top), \"journal\": rc == 0}",
+         "",
+         "# ---------------------------------------------------------------- logged in now",
+         "rc, so, _ = run([\"who\", \"--ips\"], 10)",
+         "now_on = []",
+         "for line in so.splitlines():",
+         "    p = line.split()",
+         "    if len(p) >= 4:",
+         "        now_on.append({\"user\": p[0], \"tty\": p[1], \"since\": f\"{p[2]} {p[3]}\", \"from\": p[4] if len(p) > 4 else None})",
+         "out[\"sessions\"] = now_on",
+         "",
+         "print(base64.b64encode(gzip.compress(json.dumps(out, separators=(\",\", \":\")).encode(), 9)).decode(), end=\"\")",
+         "PY"
+        ]
+       }
+      }
+     ]
+    }
+   }
+  },
+  "OpsConsoleSshKeys": {
+   "Type": "AWS::SSM::Document",
+   "Condition": "InstallDocuments",
+   "Properties": {
+    "Name": "OpsConsole-SshKeys",
+    "DocumentType": "Command",
+    "DocumentFormat": "JSON",
+    "UpdateMethod": "NewVersion",
+    "Content": {
+     "schemaVersion": "2.2",
+     "description": "Ops Console: add or remove one public key of a login user (never root; keeps ec2-user's last key)",
+     "mainSteps": [
+      {
+       "action": "aws:runShellScript",
+       "name": "run",
+       "inputs": {
+        "timeoutSeconds": "60",
+        "runCommand": [
+         "#!/bin/bash",
+         "# OpsConsole-SshKeys: add or remove one public key in a login user's ~/.ssh/authorized_keys.",
+         "#   action=add    user=<login user> key=<one public key line>",
+         "#   action=remove user=<login user> fingerprint=SHA256:...",
+         "#   Temporary laptop access (temporary=yes): add puts the key in with from=\"<sources>\",expiry-time=\"<local time>\"",
+         "#   (sshd refuses it after that even if nothing removes it); a key that is already there without expiry-time is",
+         "#   left alone (added=false). remove with temporary=yes only ever removes lines that carry an expiry-time.",
+         "# Only normal login users (uid >= 1000, a login shell and a home): never root. Refuses to remove ec2-user's last",
+         "# key (SSH lock-out). Keeps a copy of the previous file as authorized_keys.ops-console.bak.",
+         "# Output: one JSON line.",
+         "set -u",
+         "export LC_ALL=C",
+         "ACTION='{{ action }}'",
+         "KUSER='{{ user }}'",
+         "KEY='{{ key }}'",
+         "FP='{{ fingerprint }}'",
+         "FROM='{{ from }}'",
+         "EXPIRES='{{ expires }}'",
+         "TEMP='{{ temporary }}'",
+         "case \"$ACTION\" in add|remove) ;; *) echo '{\"ok\":false,\"error\":\"unknown action\"}'; exit 2 ;; esac",
+         "[[ \"$KUSER\" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo '{\"ok\":false,\"error\":\"invalid user\"}'; exit 2; }",
+         "[[ \"$FROM\" =~ ^[0-9a-f.:/,]{0,300}$ && \"$EXPIRES\" =~ ^([0-9]{10})?$ && \"$TEMP\" =~ ^(yes|no)$ ]] || { echo '{\"ok\":false,\"error\":\"invalid options\"}'; exit 2; }",
+         "exec python3 -I - \"$ACTION\" \"$KUSER\" \"$KEY\" \"$FP\" \"$FROM\" \"$EXPIRES\" \"$TEMP\" <<'PY'",
+         "import ipaddress, json, os, pwd, re, shutil, subprocess, sys, tempfile, time",
+         "action, user, key, fp, sources, expires, temporary = sys.argv[1:8]",
+         "temporary = temporary == \"yes\"",
+         "def done(ok, **kw):",
+         "    print(json.dumps({\"ok\": ok, \"action\": action, \"user\": user, **kw})); sys.exit(0 if ok else 1)",
+         "",
+         "KEY_RE = re.compile(r\"^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\\.com|sk-ecdsa-sha2-nistp256@openssh\\.com) [A-Za-z0-9+/]{40,2000}={0,3}( [A-Za-z0-9@._+-]{1,100})?$\")",
+         "FP_RE = re.compile(r\"^SHA256:[A-Za-z0-9+/]{43}$\")",
+         "TYPES = (\"ssh-ed25519\", \"ssh-rsa\", \"ecdsa-sha2-nistp256\", \"ecdsa-sha2-nistp384\", \"ecdsa-sha2-nistp521\",",
+         "         \"sk-ssh-ed25519@openssh.com\", \"sk-ecdsa-sha2-nistp256@openssh.com\", \"ssh-dss\")",
+         "",
+         "try:",
+         "    pw = pwd.getpwnam(user)",
+         "except KeyError:",
+         "    done(False, error=f\"there is no user {user} on this instance\")",
+         "if pw.pw_uid < 1000 or pw.pw_shell.endswith((\"nologin\", \"false\")) or not os.path.isdir(pw.pw_dir):",
+         "    done(False, error=f\"{user} is not a normal login user\")",
+         "",
+         "def fingerprint_of(line):",
+         "    parts = line.split()",
+         "    for i, p in enumerate(parts):",
+         "        if p in TYPES and i + 1 < len(parts):",
+         "            r = subprocess.run([\"ssh-keygen\", \"-lf\", \"-\"], input=f\"{p} {parts[i + 1]}\\n\", capture_output=True, text=True, timeout=10)",
+         "            m = re.match(r\"^\\d+ (SHA256:\\S+)\", r.stdout.strip())",
+         "            return m.group(1) if m else None",
+         "    return None",
+         "",
+         "sshdir = os.path.join(pw.pw_dir, \".ssh\")",
+         "path = os.path.join(sshdir, \"authorized_keys\")",
+         "try:",
+         "    lines = open(path).read().splitlines()",
+         "except FileNotFoundError:",
+         "    lines = []",
+         "",
+         "def write(new_lines):",
+         "    if not os.path.isdir(sshdir):",
+         "        os.mkdir(sshdir, 0o700); os.chown(sshdir, pw.pw_uid, pw.pw_gid)",
+         "    if os.path.exists(path):",
+         "        shutil.copy2(path, path + \".ops-console.bak\"); os.chown(path + \".ops-console.bak\", pw.pw_uid, pw.pw_gid)",
+         "    fd, tmp = tempfile.mkstemp(dir=sshdir, prefix=\".authorized_keys.\")",
+         "    with os.fdopen(fd, \"w\") as f:",
+         "        f.write(\"\\n\".join(new_lines) + (\"\\n\" if new_lines else \"\"))",
+         "    os.chmod(tmp, 0o600); os.chown(tmp, pw.pw_uid, pw.pw_gid)",
+         "    os.replace(tmp, path)",
+         "    if shutil.which(\"restorecon\"): subprocess.run([\"restorecon\", \"-R\", sshdir], capture_output=True)",
+         "",
+         "keyed = [(l, fingerprint_of(l)) for l in lines]",
+         "count = sum(1 for _, f in keyed if f)",
+         "is_temp = lambda l: \"expiry-time=\" in l.split(\" ssh-\")[0].split(\" ecdsa-\")[0].split(\" sk-\")[0]",
+         "",
+         "if action == \"add\" and temporary:",
+         "    if not KEY_RE.match(key): done(False, error=\"that doesn't look like a single OpenSSH public key line\")",
+         "    new_fp = fingerprint_of(key)",
+         "    if not new_fp: done(False, error=\"ssh-keygen could not read that key\")",
+         "    try:",
+         "        srcs = [str(ipaddress.ip_network(x, strict=True)) for x in sources.split(\",\") if x]",
+         "    except ValueError:",
+         "        done(False, error=\"invalid source address\")",
+         "    if not srcs or not expires: done(False, error=\"temporary keys need a source and an expiry\")",
+         "    if int(expires) <= time.time() or int(expires) > time.time() + 12 * 3600: done(False, error=\"invalid expiry\")",
+         "    if any(f == new_fp and not is_temp(l) for l, f in keyed):",
+         "        done(True, fingerprint=new_fp, added=False, permanent=True, keys=count)   # already has permanent access: leave it",
+         "    # sshd reads expiry-time in the instance's local time zone",
+         "    stamp = time.strftime(\"%Y%m%d%H%M\", time.localtime(int(expires)))",
+         "    opts = f'from=\"{\",\".join(srcs)}\",expiry-time=\"{stamp}\",no-agent-forwarding,no-X11-forwarding'",
+         "    keep = [l for l, f in keyed if f != new_fp]",
+         "    write(keep + [f\"{opts} {key}\"])",
+         "    done(True, fingerprint=new_fp, added=True, permanent=False, keys=len([1 for _, f in keyed if f and f != new_fp]) + 1, expiresLocal=stamp)",
+         "",
+         "if action == \"remove\" and temporary:",
+         "    if not FP_RE.match(fp): done(False, error=\"invalid fingerprint\")",
+         "    keep = [l for l, f in keyed if not (f == fp and is_temp(l))]",
+         "    if len(keep) == len(lines): done(True, fingerprint=fp, removed=0, keys=count)   # already gone (or never temporary)",
+         "    write(keep)",
+         "    done(True, fingerprint=fp, removed=len(lines) - len(keep), keys=count - (len(lines) - len(keep)))",
+         "",
+         "if action == \"add\":",
+         "    if not KEY_RE.match(key): done(False, error=\"that doesn't look like a single OpenSSH public key line\")",
+         "    new_fp = fingerprint_of(key)",
+         "    if not new_fp: done(False, error=\"ssh-keygen could not read that key\")",
+         "    if any(f == new_fp for _, f in keyed): done(False, error=f\"{user} already has this key\", fingerprint=new_fp)",
+         "    write(lines + [key])",
+         "    done(True, fingerprint=new_fp, keys=count + 1)",
+         "",
+         "if not FP_RE.match(fp): done(False, error=\"invalid fingerprint\")",
+         "keep = [l for l, f in keyed if f != fp]",
+         "if len(keep) == len(lines): done(False, error=f\"{user} has no key with fingerprint {fp}\")",
+         "removed = len(lines) - len(keep)",
+         "if user == \"ec2-user\" and count - removed < 1:",
+         "    done(False, error=\"that is ec2-user's last key: removing it would lock everyone out of SSH. Add another key first.\")",
+         "write(keep)",
+         "done(True, fingerprint=fp, keys=count - removed)",
+         "PY"
+        ]
+       }
+      }
+     ],
+     "parameters": {
+      "action": {
+       "type": "String",
+       "allowedValues": [
+        "add",
+        "remove"
+       ]
+      },
+      "user": {
+       "type": "String",
+       "allowedPattern": "^[a-z_][a-z0-9_-]{0,31}$"
+      },
+      "key": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh[.]com|sk-ecdsa-sha2-nistp256@openssh[.]com) [A-Za-z0-9+/]{40,1000}[A-Za-z0-9+/]{0,1000}={0,3}( [A-Za-z0-9@._+-]{1,100})?$"
+      },
+      "fingerprint": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^SHA256:[A-Za-z0-9+/]{43}$"
+      },
+      "from": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^[0-9a-f.:/,]{1,300}$"
+      },
+      "expires": {
+       "type": "String",
+       "default": "",
+       "allowedPattern": "^$|^[0-9]{10}$"
+      },
+      "temporary": {
+       "type": "String",
+       "default": "no",
+       "allowedValues": [
+        "yes",
+        "no"
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "Outputs": {
+  "RoleArn": {
+   "Description": "Paste this into the console to finish connecting.",
+   "Value": {
+    "Fn::GetAtt": [
+     "AccessRole",
+     "Arn"
+    ]
+   }
+  },
+  "InstanceProfile": {
+   "Description": "Attached to servers you add in the console.",
+   "Value": {
+    "Ref": "InstanceProfile"
+   }
+  }
+ }
+}

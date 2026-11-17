@@ -328,6 +328,34 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
   database in `.local-saas`, connects as a non-superuser so isolation is really enforced, and prints emails to the
   terminal.
 
+### Connect your AWS account (multi-customer mode, Phase 12b)
+- **How it works:** a workspace connects its OWN AWS account. The console then reaches it only by assuming a role the
+  customer created with our CloudFormation template.
+  - The role trusts only the console's AWS identity, and only with that workspace's external ID, which is unique,
+    random and rotated on disconnect. Another workspace can't use it even if it knows the ARN.
+  - Every AWS call for the workspace runs on those short-lived credentials (`src/connections.ts`, `makeAws(credentials)`).
+    The console host's own role is never used for a customer.
+- **The template** is built by `infra/saas/build-connect-template.py` into `ops-console/api/assets/connect-aws.json`,
+  from the same scripts and parameters `infra/ops-console-ssm/deploy.sh` publishes. It contains:
+  - the access role `OpsConsoleAccess-<region>`, scoped like the console's own policies: fixed `OpsConsole-*`
+    documents on tagged instances, tagged-only power, SSH rules and terminals, `/apps/*` settings, costs, schedules
+    and app DNS;
+  - an instance profile `OpsConsoleInstance-<region>` for the customer's servers;
+  - the documents themselves. Set `InstallDocuments=no` where they already exist.
+  - Lint it with `cfn-lint`.
+- **Connecting:** the onboarding page lets the customer pick a region, open CloudFormation (one click with
+  `CONNECT_TEMPLATE_URL`, otherwise "Download template" and upload it), paste the stack's RoleArn, and Connect. The
+  console assumes the role with the external ID, checks the documents exist, and saves the connection.
+- **Adding servers:** list the account's EC2 instances. Adding one tags it (and its security groups)
+  `ops-console=managed` and attaches the instance profile if it has none.
+- **Hosting the multi-customer console:**
+  - its identity needs `infra/iam/instance-ops-console-saas.json`;
+  - publish the template with `infra/saas/publish-template.sh`;
+  - set `CONNECT_TEMPLATE_URL`;
+  - `CONSOLE_PRINCIPAL_ARN` overrides the identity customers trust (default: the console's own role).
+- **Not yet:** preparing a fresh server (agent, nginx, Node, Postgres, pipeline) is Phase 12b-2, and GitHub per
+  workspace plus apps on the customer's own domain are 12b-3.
+
 ## Repository layout
 
 ```

@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, Role, Workspace } from '../api';
+import { api, ApiError, AwsConnectionView, Role, Workspace } from '../api';
+import { AddServersPanel, ConnectAwsPanel } from '../components/ConnectAws';
 import { useAuth } from '../auth';
 import { Alert } from '../components/ui';
 
@@ -105,24 +106,26 @@ export function Onboarding() {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [showAccess, setShowAccess] = useState(false);
   useEffect(() => { api.workspaces().then((r) => setWs(r.workspaces.find((w) => w.id === r.current) ?? null)).catch(() => undefined); }, []);
+  const [aws, setAws] = useState<AwsConnectionView | null>(null);
+  const loadAws = () => api.awsConnection().then(setAws).catch(() => undefined);
+  useEffect(() => { void loadAws(); }, []);
+  const connected = aws?.connection.status === 'connected';
   const first = (user?.displayName || user?.username || '').split(/[\s@]/)[0];
   const isAdmin = user?.role === 'admin';
   const trialLeft = ws?.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(ws.trialEndsAt) - Date.now()) / 86400e3)) : null;
-  const done = 1, total = 4;
+  const done = connected ? 2 : 1, total = 4;
 
   return (
     <div className="mx-auto max-w-6xl">
       {/* hero */}
-      <section className="relative overflow-hidden rounded-2xl border border-ink-700 bg-ink-900 px-6 py-8 sm:px-10 sm:py-10">
-        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl" aria-hidden />
-        <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-sky-500/10 blur-3xl" aria-hidden />
-        <div className="relative">
+      <section className="card px-6 py-8 sm:px-10 sm:py-10">
+        <div>
           <p className="eyebrow text-indigo-300">{ws?.name ?? 'Your workspace'}</p>
           <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-100 sm:text-3xl">Welcome{first ? `, ${first}` : ''}. Let's get your apps running.</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-400 sm:text-base">Three steps and about ten minutes: connect your AWS account, pick a server, deploy from GitHub. You stay in control of everything in your account.</p>
           <div className="mt-6 flex max-w-md items-center gap-3">
             <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done} aria-label="Setup progress">
-              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-sky-400" style={{ width: `${(done / total) * 100}%` }} />
+              <div className="h-full rounded-full bg-indigo-500" style={{ width: `${(done / total) * 100}%` }} />
             </div>
             <span className="num text-xs text-slate-400">{done} of {total} done</span>
           </div>
@@ -137,35 +140,40 @@ export function Onboarding() {
               <p className="text-sm text-slate-400">{ws ? <><b className="font-medium text-slate-300">{ws.name}</b> is ready{trialLeft != null ? `, with ${trialLeft} days of free trial left` : ''}.</> : 'Done.'}</p>
             </Step>
 
-            <Step n={2} state="current" icon={ICON.cloud} title="Connect your AWS account">
-              <p className="text-sm text-slate-400">One click opens AWS CloudFormation in your own account and creates an access role that only {site.productName} can use. You can see exactly what it allows, and deleting it disconnects us at once.</p>
-              <div className="mt-4"><AccessDiagram product={site.productName} /></div>
-              <div className="mt-5 flex flex-wrap items-center gap-3">
-                <button className="btn-primary" disabled title="Arrives in the next update">
-                  <I d={ICON.cloud} className="h-4 w-4" /> Connect AWS account
-                </button>
-                <span className="pill-mute">arriving in the next update</span>
-                <button className="text-sm text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline" onClick={() => setShowAccess((v) => !v)} aria-expanded={showAccess}>
-                  {showAccess ? 'Hide' : 'What can the role do?'}
-                </button>
-              </div>
-              {showAccess && (
-                <ul className="mt-4 grid gap-2 rounded-xl border border-ink-700 bg-ink-950/40 p-4 text-sm sm:grid-cols-2">
-                  {[['Allowed', 'Run our fixed, published commands on servers you tag (deploy, health, logs, backups)', true],
-                    ['Allowed', 'Read your instances, costs and the DNS records of your apps', true],
-                    ['Allowed', 'Open a browser terminal and time-limited SSH on tagged servers only', true],
-                    ['Never', 'Run arbitrary commands, read your other data, or touch untagged resources', false]].map(([k, t, ok], i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className={ok ? 'text-emerald-300' : 'text-rose-300'}><I d={ok ? ICON.check : ICON.lock} className="h-4 w-4" /></span>
-                      <span className="text-slate-300"><b className="font-medium">{k as string}:</b> {t as string}</span>
-                    </li>
-                  ))}
-                </ul>
+            <Step n={2} state={connected ? 'done' : 'current'} icon={ICON.cloud} title="Connect your AWS account">
+              {connected ? (
+                <p className="text-sm text-slate-400">Connected to account <span className="num text-slate-300">{aws!.connection.accountId}</span> in <span className="num text-slate-300">{aws!.connection.region}</span>. Manage it under Settings.</p>
+              ) : (
+                <>
+                  <p className="text-sm text-slate-400">AWS CloudFormation creates an access role in your own account that only {site.productName} can use, and only with this workspace's ID. You can see exactly what it allows, and deleting the stack disconnects us at once.</p>
+                  <div className="mt-4"><AccessDiagram product={site.productName} /></div>
+                  <button className="mt-4 text-sm text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline" onClick={() => setShowAccess((v) => !v)} aria-expanded={showAccess}>
+                    {showAccess ? 'Hide' : 'What can the role do?'}
+                  </button>
+                  {showAccess && (
+                    <ul className="mt-3 grid gap-2 rounded-xl border border-ink-700 bg-ink-950/40 p-4 text-sm sm:grid-cols-2">
+                      {[['Allowed', 'Run our fixed, published commands on servers you add (deploy, health, logs, backups)', true],
+                        ['Allowed', 'Read your servers, costs, schedules and the DNS records of your apps', true],
+                        ['Allowed', 'Tag servers you add, and give them our instance profile', true],
+                        ['Allowed', 'Browser terminal and time-limited SSH on servers you added', true],
+                        ['Allowed', 'Your apps\' settings (under /apps/) and their DNS records', true],
+                        ['Never', 'Run arbitrary commands, read your other data, or touch servers you didn\'t add', false]].map(([k, t, ok], i) => (
+                        <li key={i} className="flex gap-2">
+                          <span className={ok ? 'text-emerald-300' : 'text-rose-300'}><I d={ok ? ICON.check : ICON.lock} className="h-4 w-4" /></span>
+                          <span className="text-slate-300"><b className="font-medium">{k as string}:</b> {t as string}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {aws && <div className="mt-4"><ConnectAwsPanel view={aws} onChanged={loadAws} /></div>}
+                </>
               )}
             </Step>
 
-            <Step n={3} state="locked" icon={ICON.server} title="Add your first server">
-              <p className="text-sm text-slate-400">Choose an EC2 server you already have, or let us start a small one with everything installed (web server, Node.js, Postgres, backups).</p>
+            <Step n={3} state={connected ? 'current' : 'locked'} icon={ICON.server} title="Add your first server">
+              {connected
+                ? <AddServersPanel onAdded={(id) => window.location.assign(`/instances/${id}`)} />
+                : <p className="text-sm text-slate-400">Choose an EC2 server in your account. The console reaches it through AWS Session Manager, so no SSH port has to be open.</p>}
             </Step>
 
             <Step n={4} state="locked" icon={ICON.github} title="Deploy an app from GitHub" last>

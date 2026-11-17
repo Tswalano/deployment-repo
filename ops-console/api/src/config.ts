@@ -37,4 +37,8 @@ export const config = {
     publicUrl: process.env.PUBLIC_URL || 'https://ops.glenify.studio',
     /** Free trial for new workspaces. */
     trialDays: num(process.env.TRIAL_DAYS, 14),
+    /** AWS identity customer roles must trust (default: whatever this console runs as, e.g. its instance role). */
+    consolePrincipalArn: process.env.CONSOLE_PRINCIPAL_ARN || '',
+    /** Public S3 URL of the Connect-AWS CloudFormation template (enables the one-click "quick create" link). */
+    connectTemplateUrl: process.env.CONNECT_TEMPLATE_URL || '',
 };
