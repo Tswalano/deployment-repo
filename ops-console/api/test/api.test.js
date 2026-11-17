@@ -47,7 +47,7 @@ before(async () => {
     await pg.initialise();
     await pg.start();
     await pg.createDatabase('opsconsole_test');
-    assert.deepEqual(await dist('migrate').migrate(), ['001_init.sql', '002_instances.sql', '003_deployments.sql', '004_db_samples.sql', '005_alerts_uptime.sql', '006_backups.sql', '007_deploy_policy.sql', '008_power.sql', '009_costs.sql', '010_github.sql', '011_new_apps.sql', '012_new_app_dns.sql', '013_access.sql', '014_laptop_access.sql', '015_workspaces.sql', '016_dismissed_failures.sql', '017_aws_connections.sql', '018_prepare_server.sql', '019_github_installations.sql', '020_billing.sql']);
+    assert.deepEqual(await dist('migrate').migrate(), ['001_init.sql', '002_instances.sql', '003_deployments.sql', '004_db_samples.sql', '005_alerts_uptime.sql', '006_backups.sql', '007_deploy_policy.sql', '008_power.sql', '009_costs.sql', '010_github.sql', '011_new_apps.sql', '012_new_app_dns.sql', '013_access.sql', '014_laptop_access.sql', '015_workspaces.sql', '016_dismissed_failures.sql', '017_aws_connections.sql', '018_prepare_server.sql', '019_github_installations.sql', '020_billing.sql', '021_invoices.sql']);
     assert.deepEqual(await dist('migrate').migrate(), [], 'migrations are applied once');
     app = dist('app').createApp();
     await makeUser('admin', 'admin', 'Correct-Horse-1');
@@ -63,12 +63,12 @@ test('health', async () => {
     assert.equal((await client().get('/api/health')).status, 200);
 });
 
-test('login: success sets an HttpOnly SameSite=Strict cookie; /me returns the user', async () => {
+test('login: success sets an HttpOnly SameSite=Lax cookie; /me returns the user', async () => {
     const c = client();
     const r = await c.post('/api/auth/login', { username: 'ADMIN', password: 'Correct-Horse-1' });   // case-insensitive username
     assert.equal(r.status, 200);
     assert.match(r.setCookie, /HttpOnly/i);
-    assert.match(r.setCookie, /SameSite=Strict/i);
+    assert.match(r.setCookie, /SameSite=Lax/i);   // survives the return from Paystack / GitHub; changes are Origin-checked
     const me = await c.get('/api/auth/me');
     assert.equal(me.status, 200);
     assert.equal(me.json.user.role, 'admin');

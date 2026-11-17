@@ -15,7 +15,7 @@ const loginLimiter = rateLimit(config.loginRateLimit, config.loginRateWindowMs, 
 
 export function startSession(c: Parameters<typeof setCookie>[0], token: string, minutes: number) {
     setCookie(c, config.cookieName, token, {
-        httpOnly: true, secure: config.cookieSecure, sameSite: 'Strict', path: '/', maxAge: minutes * 60,
+        httpOnly: true, secure: config.cookieSecure, sameSite: 'Lax', path: '/', maxAge: minutes * 60,   // Lax: kept when coming back from Paystack or GitHub; changes are still CSRF-checked by Origin
     });
 }
 

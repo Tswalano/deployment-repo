@@ -17,6 +17,7 @@ export interface BillingView {
   limits: { servers: number | null; apps: number | null; members: number | null; approvals: boolean }; usage: { servers: number; apps: number; members: number };
   plans: { id: 'starter' | 'pro'; name: string; price: number; limits: { servers: number; apps: number; members: number; approvals: boolean } }[];
 }
+export interface Invoice { id: number; number: string; reference: string; issuedAt: string; plan: string; description: string; amount: number; currency: string; periodStart: string | null; periodEnd: string | null; billedTo: string; billedEmail: string | null; card: string | null; status: string }
 export interface SiteConfig { multiTenant: boolean; productName: string; trialDays: number }
 export interface Workspace { id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; trialEndsAt: string | null; role: Role }
 export interface TeamMember { id: number; username: string; displayName: string; email: string | null; role: Role; joinedAt: string; lastLoginAt: string | null; emailVerified: boolean }
@@ -275,6 +276,7 @@ export const api = {
   site: () => call<SiteConfig>('GET', '/api/account/config'),
   signup: (b: { name: string; email: string; password: string; workspace: string; username?: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
   billing: () => call<BillingView>('GET', '/api/billing'),
+  invoices: () => call<{ invoices: Invoice[] }>('GET', '/api/billing/invoices').then((r) => r.invoices),
   billingCheckout: (plan: 'starter' | 'pro') => call<{ url: string; reference: string }>('POST', '/api/billing/checkout', { plan }),
   billingConfirm: (reference: string) => call<{ ok: true; plan: string; status: string }>('POST', '/api/billing/confirm', { reference }),
   billingCancel: () => call<{ ok: true }>('POST', '/api/billing/cancel'),

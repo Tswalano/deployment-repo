@@ -11,6 +11,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { config } from './config';
 import { asSystem, db } from './db';
 import { DeployError } from './deploys';
+import { makePdf, PdfOp } from './pdf';
 
 export type PlanId = 'starter' | 'pro';
 export interface Limits { servers: number; apps: number; members: number; approvals: boolean }
@@ -132,7 +133,8 @@ export async function checkout(workspaceId: number, plan: PlanId, email: string)
 }
 
 interface PaystackTx { status: string; reference: string; amount: number; currency: string; metadata?: { workspace_id?: number | string; plan?: PlanId } | string;
-    customer?: { id?: number; customer_code?: string; email?: string }; plan?: string | null; plan_object?: { plan_code?: string } }
+    customer?: { id?: number; customer_code?: string; email?: string }; paid_at?: string | null; created_at?: string;
+    authorization?: { brand?: string; last4?: string; card_type?: string }; plan?: string | null; plan_object?: { plan_code?: string } }
 const metaOf = (t: PaystackTx) => (typeof t.metadata === 'object' && t.metadata ? t.metadata : {});
 
 /** After checkout: confirm the payment with Paystack itself (never trust the redirect) and switch the plan. */
@@ -144,6 +146,7 @@ export async function confirmCheckout(workspaceId: number, reference: string): P
     if (t.status !== 'success') throw new DeployError(`The payment was not completed (${t.status}).`, 409);
     if (!meta.plan || !PLANS[meta.plan] || t.amount !== PLANS[meta.plan].amount || t.currency !== 'ZAR') throw new DeployError('The payment does not match a plan.', 409);
     await activate(workspaceId, meta.plan, t.customer?.customer_code ?? null, t.customer?.email ?? null);
+    await recordInvoice(workspaceId, t);
     // link the subscription now (Cancel / Update card need it) instead of waiting for the subscription.create webhook
     if (t.customer?.id) {
         const codes = await ensurePlans();
@@ -205,7 +208,10 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<boolean> {
         const plan = (Object.keys(PLANS) as PlanId[]).find((p) => d.plan?.amount === PLANS[p].amount || d.amount === PLANS[p].amount);
         switch (e.event) {
             case 'charge.success':
-                if (d.status === 'success' && plan && d.currency === 'ZAR') await activate(wsId, plan, customer, d.customer?.email ?? null);
+                if (d.status === 'success' && plan && d.currency === 'ZAR') {
+                    await activate(wsId, plan, customer, d.customer?.email ?? null);
+                    await recordInvoice(wsId, d as PaystackTx);
+                }
                 break;
             case 'subscription.create':
                 await db().query(`UPDATE workspaces SET subscription_code = $2, subscription_token = $3, paystack_customer = coalesce($4, paystack_customer),
@@ -225,4 +231,98 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<boolean> {
         }
         return true;
     });
+}
+
+// ---------------------------------------------------------------------------------------------- invoices
+export interface InvoiceRow {
+    id: number; workspace_id: number; number: string; reference: string; issued_at: string; plan: string; description: string;
+    amount: number; currency: string; period_start: string | null; period_end: string | null; billed_to: string; billed_email: string | null;
+    card: string | null; status: string;
+}
+export const invoiceView = (i: InvoiceRow) => ({
+    id: i.id, number: i.number, reference: i.reference, issuedAt: i.issued_at, plan: i.plan, description: i.description, amount: i.amount / 100,
+    currency: i.currency, periodStart: i.period_start, periodEnd: i.period_end, billedTo: i.billed_to, billedEmail: i.billed_email, card: i.card, status: i.status,
+});
+
+/** One invoice per successful payment (idempotent on the Paystack reference). */
+export async function recordInvoice(workspaceId: number, t: PaystackTx): Promise<void> {
+    if (t.status !== 'success' || !t.reference) return;
+    const plan = (Object.keys(PLANS) as PlanId[]).find((p) => PLANS[p].amount === t.amount) ?? (metaOf(t).plan as PlanId | undefined);
+    if (!plan || !PLANS[plan]) return;
+    await asSystem(async () => {
+        if ((await db().query('SELECT 1 FROM invoices WHERE reference = $1', [t.reference])).rows.length) return;
+        const { rows: [w] } = await db().query<{ name: string; billing_email: string | null }>('SELECT name, billing_email FROM workspaces WHERE id = $1', [workspaceId]);
+        const issued = new Date(t.paid_at ?? t.created_at ?? Date.now());
+        const end = new Date(issued); end.setMonth(end.getMonth() + 1);
+        const a = t.authorization;
+        const card = a?.last4 ? `${(a.brand ?? a.card_type ?? 'Card').replace(/^./, (x) => x.toUpperCase())} •••• ${a.last4}` : null;
+        await db().query(
+            `INSERT INTO invoices (workspace_id, number, reference, issued_at, plan, description, amount, currency, period_start, period_end, billed_to, billed_email, card)
+             VALUES ($1, 'INV-' || to_char($2::timestamptz, 'YYYY') || '-' || lpad(nextval('invoice_number_seq')::text, 5, '0'), $3, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (reference) DO NOTHING`,
+            [workspaceId, issued.toISOString(), t.reference, plan, `${config.productName} ${PLANS[plan].name} plan, monthly`, t.amount, t.currency || 'ZAR',
+                issued.toISOString().slice(0, 10), end.toISOString().slice(0, 10), w?.name ?? 'Workspace', t.customer?.email ?? w?.billing_email ?? null, card]);
+    });
+}
+
+/** Pick up payments the webhook may have missed (renewals included), from Paystack itself. Best effort. */
+export async function syncInvoices(workspaceId: number): Promise<void> {
+    if (!billingEnabled()) return;
+    const w = await ws(workspaceId);
+    if (!w.paystack_customer) return;
+    const cust = await paystack<{ id: number }>(`/customer/${encodeURIComponent(w.paystack_customer)}`).catch(() => null);
+    if (!cust?.id) return;
+    const txs = await paystack<PaystackTx[]>(`/transaction?customer=${cust.id}&status=success&perPage=100`).catch(() => [] as PaystackTx[]);
+    for (const t of txs) {
+        const meta = metaOf(t);
+        if (meta.workspace_id && Number(meta.workspace_id) !== workspaceId) continue;   // a payment for another workspace of the same person
+        await recordInvoice(workspaceId, t);
+    }
+}
+
+export async function listInvoices(months?: number): Promise<InvoiceRow[]> {
+    const { rows } = await db().query<InvoiceRow>(
+        `SELECT * FROM invoices ${months ? 'WHERE issued_at > now() - make_interval(months => $1)' : ''} ORDER BY issued_at DESC`, months ? [months] : []);
+    return rows;
+}
+
+/** One invoice as a PDF page (A4). Seller details come from INVOICE_SELLER (lines separated by "|"). */
+function invoicePage(i: InvoiceRow): PdfOp[] {
+    const money = (cents: number) => `R${(cents / 100).toFixed(2)}`;
+    const d = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+    const ops: PdfOp[] = [];
+    const T = (x: number, y: number, text: string, o: Partial<Extract<PdfOp, { t: 'text' }>> = {}) => ops.push({ t: 'text', x, y, text, ...o });
+    T(50, 780, config.productName, { size: 20, bold: true });
+    T(545, 782, 'INVOICE', { size: 14, bold: true, align: 'right' });
+    T(545, 764, i.status === 'paid' ? 'PAID' : i.status.toUpperCase(), { size: 9, bold: true, gray: 0.35, align: 'right' });
+    (config.invoiceSeller ? config.invoiceSeller.split('|') : []).forEach((l, n) => T(50, 760 - n * 13, l.trim(), { size: 9, gray: 0.35 }));
+    ops.push({ t: 'line', x1: 50, y1: 700, x2: 545, y2: 700 });
+    T(50, 676, 'Invoice number', { size: 8, gray: 0.45 }); T(50, 662, i.number, { size: 11, bold: true });
+    T(220, 676, 'Date', { size: 8, gray: 0.45 }); T(220, 662, d(i.issued_at), { size: 11 });
+    T(380, 676, 'Billed to', { size: 8, gray: 0.45 }); T(380, 662, i.billed_to, { size: 11, bold: true });
+    if (i.billed_email) T(380, 648, i.billed_email, { size: 9, gray: 0.35 });
+    ops.push({ t: 'line', x1: 50, y1: 610, x2: 545, y2: 610 });
+    T(50, 596, 'Description', { size: 8, gray: 0.45 }); T(330, 596, 'Period', { size: 8, gray: 0.45 }); T(545, 596, 'Amount', { size: 8, gray: 0.45, align: 'right' });
+    ops.push({ t: 'line', x1: 50, y1: 588, x2: 545, y2: 588, gray: 0.9 });
+    T(50, 570, i.description, { size: 10 });
+    T(330, 570, `${d(i.period_start)} \u2013 ${d(i.period_end)}`, { size: 9, gray: 0.3 });
+    T(545, 570, money(i.amount), { size: 10, align: 'right' });
+    ops.push({ t: 'line', x1: 50, y1: 556, x2: 545, y2: 556, gray: 0.9 });
+    T(400, 534, 'Total', { size: 10, bold: true }); T(545, 534, `${money(i.amount)} ${i.currency}`, { size: 12, bold: true, align: 'right' });
+    T(400, 518, 'Paid', { size: 9, gray: 0.35 }); T(545, 518, money(i.amount), { size: 9, gray: 0.35, align: 'right' });
+    T(50, 470, `Paid${i.card ? ` with ${i.card}` : ''} through Paystack. Payment reference: ${i.reference}.`, { size: 9, gray: 0.35 });
+    T(50, 456, 'Amounts in South African Rand. Thank you for your business.', { size: 9, gray: 0.35 });
+    return ops;
+}
+
+export function invoicesPdf(invoices: InvoiceRow[]): Buffer {
+    return makePdf(invoices.map(invoicePage), invoices.length === 1 ? `Invoice ${invoices[0].number}` : `${config.productName} invoices`);
+}
+
+export function invoicesCsv(invoices: InvoiceRow[]): string {
+    const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const head = ['Invoice', 'Date', 'Description', 'Period start', 'Period end', 'Amount', 'Currency', 'Status', 'Billed to', 'Email', 'Card', 'Reference'];
+    const rows = invoices.map((i) => [i.number, new Date(i.issued_at).toISOString().slice(0, 10), i.description, i.period_start, i.period_end,
+        (i.amount / 100).toFixed(2), i.currency, i.status, i.billed_to, i.billed_email, i.card, i.reference]);
+    return [head, ...rows].map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
 }

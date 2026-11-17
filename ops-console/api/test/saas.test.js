@@ -505,3 +505,50 @@ test('billing (Paystack): trial, limits, checkout verified server-side, signed w
     assert.equal((await d.get('/api/auth/me')).json.user.emailVerified, false, 'the new email must be confirmed');
     assert.equal((await app.request('/api/github/oauth', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: a.cookieHeader() }, body: JSON.stringify({ clientId: 'Iv1.0123456789abcdef', clientSecret: 'a'.repeat(40) }) })).status, 403, 'only platform admins');
 });
+
+test('invoices: one per payment (confirm + renewals via webhook, never twice), PDF per invoice, last 6 months as PDF/CSV, workspace-only', async () => {
+    const crypto = require('crypto');
+    const { db } = dist('db');
+    const secret = process.env.PAYSTACK_SECRET_KEY;
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
+    let list = (await a.get('/api/billing/invoices')).json.invoices;
+    assert.equal(list.length, 1, 'the confirmed checkout produced an invoice');
+    assert.match(list[0].number, /^INV-\d{4}-\d{5}$/);
+    assert.deepEqual([list[0].amount, list[0].currency, list[0].plan, list[0].status], [599, 'ZAR', 'pro', 'paid']);
+
+    // a renewal arrives by webhook (no workspace metadata: matched by the Paystack customer), twice
+    const renewal = { event: 'charge.success', data: { id: 9001, status: 'success', reference: 'renew_001', amount: 59900, currency: 'ZAR', paid_at: new Date().toISOString(),
+        customer: { customer_code: 'CUS_acme', email: 'alice@example.com' }, authorization: { brand: 'visa', last4: '4081' }, plan: { plan_code: 'PLN_59900', amount: 59900 } } };
+    const hook = (e) => { const body = JSON.stringify(e); return app.request('/api/billing/paystack', { method: 'POST', headers: { 'content-type': 'application/json', 'x-paystack-signature': crypto.createHmac('sha512', secret).update(body).digest('hex') }, body }); };
+    await hook(renewal); await hook(renewal);
+    await hook({ ...renewal, data: { ...renewal.data, id: 9002 } });   // same payment reported as another event id: still one invoice
+    list = (await a.get('/api/billing/invoices')).json.invoices;
+    assert.equal(list.length, 2);
+    assert.equal(list[0].card, 'Visa •••• 4081');
+
+    const pdf = await app.request(`/api/billing/invoices/${list[0].id}/pdf`, { headers: { origin: ORIGIN, cookie: a.cookieHeader() } });
+    assert.equal(pdf.status, 200);
+    assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+    const body = Buffer.from(await pdf.arrayBuffer()).toString('latin1');
+    assert.ok(body.startsWith('%PDF-1.4') && body.trimEnd().endsWith('%%EOF'));
+    assert.ok(body.includes(list[0].number) && body.includes('R599.00'));
+    const xref = Number(/startxref\n(\d+)/.exec(body)[1]);
+    assert.ok(body.slice(xref).startsWith('xref'), 'the cross-reference offset is right');
+
+    const six = Buffer.from(await (await app.request('/api/billing/invoices/export?months=6', { headers: { origin: ORIGIN, cookie: a.cookieHeader() } })).arrayBuffer()).toString('latin1');
+    assert.equal((six.match(/\/Type \/Page /g) ?? []).length, 2, 'one page per invoice');
+    const csv = await (await app.request('/api/billing/invoices/export?months=6&format=csv', { headers: { origin: ORIGIN, cookie: a.cookieHeader() } })).text();
+    assert.equal(csv.trim().split('\r\n').length, 3);
+    const upd = await dist('db').withWorkspace(wsA, () => db().query("UPDATE invoices SET issued_at = now() - interval '8 months' WHERE reference = 'ref_good'"));
+    assert.equal(upd.rowCount, 1);
+    const recent = await (await app.request('/api/billing/invoices/export?months=6&format=csv', { headers: { origin: ORIGIN, cookie: a.cookieHeader() } })).text();
+    assert.equal(recent.trim().split('\r\n').length, 2, 'only the last 6 months');
+
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+    const other = await app.request(`/api/billing/invoices/${list[0].id}/pdf`, { headers: { origin: ORIGIN, cookie: b.cookieHeader() } });
+    assert.equal(other.status, 404, "another workspace's invoice doesn't exist for you");
+    assert.deepEqual((await b.get('/api/billing/invoices')).json.invoices, []);
+});
