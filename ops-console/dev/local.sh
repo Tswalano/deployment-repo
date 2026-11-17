@@ -56,7 +56,7 @@ trap cleanup EXIT INT TERM
 
 node dev/bootstrap.cjs > "$STATE/bootstrap.log" 2>&1 & BOOT=$!
 for _ in $(seq 1 90); do grep -q READY "$STATE/bootstrap.log" 2>/dev/null && break; sleep 1; kill -0 "$BOOT" 2>/dev/null || { cat "$STATE/bootstrap.log"; exit 1; }; done
-grep -v READY "$STATE/bootstrap.log" | sed 's/^/  /'
+grep -v READY "$STATE/bootstrap.log" | sed 's/^/  /' || true   # nothing else to show (e.g. a second --saas start) is fine
 
 if [[ $SAAS == 1 ]]; then
   export DATABASE_URL="postgresql://opsconsole_app:local@127.0.0.1:${OPS_LOCAL_PG_PORT}/opsconsole_saas" OPS_MULTI_TENANT=1 PRODUCT_NAME="${PRODUCT_NAME:-Ops Console}"
