@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, ApiError, BillingView } from '../api';
+import { api, ApiError, BillingView, Invoice } from '../api';
 import { useAuth } from '../auth';
 import { Alert, PageHeader, Skeleton } from '../components/ui';
 
@@ -97,8 +97,50 @@ export function Billing() {
           })}
         </section>
       )}
+      {b.plan !== 'internal' && isAdmin && <Invoices />}
       <p className="mt-4 text-xs text-slate-500">Payments are processed by Paystack. Prices in South African Rand, billed monthly.</p>
     </div>
+  );
+}
+
+/** Every invoice, with a PDF each, and the last 6 months as one PDF or a CSV. */
+function Invoices() {
+  const [list, setList] = useState<Invoice[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { api.invoices().then(setList).catch((e) => setError(err(e))); }, []);
+  const recent = (list ?? []).filter((i) => Date.parse(i.issuedAt) > Date.now() - 183 * 86400e3).length;
+  return (
+    <section className="card mt-6 overflow-hidden p-0">
+      <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="font-medium text-slate-100">Invoices</h2>
+          <p className="mt-0.5 text-sm text-slate-500">One for every payment, generated from Paystack's confirmed payments.</p>
+        </div>
+        {recent > 0 && (
+          <div className="flex gap-2">
+            <a className="btn-secondary px-3 py-1.5 text-xs" href="/api/billing/invoices/export?months=6" download>Download last 6 months (PDF)</a>
+            <a className="btn-ghost px-3 py-1.5 text-xs" href="/api/billing/invoices/export?months=6&format=csv" download>CSV</a>
+          </div>
+        )}
+      </div>
+      {error ? <div className="px-5 pb-5"><Alert>{error}</Alert></div> : !list ? <div className="px-5 pb-5"><Skeleton className="h-16" /></div> : list.length === 0 ? (
+        <p className="px-5 pb-5 text-sm text-slate-500">No invoices yet: your first one appears here after your first payment.</p>
+      ) : (
+        <table className="tbl">
+          <thead><tr><th className="w-[16%]">Date</th><th className="w-[18%]">Invoice</th><th>Description</th><th className="w-[14%] text-right">Amount</th><th className="w-[10%]">Status</th><th className="w-[10%] text-right"></th></tr></thead>
+          <tbody>{list.map((i) => (
+            <tr key={i.id}>
+              <td>{day(i.issuedAt)}</td>
+              <td className="num text-xs">{i.number}</td>
+              <td className="text-slate-400" title={i.card ?? ''}>{i.description}</td>
+              <td className="num text-right">R{i.amount.toFixed(2)}</td>
+              <td className="capitalize text-slate-400">{i.status}</td>
+              <td className="text-right"><a className="text-xs text-slate-300 underline-offset-2 hover:underline" href={`/api/billing/invoices/${i.id}/pdf`} download>PDF</a></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+    </section>
   );
 }
 

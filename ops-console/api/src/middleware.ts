@@ -33,7 +33,7 @@ export function originAllowed(origin: string | undefined | null): boolean {
     return config.allowedOrigins.includes(origin) || loopback;
 }
 
-/** CSRF: state-changing requests must come from an allowed Origin (cookies are SameSite=Strict too). */
+/** CSRF: state-changing requests must come from an allowed Origin (the session cookie is SameSite=Lax as well). */
 export const checkOrigin: MiddlewareHandler<Env> = async (c, next) => {
     // GitHub webhooks carry no Origin; they are authenticated by their HMAC signature instead.
     if (c.req.path === '/api/github/webhook' || c.req.path === '/api/billing/paystack') return next();   // signed by the sender instead

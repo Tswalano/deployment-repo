@@ -46,6 +46,8 @@ export const config = {
     /** Multi-customer mode: emails of the people who run the platform (they set up the shared GitHub App). */
     /** Paystack secret key (multi-customer billing); test keys start with sk_test_. */
     paystackSecret: process.env.PAYSTACK_SECRET_KEY || '',
+    /** Seller details printed on invoices (lines separated by "|"), e.g. company, address, registration and VAT numbers. */
+    invoiceSeller: process.env.INVOICE_SELLER || '',
     platformAdmins: (process.env.PLATFORM_ADMINS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     serverBundleSha256: process.env.SERVER_BUNDLE_SHA256 || '',
 };
