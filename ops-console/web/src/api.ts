@@ -100,7 +100,7 @@ export interface GithubStatus {
   connected: boolean; webhookUrl: string; app?: { slug: string; owner: string; htmlUrl: string };
   installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
 }
-export interface Detection { found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[] }
+export interface Detection { found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
 export interface NewAppCheck {
   project: { ok: boolean; reason?: string }; domain: { status: 'free' | 'ours' | 'taken' | 'invalid'; name: string; reason?: string };
   memoryMb: number | null; memoryWarning: string | null; publicIp: string | null; appsDomain: string;

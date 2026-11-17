@@ -28,11 +28,13 @@ const LOW_MEMORY_MB = 120, WARN_MEMORY_MB = 250;
 export interface Detection {
     found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null;
     healthPath: string; node: string | null; warnings: string[];
+    /** Builds static files only (Vite/CRA/…) with no server framework: nothing would answer the health check. */
+    frontend: boolean;
 }
 export async function detect(repo: string, branch: string, subdir = ''): Promise<Detection> {
     if (!REPO_RE.test(repo) || !BRANCH_RE.test(branch) || (subdir && (!SUBDIR_RE.test(subdir) || subdir.includes('..')))) throw new DeployError('Invalid repository, branch or folder.');
     const raw = await repoFile(repo, `${subdir ? `${subdir.replace(/\/+$/, '')}/` : ''}package.json`, branch);
-    if (!raw) return { found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, warnings: [`No package.json in ${subdir || 'the repository root'} on ${branch}. Only Node.js apps are supported for now; if the app lives in a folder (e.g. backend), set the folder.`] };
+    if (!raw) return { found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, frontend: false, warnings: [`No package.json in ${subdir || 'the repository root'} on ${branch}. Only Node.js apps are supported for now; if the app lives in a folder (e.g. backend), set the folder.`] };
     let pkg: { name?: string; scripts?: Record<string, string>; engines?: { node?: string }; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     try { pkg = JSON.parse(raw); } catch { throw new DeployError('package.json is not valid JSON.'); }
     const scripts = Object.keys(pkg.scripts ?? {}).filter((s) => SCRIPT_RE.test(s));
@@ -45,8 +47,14 @@ export async function detect(repo: string, branch: string, subdir = ''): Promise
     if (minMajor > 18 && !/\b18\b/.test(node!)) warnings.push(`package.json asks for Node ${node}; the instance runs Node 18.`);
     const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
     if (deps.prisma && !scripts.includes('build') && !pick(['db:migrate', 'migrate', 'migrate:deploy', 'prisma:deploy'])) warnings.push('Uses Prisma: you may want a migrate script (e.g. "prisma migrate deploy").');
+    const FRONTEND = ['vite', 'react-scripts', '@angular/cli', '@vue/cli-service', 'parcel', 'gatsby'];
+    const SERVER = ['express', 'fastify', 'hono', '@hono/node-server', 'koa', '@nestjs/core', 'next', 'nuxt', '@remix-run/serve', '@sveltejs/adapter-node', 'h3', 'restify', '@hapi/hapi', 'polka', 'http-server', 'serve'];
+    const frontend = FRONTEND.some((d) => d in deps) && !SERVER.some((d) => d in deps);
+    if (frontend) {
+        warnings.unshift(`This looks like a front-end app (${FRONTEND.filter((d) => d in deps).join(', ')}): its build makes static files and it has no server to start, so the first deploy's health check would fail. The console runs Node.js servers; hosting static front-ends isn't supported yet.`);
+    }
     return { found: true, name: pkg.name ?? null, scripts, start, build: scripts.includes('build'), migrate: pick(['db:migrate', 'migrate:deploy', 'migrate', 'prisma:deploy']),
-        healthPath: '/', node, warnings };
+        healthPath: '/', node, warnings, frontend };
 }
 
 // ------------------------------------------------------------------ pre-flight checks
@@ -121,7 +129,13 @@ export async function createApp(inst: InstanceRow, v: NewApp, user: Requester): 
         throw new DeployError(`Deploys to ${inst.environment} are frozen (“${freeze.name}”). Give an override reason to create the app anyway.`, 409, 'frozen');
     }
     await repoToken(v.repo);   // throws a clear error if the GitHub App can't see the repository
-    if (c.domain.status === 'free') await aws().upsertARecord!((await zoneId())!, c.domain.name, c.publicIp);
+    // DNS first, and wait until Route 53 reports it live (capped so the request stays well under proxy timeouts)
+    const dnsCreated = c.domain.status === 'free';
+    if (dnsCreated) {
+        const change = await aws().upsertARecord!((await zoneId())!, c.domain.name, c.publicIp);
+        if (change && aws().waitDnsChange) await aws().waitDnsChange!(change, 60_000);
+    }
+    const undoDns = async () => { if (dnsCreated) await removeDns(c.domain.name, c.publicIp!).catch((e) => console.error('DNS cleanup failed:', (e as Error).message)); };
 
     const token = await stashToken(inst.region, v.project, v.repo);
     let row: DeploymentRow;
@@ -131,10 +145,11 @@ export async function createApp(inst: InstanceRow, v: NewApp, user: Requester): 
              VALUES ($1, $2, 'create', $3, $4, $5, 'console', $6, $7) RETURNING *`,
             [inst.id, v.project, v.branch, user.id, user.username, token, freeze ? v.override : null]));
         await db().query(
-            `INSERT INTO app_creations (deployment_id, instance_id, project, repo, branch, domain, with_db, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [row.id, inst.id, v.project, v.repo, v.branch, c.domain.name, v.db, user.username]);
+            `INSERT INTO app_creations (deployment_id, instance_id, project, repo, branch, domain, with_db, created_by, dns_created) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [row.id, inst.id, v.project, v.repo, v.branch, c.domain.name, v.db, user.username, dnsCreated]);
     } catch (err) {
         await dropToken(inst.region, token);
+        await undoDns();
         if ((err as { code?: string }).code === '23505') throw new DeployError(`${v.project} is already being created.`, 409);
         throw err;
     }
@@ -153,8 +168,15 @@ export async function createApp(inst: InstanceRow, v: NewApp, user: Requester): 
         await db().query(`UPDATE deployments SET status = 'failed', ssm_status = 'NotSent', output = $2, finished_at = now() WHERE id = $1`, [row.id, msg]);
         await db().query(`UPDATE app_creations SET status = 'failed', finished_at = now() WHERE deployment_id = $1`, [row.id]);
         await dropToken(inst.region, token);
+        await undoDns();
         throw new DeployError(msg);
     }
+}
+
+/** Remove an app's A record (only while it still points at this IP: never a record someone changed since). */
+async function removeDns(name: string, ip: string): Promise<void> {
+    const z = await zoneId();
+    if (z && aws().deleteARecord) await aws().deleteARecord!(z, name, ip);
 }
 
 /** Called when a create run finishes: record the result and, on success, link the repo with auto-deploy on. */
@@ -163,8 +185,8 @@ export async function creationFinished(d: DeploymentRow): Promise<void> {
     let r: { ok?: boolean; port?: number | null; tls?: boolean } = {};
     try { r = line ? JSON.parse(line) : {}; } catch { /* keep defaults */ }
     const ok = d.status === 'success' && r.ok !== false;
-    const { rows: [c] } = await db().query<{ repo: string; branch: string; domain: string; created_by: string }>(
-        `UPDATE app_creations SET status = $2, port = $3, tls = $4, finished_at = now() WHERE deployment_id = $1 RETURNING repo, branch, domain, created_by`,
+    const { rows: [c] } = await db().query<{ repo: string; branch: string; domain: string; created_by: string; dns_created: boolean }>(
+        `UPDATE app_creations SET status = $2, port = $3, tls = $4, finished_at = now() WHERE deployment_id = $1 RETURNING repo, branch, domain, created_by, dns_created`,
         [d.id, ok ? 'success' : 'failed', r.port ?? null, r.tls ?? null]);
     if (!c) return;
     if (ok) {
@@ -172,6 +194,12 @@ export async function creationFinished(d: DeploymentRow): Promise<void> {
             `INSERT INTO app_repos (instance_id, project, repo, branch, auto_deploy, linked_by) VALUES ($1, $2, $3, $4, true, $5)
              ON CONFLICT (instance_id, project) DO NOTHING`, [d.instance_id, d.project, c.repo, c.branch, c.created_by]);
         await db().query('UPDATE instances SET last_fetched_at = NULL WHERE id = $1', [d.instance_id]);
+    }
+    if (!ok && c.dns_created) {
+        // the run removed everything it made on the instance; the DNS record is the console's to remove
+        const { rows: [inst] } = await db().query<InstanceRow>('SELECT * FROM instances WHERE id = $1', [d.instance_id]);
+        const ip = inst ? (await aws().describeInstance(inst.region, inst.aws_instance_id).catch(() => null))?.publicIp : null;
+        if (ip) await removeDns(c.domain, ip).catch((e) => console.error('DNS cleanup failed:', (e as Error).message));
     }
     await announce(ok ? `[NEW APP] ${d.project} is live` : `[NEW APP] Creating ${d.project} failed`,
         ok ? `https://${c.domain} (${c.repo}@${c.branch}). Pushes to ${c.branch} now deploy automatically.` : `Everything the run created was rolled back. Open the console for the output.`, 'new-app');

@@ -47,6 +47,7 @@ export function NewApp() {
   const [build, setBuild] = useState(false);
   const [migrate, setMigrate] = useState('');
   const [healthPath, setHealthPath] = useState('/');
+  const [frontendAck, setFrontendAck] = useState(false);
   // step 2
   const [project, setProject] = useState('');
   const [subdomain, setSubdomain] = useState('');
@@ -83,7 +84,7 @@ export function NewApp() {
     setDetecting(true);
     const t = setTimeout(() => {
       api.detectRepo(repo, branch, subdir).then((d) => {
-        setDet(d);
+        setDet(d); setFrontendAck(false);
         setStart(d.start ?? '');   // no start script: make the person choose one, never guess silently
         setBuild(d.build); setMigrate(d.migrate ?? ''); setHealthPath(d.healthPath || '/');
       }).catch((e) => setDet({ found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, warnings: [err(e)] }))
@@ -116,7 +117,7 @@ export function NewApp() {
   if (error && !inst) return <Alert>{error}</Alert>;
   if (!inst) return <Skeleton className="h-64" />;
 
-  const step1Ok = !!repo && !!branch && !!det?.found && !!start;
+  const step1Ok = !!repo && !!branch && !!det?.found && !!start && (!det?.frontend || frontendAck);
   const step2Ok = !!chk && chk.project.ok && (chk.domain.status === 'free' || chk.domain.status === 'ours') && (chk.memoryMb == null || chk.memoryMb >= 120 || confirmLow);
   const domain = chk?.domain.name ?? `${subdomain}.glenify.studio`;
   const scripts = det?.scripts ?? [];
@@ -181,6 +182,12 @@ export function NewApp() {
                   </div>
                 )}
                 {det?.warnings.map((w) => <p key={w} className="mt-3 text-sm text-amber-300">{w}</p>)}
+                {det?.frontend && (
+                  <label className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-3 text-sm text-amber-100">
+                    <input type="checkbox" className="mt-0.5 accent-amber-400" checked={frontendAck} onChange={(e) => setFrontendAck(e.target.checked)} />
+                    <span>I know this app has its own server (or I picked a script that serves it) and want to continue anyway.</span>
+                  </label>
+                )}
               </div>
             )}
             <div className="flex justify-end"><button className="btn-primary" disabled={!step1Ok} onClick={() => setStep(1)}>Next</button></div>

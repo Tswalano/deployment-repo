@@ -1,6 +1,6 @@
 import { DescribeInstancesCommand, EC2Client, RebootInstancesCommand, StartInstancesCommand, StopInstancesCommand, TerminateInstancesCommand } from '@aws-sdk/client-ec2';
 import { CostExplorerClient, GetCostAndUsageCommand, GetCostForecastCommand } from '@aws-sdk/client-cost-explorer';
-import { ChangeResourceRecordSetsCommand, ListHostedZonesByNameCommand, ListResourceRecordSetsCommand, Route53Client } from '@aws-sdk/client-route-53';
+import { ChangeResourceRecordSetsCommand, GetChangeCommand, ListHostedZonesByNameCommand, ListResourceRecordSetsCommand, Route53Client } from '@aws-sdk/client-route-53';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { GetScheduleCommand, ListSchedulesCommand, SchedulerClient, UpdateScheduleCommand } from '@aws-sdk/client-scheduler';
 import type { RawCostRow } from './costs';
@@ -43,7 +43,11 @@ export interface AwsProvider {
     /** Records with exactly this name in a hosted zone (any type). */
     dnsRecords?(zoneId: string, name: string): Promise<DnsRecord[]>;
     /** Create or update an A record (TTL 60). */
-    upsertARecord?(zoneId: string, name: string, ip: string): Promise<void>;
+    upsertARecord?(zoneId: string, name: string, ip: string): Promise<string | null>;
+    /** Wait until a Route 53 change is live on its name servers (true) or the timeout passes (false). */
+    waitDnsChange?(changeId: string, timeoutMs: number): Promise<boolean>;
+    /** Delete an A record, only if it still holds exactly this IP (TTL 60, as the console creates them). */
+    deleteARecord?(zoneId: string, name: string, ip: string): Promise<void>;
     /** The EC2 instance this console runs on (IMDSv2), or null when not on EC2. */
     selfInstanceId?(): Promise<string | null>;
     /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
@@ -241,9 +245,28 @@ export const realAws: AwsProvider = {
             .map((x) => ({ name, type: x.Type ?? '?', values: (x.ResourceRecords ?? []).map((v) => v.Value ?? '').concat(x.AliasTarget?.DNSName ? [x.AliasTarget.DNSName] : []) }));
     },
     async upsertARecord(zoneId, name, ip) {
-        await r53c().send(new ChangeResourceRecordSetsCommand({ HostedZoneId: zoneId, ChangeBatch: {
+        const r = await r53c().send(new ChangeResourceRecordSetsCommand({ HostedZoneId: zoneId, ChangeBatch: {
             Comment: 'ops-console: new app',
             Changes: [{ Action: 'UPSERT', ResourceRecordSet: { Name: name, Type: 'A', TTL: 60, ResourceRecords: [{ Value: ip }] } }],
+        } })).catch((err) => { throw new Error(awsErrorMessage(err, 'route53')); });
+        return r.ChangeInfo?.Id ?? null;
+    },
+    async waitDnsChange(changeId, timeoutMs) {
+        const end = Date.now() + timeoutMs;
+        while (Date.now() < end) {
+            const r = await r53c().send(new GetChangeCommand({ Id: changeId })).catch(() => null);
+            if (r?.ChangeInfo?.Status === 'INSYNC') return true;
+            await sleep(5000);
+        }
+        return false;
+    },
+    async deleteARecord(zoneId, name, ip) {
+        const recs = await realAws.dnsRecords!(zoneId, name);
+        const a = recs.find((x) => x.type === 'A');
+        if (!a || a.values.length !== 1 || a.values[0] !== ip) return;   // changed by someone else since: leave it
+        await r53c().send(new ChangeResourceRecordSetsCommand({ HostedZoneId: zoneId, ChangeBatch: {
+            Comment: 'ops-console: remove the record of an app whose creation failed',
+            Changes: [{ Action: 'DELETE', ResourceRecordSet: { Name: name, Type: 'A', TTL: 60, ResourceRecords: [{ Value: ip }] } }],
         } })).catch((err) => { throw new Error(awsErrorMessage(err, 'route53')); });
     },
     async selfInstanceId() {
@@ -331,7 +354,9 @@ const dryAware: AwsProvider = {
         return realAws.powerAction!(region, id, action, true);
     },
     async putParameter() { /* local test mode: never write app secrets */ },
-    async upsertARecord() { /* local test mode: never change DNS */ },
+    async upsertARecord() { return null; /* local test mode: never change DNS */ },
+    async waitDnsChange() { return true; },
+    async deleteARecord() { /* local test mode */ },
     async deleteParameter() { /* local test mode */ },
     async runDocument(region, id, document, parameters, timeoutMs) {
         if (document === 'OpsConsole-RotateSecret') {

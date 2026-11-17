@@ -297,8 +297,11 @@ release() { # release <ref> [migrate] → returns 0 if healthy
 
 # ----------------------------------------------------------------------------- commands
 cmd_deploy() {
-  local ref="${1:-$BRANCH}" prev
+  local ref="${1:-$BRANCH}" prev was_running=0 known_good=0
   prev="$(current_sha)"
+  # a rollback target must be something that worked: the service was running, or this commit deployed fine before
+  systemctl is-active --quiet "$SERVICE" 2>/dev/null && was_running=1
+  grep -qE " $prev [^ ]+ ok (deploy|rollback|restore)\$" "$HISTORY" 2>/dev/null && known_good=1
   log "deploy ref=$ref  (currently at ${prev:0:8}, service=$SERVICE, run_dir=$RUN_DIR)"
   op_begin deploy "$ref"
   op_step preflight
@@ -319,6 +322,12 @@ cmd_deploy() {
   record "${RELEASED_SHA:-unknown}" "$ref" failed deploy
   if [[ "${NO_AUTO_ROLLBACK:-0}" == 1 ]]; then op_end failed "${RELEASED_SHA:-}" "NO_AUTO_ROLLBACK=1: left in place"; die "deploy failed; NO_AUTO_ROLLBACK=1 so leaving it in place"; fi
   local failed_at="$OP_STEP"
+  if [[ "${RELEASED_SHA:-}" == "$prev" && $known_good == 0 ]] || [[ $was_running == 0 && $known_good == 0 ]]; then
+    # first deploy (e.g. a new app): there is no earlier working version, so "rolling back" would just repeat the failure
+    op_end failed "${RELEASED_SHA:-}" "failed at $failed_at; first deploy, nothing to roll back to"
+    warn "deploy failed at $failed_at — this was the first deploy, so there is no earlier working version to roll back to"
+    return 1
+  fi
   warn "deploy failed — rolling back to ${prev:0:8}"
   [[ -n "$MIGRATE_CMD" ]] && warn "migrations are NOT reverted automatically; latest DB backup is in $STATE_DIR/backups/"
   op_step auto_rollback
