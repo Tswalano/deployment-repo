@@ -10,6 +10,55 @@ const Mark = () => (
 );
 
 /** Settings card: connect the console to GitHub by creating a private GitHub App from a manifest (one click). */
+/** Multi-customer: this workspace's own GitHub installations (the platform's app is shared; installations are not). */
+function WorkspaceGithub({ s, reload }: { s: GithubStatus; reload: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  if (!s.connected || !s.linkable) return <Alert tone="warn">GitHub isn't available yet on this platform.</Alert>;
+  return (
+    <div className="space-y-4">
+      {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+      {s.installations?.length ? (
+        <ul className="divide-y divide-ink-800 rounded-xl border border-ink-700">
+          {s.installations.map((i) => (
+            <li key={i.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+              <span className="min-w-0 flex-1 truncate text-slate-200">Installed on <b className="font-medium">{i.account}</b></span>
+              <button className="btn-ghost px-2.5 py-1 text-xs" disabled={busy} onClick={async () => {
+                if (!confirm(`Unlink ${i.account} from this workspace? Apps linked to its repositories stop deploying on push.`)) return;
+                setBusy(true); try { const r = await api.githubUnlink(i.id); setMsg({ tone: 'ok', text: r.note }); await reload(); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); } finally { setBusy(false); }
+              }}>Unlink</button>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="text-sm text-slate-400">Not installed yet. Install the app on your GitHub account or organisation and choose which repositories it may read.</p>}
+      <button className={s.installations?.length ? 'btn-secondary' : 'btn-primary'} disabled={busy} onClick={async () => {
+        setBusy(true); setMsg(null);
+        try { window.location.assign((await api.githubInstallLink()).url); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); setBusy(false); }
+      }}>{s.installations?.length ? 'Add another account or change access' : 'Install on GitHub'}</button>
+      <p className="text-xs text-slate-500">GitHub asks you to authorise the app at the end: that's how the console confirms the installation is yours before linking it here.</p>
+    </div>
+  );
+}
+
+/** GitHub sends people here after installing the app (multi-customer): confirm and link the installation. */
+export function GithubInstalled() {
+  const [state, setState] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const code = q.get('code'), id = Number(q.get('installation_id')), st = q.get('state');
+    if (!code || !id || !st) { setState({ tone: 'bad', text: 'GitHub did not send the details needed. Start again from Settings → GitHub.' }); return; }
+    api.githubLinkInstallation({ code, installationId: id, state: st })
+      .then((r) => setState({ tone: 'ok', text: `GitHub is linked: ${r.account}'s repositories can now be deployed.` }))
+      .catch((e) => setState({ tone: 'bad', text: err(e) }));
+  }, []);
+  return (
+    <div className="mx-auto max-w-lg py-10">
+      {state ? <Alert tone={state.tone}>{state.text}</Alert> : <p className="text-sm text-slate-400">Linking your GitHub installation…</p>}
+      <a className="btn-secondary mt-4" href="/settings#github">Back to Settings</a>
+    </div>
+  );
+}
+
 export function GithubConnect() {
   const [s, setS] = useState<GithubStatus | null>(null);
   const [org, setOrg] = useState('');
@@ -31,6 +80,18 @@ export function GithubConnect() {
     } catch (e) { setMsg({ tone: 'bad', text: err(e) }); setBusy(false); }
   }
 
+  // multi-customer: workspaces link their own installations; a platform admin with no app yet gets the set-up below
+  if (s?.multiTenant && !(s.canManageApp && !s.connected)) {
+    return (
+      <section id="github" className="card space-y-4">
+        <div>
+          <h2 className="font-medium text-slate-100">GitHub</h2>
+          <p className="mt-1 text-sm text-slate-400">Deploy from your repositories, and on every push.</p>
+        </div>
+        <WorkspaceGithub s={s} reload={load} />
+      </section>
+    );
+  }
   return (
     <section id="github" className="card space-y-4">
       <div className="flex items-center gap-3">

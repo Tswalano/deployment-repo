@@ -368,7 +368,18 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
     (`/apps/ops-dashboard/PGPASSWORD`).
   - **Web ports are optional:** 80/443 are opened only on the server's console-tagged security group, and only if the
     customer ticks the box.
-- **Not yet (12b-3):** GitHub per workspace, and apps on the customer's own domain.
+- **GitHub per workspace (12b-3):** the platform has ONE GitHub App, and its credentials always live in the host
+  account.
+  - **Who creates the app:** only `PLATFORM_ADMINS` (comma-separated emails) can create or remove it.
+  - **Linking installations:** each workspace installs it on its own GitHub account or org (Settings → GitHub). GitHub
+    then asks the installer to authorise the app (`request_oauth_on_install`). The console swaps the code for that
+    user's token and links the installation only if GitHub lists it among that user's installations
+    (`github_installations`, isolated per workspace). An installation ID alone proves nothing.
+  - **Scoping:** repositories, branches and tokens use only the workspace's own installations.
+  - **Webhook:** a push goes to the workspaces that linked its installation, each in its own context.
+- **Apps domain per workspace (12b-3):** Settings → Apps domain. It must be a Route 53 hosted zone in the
+  workspace's connected AWS account (checked through its role), and new apps get subdomains there. The single-team
+  console keeps `APPS_DOMAIN`.
 
 ## Repository layout
 

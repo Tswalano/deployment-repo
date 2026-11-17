@@ -7,6 +7,7 @@ import { config } from '../config';
 import { connection, connectionView, consolePrincipal, disconnect, ensureConnection, REGION_RE, STACK_NAME, verifyConnection } from '../connections';
 import { db } from '../db';
 import { DeployError } from '../deploys';
+import { workspaceAppsDomain } from '../newapp';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
 
 /** Connect a workspace's own AWS account (multi-customer mode). Mounted at /api/aws-connection. */
@@ -115,6 +116,25 @@ connect.post('/servers', ...admin, rateLimit(20, 10 * 60_000, (c) => `addserver:
         await audit({ id: user.id, username: user.username }, 'instance.add', `${name} (${id})`, { region: conn.region, steps }, c.get('ip'));
         return c.json({ instance: inst, steps,
             note: s.instanceProfile && s.instanceProfile !== profile ? `This server already has the instance profile ${s.instanceProfile}: give it AmazonSSMManagedInstanceCore (or switch it to ${profile}) so the console can reach it.` : null });
+    } catch (err) { return fail(c, err); }
+});
+
+// ------------------------------------------------------------------ the workspace's apps domain (Route 53 in its account)
+connect.get('/apps-domain', requireRole('viewer'), async (c) => c.json({ appsDomain: await workspaceAppsDomain() }));
+connect.put('/apps-domain', ...admin, async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    const domain = String(b.domain ?? '').trim().toLowerCase().replace(/\.$/, '');
+    if (!/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(domain)) return c.json({ error: 'Enter a domain like acme.com or apps.acme.com.' }, 400);
+    const conn = await connection();
+    if (conn?.status !== 'connected') return c.json({ error: 'Connect your AWS account first.' }, 409);
+    try {
+        const zoneId = await aws().hostedZoneId!(domain);
+        if (!zoneId) return c.json({ error: `There's no Route 53 hosted zone for ${domain} in your AWS account. Create one (and point the domain's name servers at it), or use a domain that has one.` }, 409);
+        await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('apps_domain', $1, $2)
+                          ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+            [JSON.stringify({ domain, zoneId }), c.get('user')!.username]);
+        await audit({ id: c.get('user')!.id, username: c.get('user')!.username }, 'apps.domain', domain, { zoneId }, c.get('ip'));
+        return c.json({ appsDomain: { domain, zoneId } });
     } catch (err) { return fail(c, err); }
 });
 

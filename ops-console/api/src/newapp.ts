@@ -1,4 +1,5 @@
 import { announce } from './alerts';
+import { config } from './config';
 import { aws, dryRun } from './aws';
 import { InstanceRow } from './collector';
 import { db } from './db';
@@ -11,7 +12,19 @@ export const CREATE_DOCUMENT = 'OpsConsole-CreateApp';
 /** Apps get a subdomain of this zone; the console manages its A records. */
 export const APPS_DOMAIN = process.env.APPS_DOMAIN || 'glenify.studio';
 let zoneCache: string | null = process.env.APPS_HOSTED_ZONE_ID || null;
+
+/** Multi-customer: each workspace's own apps domain (a Route 53 zone in ITS account), set in Settings. */
+export interface AppsDomain { domain: string; zoneId: string }
+export async function workspaceAppsDomain(): Promise<AppsDomain | null> {
+    const { rows } = await db().query<{ value: AppsDomain }>("SELECT value FROM settings WHERE key = 'apps_domain'");
+    return rows[0]?.value ?? null;
+}
+/** The domain apps get subdomains of: the workspace's (multi-customer) or APPS_DOMAIN (single team). */
+export async function appsDomain(): Promise<string | null> {
+    return config.multiTenant ? (await workspaceAppsDomain())?.domain ?? null : APPS_DOMAIN;
+}
 async function zoneId(): Promise<string | null> {
+    if (config.multiTenant) return (await workspaceAppsDomain())?.zoneId ?? null;
     if (!zoneCache && aws().hostedZoneId) zoneCache = await aws().hostedZoneId!(APPS_DOMAIN).catch(() => null);
     return zoneCache;
 }
@@ -70,13 +83,15 @@ export async function check(inst: InstanceRow, project: string, subdomain: strin
         const { rows } = await db().query("SELECT 1 FROM app_creations WHERE instance_id = $1 AND project = $2 AND status IN ('running', 'success')", [inst.id, project]);
         if (rows.length) p = { ok: false, reason: `${project} was already created here.` };
     }
-    const name = `${subdomain}.${APPS_DOMAIN}`;
+    const domain = await appsDomain();
+    const name = `${subdomain}.${domain ?? 'your-domain'}`;
     const info = await aws().describeInstance(inst.region, inst.aws_instance_id).catch(() => null);
     const ip = info?.publicIp ?? null;
     let d: Check['domain'];
     if (!LABEL_RE.test(subdomain)) d = { status: 'invalid', name, reason: 'Use lowercase letters, digits and dashes.' };
     else if (RESERVED.has(subdomain)) d = { status: 'taken', name, reason: 'That subdomain is reserved.' };
-    else if (!(await zoneId()) || !aws().dnsRecords) d = { status: 'invalid', name, reason: `No Route 53 hosted zone for ${APPS_DOMAIN} is reachable.` };
+    else if (!domain) d = { status: 'invalid', name, reason: 'Set your apps domain in Settings first (a domain whose DNS is in Route 53 in your AWS account).' };
+    else if (!(await zoneId()) || !aws().dnsRecords) d = { status: 'invalid', name, reason: `No Route 53 hosted zone for ${domain} is reachable.` };
     else {
         const recs = await aws().dnsRecords!((await zoneId())!, name);
         if (!recs.length) d = { status: 'free', name };

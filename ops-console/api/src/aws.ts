@@ -561,6 +561,11 @@ const perWorkspace = new Proxy({} as AwsProvider, {
         return fn.apply(p, args);
     }),
 });
+/**
+ * The console host's own AWS identity, ALWAYS (never a customer's). Only for the platform's own settings, e.g. the
+ * GitHub App credentials under /ops-console/github/*; never for anything a customer's workspace runs.
+ */
+export const hostAws = () => provider;
 export const aws = () => (multiTenantGuard ? (workspaceResolver ? perWorkspace : refuseAll) : provider);
 /** Tests: switch the guard (it follows OPS_MULTI_TENANT otherwise). */
 export function setMultiTenantGuard(on: boolean): void {

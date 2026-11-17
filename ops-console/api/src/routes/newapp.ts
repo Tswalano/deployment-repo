@@ -5,7 +5,7 @@ import { db } from '../db';
 import { DeployError, deploymentView } from '../deploys';
 import { githubConfig } from '../github';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
-import { APPS_DOMAIN, check, createApp, detect, validate } from '../newapp';
+import { appsDomain, check, createApp, detect, validate } from '../newapp';
 
 /** Mounted on /api; every route carries its own guards. */
 const newapp = new Hono<Env>();
@@ -26,7 +26,7 @@ newapp.get('/github/detect', requireRole('admin'), denyDemo, async (c) => {
 newapp.get('/instances/:id/new-app/check', requireRole('admin'), denyDemo, async (c) => {
     const i = await inst(c);
     if (!i) return c.json({ error: 'Instance not found' }, 404);
-    try { return c.json({ ...(await check(i, c.req.query('project') ?? '', (c.req.query('subdomain') ?? '').toLowerCase())), appsDomain: APPS_DOMAIN }); } catch (err) { return fail(c, err); }
+    try { return c.json({ ...(await check(i, c.req.query('project') ?? '', (c.req.query('subdomain') ?? '').toLowerCase())), appsDomain: await appsDomain() }); } catch (err) { return fail(c, err); }
 });
 
 newapp.post('/instances/:id/new-app', requireRole('admin'), denyDemo, rateLimit(30, 30 * 60_000, (c) => `new-app:${c.get('user')!.id}`), async (c) => {
@@ -37,7 +37,7 @@ newapp.post('/instances/:id/new-app', requireRole('admin'), denyDemo, rateLimit(
         const v = validate(await c.req.json().catch(() => ({})));
         const d = await createApp(i, v, user);
         await audit({ id: user.id, username: user.username }, 'app.create', `${v.project} on ${i.name}`,
-            { repo: v.repo, branch: v.branch, domain: `${v.subdomain}.${APPS_DOMAIN}`, db: v.db, deployment: d.id, override: v.override || undefined }, c.get('ip'));
+            { repo: v.repo, branch: v.branch, domain: `${v.subdomain}.${await appsDomain()}`, db: v.db, deployment: d.id, override: v.override || undefined }, c.get('ip'));
         return c.json({ deployment: deploymentView(d, true) }, 202);
     } catch (err) { return fail(c, err); }
 });
