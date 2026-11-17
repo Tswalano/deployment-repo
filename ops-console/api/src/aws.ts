@@ -5,7 +5,7 @@ import { GetScheduleCommand, ListSchedulesCommand, SchedulerClient, UpdateSchedu
 import type { RawCostRow } from './costs';
 import type { RawSchedule } from './schedule';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { DescribeDocumentCommand, DescribeInstanceInformationCommand, DescribeParametersCommand, GetParameterCommand, PutParameterCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { DeleteParameterCommand, DescribeDocumentCommand, DescribeInstanceInformationCommand, DescribeParametersCommand, GetParameterCommand, PutParameterCommand, GetCommandInvocationCommand, SendCommandCommand, SSMClient } from '@aws-sdk/client-ssm';
 
 /** Everything the console needs from AWS, behind an interface so tests can use a fake. */
 export interface AwsProvider {
@@ -25,6 +25,11 @@ export interface AwsProvider {
     listParameters?(region: string, path: string): Promise<ParamMeta[]>;
     getParameter?(region: string, name: string): Promise<string | null>;
     putParameter?(region: string, name: string, value: string): Promise<void>;
+    deleteParameter?(region: string, name: string): Promise<void>;
+    /** The console's own settings (/ops-console/*): never simulated, even in local test mode. */
+    getConsoleSecret?(region: string, name: string): Promise<string | null>;
+    putConsoleSecret?(region: string, name: string, value: string): Promise<void>;
+    deleteConsoleSecret?(region: string, name: string): Promise<void>;
     listSchedules?(region: string): Promise<RawSchedule[]>;
     /** Change a schedule's expression and/or state, keeping its target, role and everything else as they are. */
     updateSchedule?(region: string, group: string, name: string, patch: { expression?: string; state?: 'ENABLED' | 'DISABLED' }): Promise<void>;
@@ -192,6 +197,24 @@ export const realAws: AwsProvider = {
         const r = await cec().send(new GetCostForecastCommand({ TimePeriod: { Start: start, End: end }, Metric: 'UNBLENDED_COST', Granularity: 'MONTHLY' }));
         return r.Total?.Amount ? Number(r.Total.Amount) : null;
     },
+    async deleteParameter(region, name) {
+        await ssmc(region).send(new DeleteParameterCommand({ Name: name })).catch((err) => {
+            if ((err as { name?: string }).name === 'ParameterNotFound') return;
+            throw new Error(awsErrorMessage(err, region));
+        });
+    },
+    async getConsoleSecret(region, name) {
+        if (!name.startsWith('/ops-console/')) throw new Error('not a console parameter');
+        return realAws.getParameter!(region, name);
+    },
+    async putConsoleSecret(region, name, value) {
+        if (!name.startsWith('/ops-console/')) throw new Error('not a console parameter');
+        return realAws.putParameter!(region, name, value);
+    },
+    async deleteConsoleSecret(region, name) {
+        if (!name.startsWith('/ops-console/')) throw new Error('not a console parameter');
+        return realAws.deleteParameter!(region, name);
+    },
     async selfInstanceId() {
         if (selfId !== undefined) return selfId;
         try {
@@ -274,7 +297,8 @@ const dryAware: AwsProvider = {
     async powerAction(region, id, action) {
         return realAws.powerAction!(region, id, action, true);
     },
-    async putParameter() { /* local test mode: never write secrets */ },
+    async putParameter() { /* local test mode: never write app secrets */ },
+    async deleteParameter() { /* local test mode */ },
     async runDocument(region, id, document, parameters, timeoutMs) {
         if (document === 'OpsConsole-RotateSecret') {
             return JSON.stringify({ ok: true, kind: parameters?.kind?.[0], target: parameters?.target?.[0], dryRun: true, updated: [], restarted: [], health: {} });
