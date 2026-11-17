@@ -16,7 +16,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [site, setSite] = useState<SiteConfig>({ multiTenant: false, productName: 'Ops Console', trialDays: 14 });
-  useEffect(() => { api.site().then(setSite).catch(() => undefined); }, []);
+  // wait for the mode too: deciding "signed out → landing page or sign-in?" before it arrives sent everyone to /login
+  const [siteLoaded, setSiteLoaded] = useState(false);
+  useEffect(() => { api.site().then(setSite).catch(() => undefined).finally(() => setSiteLoaded(true)); }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -37,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  return <AuthContext.Provider value={{ user, loading, site, refresh, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, loading: loading || !siteLoaded, site, refresh, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthState {
