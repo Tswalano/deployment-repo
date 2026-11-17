@@ -52,7 +52,7 @@ export function LogsTab({ instanceId, project }: { instanceId: number; project: 
     if (!applied) return m;
     const i = m.toLowerCase().indexOf(applied.toLowerCase());
     if (i < 0) return m;
-    return <>{m.slice(0, i)}<mark className="rounded bg-indigo-400/30 px-0.5 text-white">{m.slice(i, i + applied.length)}</mark>{m.slice(i + applied.length)}</>;
+    return <>{m.slice(0, i)}<mark className="rounded bg-indigo-400/30 px-0.5 text-slate-100">{m.slice(i, i + applied.length)}</mark>{m.slice(i + applied.length)}</>;
   };
 
   return (
