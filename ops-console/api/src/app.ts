@@ -14,6 +14,7 @@ import github, { appRepo } from './routes/github';
 import envRoutes from './routes/env';
 import newapp from './routes/newapp';
 import instances from './routes/instances';
+import failures from './routes/failures';
 import access, { myKeys } from './routes/access';
 import users from './routes/users';
 import { account, teamRoutes, workspaces } from './routes/accounts';
@@ -53,6 +54,7 @@ export function createApp() {
     app.route('/api/instances', apps);
     app.route('/api/instances', instances);
     app.route('/api/deployments', deployments);
+    app.route('/api/failures', failures);
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);
     app.route('/api/backups', backups);

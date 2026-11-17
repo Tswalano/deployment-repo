@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { ActivityList } from '../components/ActivityList';
+import { FailedDeployments } from '../components/FailedDeployments';
 import { ago, Alert, dur, PageHeader, Skeleton } from '../components/ui';
 import { usePoll } from '../usePoll';
 
@@ -14,6 +15,7 @@ export function Activity() {
     <div>
       <PageHeader title="Activity" subtitle="Deployments across all instances, newest first" />
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
+      <FailedDeployments />
       {pending && pending.length > 0 && (
         <section className="card mb-5 border-amber-500/30 p-0">
           <h2 className="px-5 pt-4 font-medium text-slate-100">Waiting for approval</h2>

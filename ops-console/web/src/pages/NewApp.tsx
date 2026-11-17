@@ -42,9 +42,10 @@ export function NewApp() {
   const [ghError, setGhError] = useState<string | null>(null);
   const [step, setStep] = useState(0);
   // step 1
-  const [repo, setRepo] = useState('');
+  // "Try again" from a failed creation opens the wizard pre-filled (?repo=&branch=&project=&subdomain=)
+  const [repo, setRepo] = useState(search.get('repo') ?? '');
   const [branches, setBranches] = useState<string[]>([]);
-  const [branch, setBranch] = useState('main');
+  const [branch, setBranch] = useState(search.get('branch') || 'main');
   const [subdir, setSubdir] = useState('');
   const [det, setDet] = useState<Detection | null>(null);
   const [detecting, setDetecting] = useState(false);
@@ -54,8 +55,8 @@ export function NewApp() {
   const [healthPath, setHealthPath] = useState('/');
   const [frontendAck, setFrontendAck] = useState(false);
   // step 2
-  const [project, setProject] = useState('');
-  const [subdomain, setSubdomain] = useState('');
+  const [project, setProject] = useState(search.get('project') ?? '');
+  const [subdomain, setSubdomain] = useState(search.get('subdomain') ?? '');
   const [db, setDb] = useState(false);
   const [memoryMb, setMemoryMb] = useState(256);
   const [chk, setChk] = useState<NewAppCheck | null>(null);
