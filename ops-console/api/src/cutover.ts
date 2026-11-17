@@ -21,7 +21,7 @@ export async function cutoverCheck(): Promise<void> {
         line(w?.plan === 'internal', `workspace 1 "${w?.name}" is the platform's own (plan ${w?.plan}; never billed)`);
         const { rows: users } = await db().query<{ username: string; email: string | null; role: string; is_demo: boolean }>(
             'SELECT u.username, u.email, m.role, u.is_demo FROM workspace_members m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = $1 ORDER BY u.username', [WS]);
-        for (const u of users.filter((x) => !x.is_demo)) line(u.email ? true : null, `${u.username} (${u.role})${u.email ? ` has an email` : ': no email yet (can still sign in with the username; add one on Your account)'}`);
+        for (const u of users.filter((x) => !x.is_demo)) line(u.email ? true : null, `${u.username} (${u.role})${u.email ? ` has an email` : ': no email yet (can still sign in with the username; add one under Account)'}`);
         if (users.some((x) => x.is_demo)) line(null, 'the demo account stops working in multi-company mode (demo sign-in is off there)');
         const c = await connection();
         line(c?.status === 'connected', c?.status === 'connected' ? `AWS connected: account ${c.account_id}, ${c.role_arn}` : `AWS not connected yet (run cutover-prepare, create the stack, then cutover-connect)`);
