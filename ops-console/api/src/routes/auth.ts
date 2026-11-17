@@ -5,6 +5,8 @@ import { config } from '../config';
 import { db } from '../db';
 import { denyDemo, Env, rateLimit } from '../middleware';
 import { dummyPasswordHash, hashPassword, passwordProblem, verifyPassword } from '../password';
+import { cleanUsername } from '../accounts';
+import { DeployError } from '../deploys';
 import { createSession, destroySession, destroyUserSessions } from '../sessions';
 
 const auth = new Hono<Env>();
@@ -96,6 +98,44 @@ auth.post('/password', denyDemo, async (c) => {
     await db().query('UPDATE users SET password_hash = $2, password_changed_at = now() WHERE id = $1', [user.id, await hashPassword(body.newPassword)]);
     await destroyUserSessions(user.id, getCookie(c, config.cookieName));   // sign out everywhere else
     await audit({ id: user.id, username: user.username }, 'auth.password_change', user.username, {}, c.get('ip'));
+    return c.json({ ok: true });
+});
+
+/** Your own details (the Account page). */
+auth.get('/profile', async (c) => {
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'Not signed in' }, 401);
+    const { rows: [u] } = await db().query(
+        `SELECT username, display_name AS "displayName", email, email_verified_at AS "emailVerifiedAt", created_at AS "createdAt",
+                last_login_at AS "lastLoginAt", password_changed_at AS "passwordChangedAt", is_demo AS "isDemo" FROM users WHERE id = $1`, [user.id]);
+    const { rows: ws } = await db().query(
+        `SELECT w.name, m.role, w.id = $2 AS current FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = $1 ORDER BY m.created_at`,
+        [user.id, user.workspaceId]);
+    return c.json({ profile: { ...u, role: user.role, workspaces: config.multiTenant ? ws : [] } });
+});
+
+/** Change your display name and/or username (sign in with either the username or the email). */
+auth.patch('/profile', denyDemo, async (c) => {
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'Not signed in' }, 401);
+    const b = await c.req.json().catch(() => ({}));
+    const sets: string[] = []; const vals: unknown[] = [user.id];
+    try {
+        if (b.displayName !== undefined) {
+            const n = String(b.displayName).trim().replace(/\s+/g, ' ').replace(/[<>]/g, '');
+            if (n.length < 1 || n.length > 60) return c.json({ error: 'Your name must be 1 to 60 characters.' }, 400);
+            vals.push(n); sets.push(`display_name = $${vals.length}`);
+        }
+        if (b.username !== undefined && String(b.username).trim().toLowerCase() !== user.username.toLowerCase()) {
+            vals.push(await cleanUsername(b.username, user.id)); sets.push(`username = $${vals.length}`);
+        }
+    } catch (err) {
+        if (err instanceof DeployError) return c.json({ error: err.message, code: err.code }, err.status);
+        throw err;
+    }
+    if (!sets.length) return c.json({ ok: true });
+    await db().query(`UPDATE users SET ${sets.join(', ')} WHERE id = $1`, vals);
+    await audit({ id: user.id, username: user.username }, 'account.profile', user.username, { username: b.username, displayName: b.displayName }, c.get('ip'));
     return c.json({ ok: true });
 });
 
