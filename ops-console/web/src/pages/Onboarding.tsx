@@ -113,16 +113,14 @@ export function Onboarding() {
   return (
     <div className="mx-auto max-w-6xl">
       {/* hero */}
-      <section className="relative overflow-hidden rounded-2xl border border-ink-700 bg-ink-900 px-6 py-8 sm:px-10 sm:py-10">
-        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl" aria-hidden />
-        <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-sky-500/10 blur-3xl" aria-hidden />
-        <div className="relative">
+      <section className="card px-6 py-8 sm:px-10 sm:py-10">
+        <div>
           <p className="eyebrow text-indigo-300">{ws?.name ?? 'Your workspace'}</p>
           <h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-100 sm:text-3xl">Welcome{first ? `, ${first}` : ''}. Let's get your apps running.</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-400 sm:text-base">Three steps and about ten minutes: connect your AWS account, pick a server, deploy from GitHub. You stay in control of everything in your account.</p>
           <div className="mt-6 flex max-w-md items-center gap-3">
             <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done} aria-label="Setup progress">
-              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-sky-400" style={{ width: `${(done / total) * 100}%` }} />
+              <div className="h-full rounded-full bg-indigo-500" style={{ width: `${(done / total) * 100}%` }} />
             </div>
             <span className="num text-xs text-slate-400">{done} of {total} done</span>
           </div>
