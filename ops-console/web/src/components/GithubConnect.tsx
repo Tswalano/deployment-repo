@@ -14,7 +14,8 @@ const Mark = () => (
 function WorkspaceGithub({ s, reload }: { s: GithubStatus; reload: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
-  if (!s.connected || !s.linkable) return <Alert tone="warn">GitHub isn't available yet on this platform.</Alert>;
+  if (!s.connected) return <Alert tone="warn">GitHub isn't available yet on this platform.</Alert>;
+  if (!s.linkable) return s.canManageApp ? <OAuthSetup reload={reload} /> : <Alert tone="warn">GitHub isn't available yet on this platform.</Alert>;
   return (
     <div className="space-y-4">
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
@@ -35,7 +36,37 @@ function WorkspaceGithub({ s, reload }: { s: GithubStatus; reload: () => Promise
         setBusy(true); setMsg(null);
         try { window.location.assign((await api.githubInstallLink()).url); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); setBusy(false); }
       }}>{s.installations?.length ? 'Add another account or change access' : 'Install on GitHub'}</button>
+      <button className="btn-ghost ml-2" disabled={busy} title="Already installed the app (for example before this console became multi-company)? Sign in with GitHub to link those installations here."
+              onClick={async () => { setBusy(true); setMsg(null); try { window.location.assign((await api.githubAuthorize()).url); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); setBusy(false); } }}>
+        Link existing installations
+      </button>
       <p className="text-xs text-slate-500">GitHub asks you to authorise the app at the end: that's how the console confirms the installation is yours before linking it here.</p>
+    </div>
+  );
+}
+
+/** Platform admin: an app created before installation linking needs its OAuth client (Client ID + secret). */
+function OAuthSetup({ reload }: { reload: () => Promise<unknown> }) {
+  const [id, setId] = useState('');
+  const [secret, setSecret] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const callback = `${window.location.origin}/github/installed`;
+  return (
+    <div className="space-y-3 rounded-xl border border-ink-700 bg-ink-950/40 p-4 text-sm">
+      <p className="text-slate-300">This GitHub App was set up before workspaces could link installations. On the app's settings page on GitHub:</p>
+      <ol className="list-decimal space-y-1 pl-5 text-slate-400">
+        <li>Under <b>Identifying and authorizing users</b>, add the callback URL <code className="num">{callback}</code> and tick <b>Request user authorization (OAuth) during installation</b>.</li>
+        <li>Copy the <b>Client ID</b>, generate a <b>client secret</b>, and paste both here (they're stored with the app's other credentials).</li>
+      </ol>
+      {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <input className="input num text-xs" placeholder="Client ID (Iv1…)" value={id} onChange={(e) => setId(e.target.value.trim())} />
+        <input className="input num text-xs" type="password" placeholder="Client secret" value={secret} onChange={(e) => setSecret(e.target.value.trim())} />
+      </div>
+      <button className="btn-primary" disabled={!id || !secret} onClick={async () => {
+        try { await api.githubOAuth(id, secret); setSecret(''); setMsg({ tone: 'ok', text: 'Saved. Workspaces can now link their installations.' }); await reload(); }
+        catch (e) { setMsg({ tone: 'bad', text: err(e) }); }
+      }}>Save</button>
     </div>
   );
 }
@@ -45,9 +76,9 @@ export function GithubInstalled() {
   const [state, setState] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    const code = q.get('code'), id = Number(q.get('installation_id')), st = q.get('state');
-    if (!code || !id || !st) { setState({ tone: 'bad', text: 'GitHub did not send the details needed. Start again from Settings → GitHub.' }); return; }
-    api.githubLinkInstallation({ code, installationId: id, state: st })
+    const code = q.get('code'), id = Number(q.get('installation_id')) || 0, st = q.get('state');
+    if (!code || !st) { setState({ tone: 'bad', text: 'GitHub did not send the details needed. Start again from Settings → GitHub.' }); return; }
+    api.githubLinkInstallation({ code, installationId: id, state: st })   // no installation id = link every installation you can access
       .then((r) => setState({ tone: 'ok', text: `GitHub is linked: ${r.account}'s repositories can now be deployed.` }))
       .catch((e) => setState({ tone: 'bad', text: err(e) }));
   }, []);

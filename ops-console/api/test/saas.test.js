@@ -15,6 +15,8 @@ process.env.COOKIE_SECURE = 'false';
 process.env.OPS_MULTI_TENANT = '1';
 process.env.PUBLIC_URL = ORIGIN;
 process.env.CONSOLE_PRINCIPAL_ARN = 'arn:aws:iam::111111111111:role/console-host';
+process.env.PAYSTACK_SECRET_KEY = 'sk_test_' + 'f'.repeat(40);
+process.env.PLATFORM_ADMINS = 'dee@example.com';
 process.env.SERVER_BUNDLE_URL = 'https://ops-console-public-111111111111-af-south-1.s3.af-south-1.amazonaws.com/bundles/' + 'a'.repeat(64) + '.tar.gz';
 process.env.SERVER_BUNDLE_SHA256 = 'a'.repeat(64);
 
@@ -413,4 +415,93 @@ test('GitHub per workspace: verified installation linking, repos only from your 
     } finally {
         global.fetch = realFetch;
     }
+});
+
+test('billing (Paystack): trial, limits, checkout verified server-side, signed webhooks once, grace, read-only; email + GitHub linking for migration', async () => {
+    const crypto = require('crypto');
+    const billing = dist('billing');
+    const { db } = dist('db');
+    const secret = process.env.PAYSTACK_SECRET_KEY;
+    const ps = { plansCreated: 0, verify: {} };
+    billing.setPaystackFetch(async (url, init) => {
+        const u = new URL(url); const body = init.body ? JSON.parse(init.body) : null;
+        assert.equal(init.headers.authorization, `Bearer ${secret}`);
+        const ok = (data) => new Response(JSON.stringify({ status: true, message: 'ok', data }), { status: 200 });
+        if (u.pathname === '/plan' && init.method === 'GET') return ok([]);
+        if (u.pathname === '/plan' && init.method === 'POST') { ps.plansCreated++; return ok({ plan_code: `PLN_${body.amount}` }); }
+        if (u.pathname === '/transaction/initialize') { ps.lastInit = body; return ok({ authorization_url: 'https://checkout.paystack.com/abc123', reference: 'ref_123456' }); }
+        const v = /^\/transaction\/verify\/(.+)$/.exec(u.pathname);
+        if (v) return ok(ps.verify[v[1]]);
+        if (u.pathname === '/subscription/disable') return ok({});
+        return new Response(JSON.stringify({ status: false, message: 'not found' }), { status: 404 });
+    });
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
+
+    // trial: full access with Pro limits
+    let b = (await a.get('/api/billing')).json;
+    assert.deepEqual([b.enabled, b.plan, b.active, b.limits.servers], [true, 'trial', true, 5]);
+
+    // checkout: Paystack's hosted page, plans created once, workspace in the metadata
+    const co = await a.post('/api/billing/checkout', { plan: 'pro' });
+    assert.equal(co.status, 200, JSON.stringify(co.json));
+    assert.equal(co.json.url, 'https://checkout.paystack.com/abc123');
+    assert.deepEqual([ps.lastInit.amount, ps.lastInit.currency, ps.lastInit.plan, ps.lastInit.metadata.workspace_id], [59900, 'ZAR', 'PLN_59900', wsA]);
+    await a.post('/api/billing/checkout', { plan: 'starter' });
+    assert.equal(ps.plansCreated, 2, 'plans are created once and remembered');
+
+    // confirm: verified with Paystack; another workspace's payment / wrong amount refused
+    ps.verify.ref_other = { status: 'success', reference: 'ref_other', amount: 59900, currency: 'ZAR', metadata: { workspace_id: 999, plan: 'pro' } };
+    ps.verify.ref_cheap = { status: 'success', reference: 'ref_cheap', amount: 100, currency: 'ZAR', metadata: { workspace_id: wsA, plan: 'pro' } };
+    ps.verify.ref_good = { status: 'success', reference: 'ref_good', amount: 59900, currency: 'ZAR', metadata: { workspace_id: wsA, plan: 'pro' }, customer: { customer_code: 'CUS_acme', email: 'alice@example.com' } };
+    assert.equal((await a.post('/api/billing/confirm', { reference: 'ref_other' })).status, 403);
+    assert.equal((await a.post('/api/billing/confirm', { reference: 'ref_cheap' })).status, 409);
+    assert.equal((await a.post('/api/billing/confirm', { reference: 'ref_good' })).status, 200);
+    b = (await a.get('/api/billing')).json;
+    assert.deepEqual([b.plan, b.status, b.active], ['pro', 'active', true]);
+
+    // webhooks: signature checked, each event once, subscription linked, failed payment → grace
+    const hook = (e, sig) => { const body = JSON.stringify(e); return app.request('/api/billing/paystack', { method: 'POST', headers: { 'content-type': 'application/json', 'x-paystack-signature': sig ?? crypto.createHmac('sha512', secret).update(body).digest('hex') }, body }); };
+    assert.equal((await hook({ event: 'subscription.create', data: {} }, 'f'.repeat(128))).status, 401);
+    const sub = { event: 'subscription.create', data: { id: 77, subscription_code: 'SUB_acme', email_token: 'tok_acme', customer: { customer_code: 'CUS_acme' }, next_payment_date: new Date(Date.now() + 30 * 86400e3).toISOString() } };
+    assert.equal((await hook(sub)).status, 200);
+    assert.equal((await (await hook(sub)).json()).duplicate, true, 'the same event is applied once');
+    const { rows: [w1] } = await db().query('SELECT subscription_code, subscription_token FROM workspaces WHERE id = $1', [wsA]);
+    assert.deepEqual([w1.subscription_code, w1.subscription_token], ['SUB_acme', 'tok_acme']);
+    await hook({ event: 'invoice.payment_failed', data: { id: 78, subscription_code: 'SUB_acme', customer: { customer_code: 'CUS_acme' } } });
+    b = (await a.get('/api/billing')).json;
+    assert.deepEqual([b.status, b.active], ['past_due', true], 'still working during the grace period');
+
+    // limits on Starter: one server, two members, no approvals
+    await db().query(`UPDATE workspaces SET plan = 'starter', billing_status = 'active', grace_until = NULL WHERE id = $1`, [wsA]);
+    assert.equal((await a.post('/api/team/invites', { email: 'extra@example.com', role: 'viewer' })).status, 200, 'Alice + 1 invitation = the 2 Starter seats');
+    const inv = await a.post('/api/team/invites', { email: 'extra2@example.com', role: 'viewer' });
+    assert.equal(inv.status, 409); assert.equal(inv.json.code, 'plan_limit');
+    assert.match(inv.json.error, /Starter plan includes 2 team members/);
+    const pp = await app.request('/api/policy', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: a.cookieHeader() }, body: JSON.stringify({ approvals: { production: true } }) });
+    assert.equal(pp.status, 409, 'deploy approvals are Pro');
+
+    // read-only after the grace period / an ended trial: reads work, changes are refused, billing stays open
+    await db().query(`UPDATE workspaces SET billing_status = 'past_due', grace_until = now() - interval '1 day' WHERE id = $1`, [wsA]);
+    dist('routes/billing').forgetStanding(wsA);
+    const blocked = await a.post('/api/team/invites', { email: 'x2@example.com', role: 'viewer' });
+    assert.equal(blocked.status, 402); assert.equal(blocked.json.code, 'billing_required');
+    assert.match(blocked.json.error, /servers and apps keep running/);
+    assert.equal((await a.get('/api/instances')).status, 200, 'reads still work');
+    assert.equal((await a.post('/api/billing/checkout', { plan: 'pro' })).status, 200, 'billing stays open');
+
+    // migration items: email (needs the password), OAuth client for an existing app (platform admin), link existing installations
+    await db().query(`UPDATE workspaces SET billing_status = 'active', grace_until = NULL, plan = 'pro' WHERE id = $1`, [wsA]);
+    dist('routes/billing').forgetStanding(wsA);
+    const d = client();
+    assert.equal((await d.post('/api/auth/login', { username: 'dee', password: 'correct-horse-4' })).status, 200);
+    assert.equal((await d.post('/api/auth/email', { email: 'dee2@example.com', currentPassword: 'correct-horse-4' })).status, 409, 'the sign-up email cannot be changed by the user');
+    // an account without an email (from the single-team console) can add one, with its password
+    await db().query("UPDATE users SET email = NULL WHERE username = 'dee'");
+    assert.equal((await d.post('/api/auth/email', { email: 'dee2@example.com', currentPassword: 'wrong' })).status, 400);
+    assert.equal((await d.post('/api/auth/email', { email: 'alice@example.com', currentPassword: 'correct-horse-4' })).status, 409, 'taken');
+    assert.equal((await d.post('/api/auth/email', { email: 'dee2@example.com', currentPassword: 'correct-horse-4' })).status, 200);
+    assert.equal((await d.get('/api/auth/me')).json.user.emailVerified, false, 'the new email must be confirmed');
+    assert.equal((await app.request('/api/github/oauth', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: a.cookieHeader() }, body: JSON.stringify({ clientId: 'Iv1.0123456789abcdef', clientSecret: 'a'.repeat(40) }) })).status, 403, 'only platform admins');
 });

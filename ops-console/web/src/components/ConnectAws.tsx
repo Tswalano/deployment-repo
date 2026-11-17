@@ -183,7 +183,10 @@ export function AwsAccountCard() {
           )}
         </>
       ) : (
-        <p className="text-sm text-slate-400">Not connected{c.status === 'disconnected' ? ' (disconnected)' : ''}. Connect it from the <a className="text-indigo-300 hover:underline" href="/">getting-started page</a>.</p>
+        <>
+          <p className="text-sm text-slate-400">Not connected{c.status === 'disconnected' ? ' (disconnected)' : ''}. Until it is, the console can't reach your servers.</p>
+          <ConnectAwsPanel view={view} onChanged={async () => { await load(); }} />
+        </>
       )}
     </section>
   );

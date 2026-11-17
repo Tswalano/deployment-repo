@@ -5,7 +5,7 @@ import { config } from '../config';
 import { db } from '../db';
 import { denyDemo, Env, rateLimit } from '../middleware';
 import { dummyPasswordHash, hashPassword, passwordProblem, verifyPassword } from '../password';
-import { cleanUsername } from '../accounts';
+import { cleanEmail, cleanUsername, sendVerification } from '../accounts';
 import { DeployError } from '../deploys';
 import { createSession, destroySession, destroyUserSessions } from '../sessions';
 
@@ -98,6 +98,26 @@ auth.post('/password', denyDemo, async (c) => {
     await db().query('UPDATE users SET password_hash = $2, password_changed_at = now() WHERE id = $1', [user.id, await hashPassword(body.newPassword)]);
     await destroyUserSessions(user.id, getCookie(c, config.cookieName));   // sign out everywhere else
     await audit({ id: user.id, username: user.username }, 'auth.password_change', user.username, {}, c.get('ip'));
+    return c.json({ ok: true });
+});
+
+/** Add an email to an account that has none (e.g. accounts from the single-team console). Needs your password.
+ *  The email an account signed up with can't be changed here (a platform-owner action, later). */
+auth.post('/email', denyDemo, rateLimit(5, 60 * 60_000, (c) => `email:${c.get('user')?.id ?? c.get('ip')}`), async (c) => {
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'Not signed in' }, 401);
+    if (user.email) return c.json({ error: "Your sign-in email can't be changed here. Contact support if it needs to change." }, 409);
+    const b = await c.req.json().catch(() => ({}));
+    const { rows: [u] } = await db().query('SELECT password_hash FROM users WHERE id = $1', [user.id]);
+    if (!(await verifyPassword(String(b.currentPassword ?? ''), u?.password_hash ?? null))) return c.json({ error: 'Current password is incorrect' }, 400);
+    let email: string;
+    try { email = cleanEmail(b.email); } catch (err) { return c.json({ error: (err as Error).message }, 400); }
+    if (email === (user.email ?? '').toLowerCase()) return c.json({ ok: true });
+    const taken = await db().query('SELECT 1 FROM users WHERE (lower(email) = $1 OR lower(username) = $1) AND id <> $2', [email, user.id]);
+    if (taken.rows.length) return c.json({ error: 'Another account already uses that email.' }, 409);
+    await db().query('UPDATE users SET email = $2, email_verified_at = NULL WHERE id = $1', [user.id, email]);
+    await sendVerification(user.id, email);
+    await audit({ id: user.id, username: user.username }, 'account.email', user.username, { email }, c.get('ip'));
     return c.json({ ok: true });
 });
 

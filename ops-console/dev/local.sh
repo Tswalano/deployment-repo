@@ -60,6 +60,12 @@ grep -v READY "$STATE/bootstrap.log" | sed 's/^/  /' || true   # nothing else to
 
 if [[ $SAAS == 1 ]]; then
   export DATABASE_URL="postgresql://opsconsole_app:local@127.0.0.1:${OPS_LOCAL_PG_PORT}/opsconsole_saas" OPS_MULTI_TENANT=1 PRODUCT_NAME="${PRODUCT_NAME:-Ops Console}"
+  # billing: Paystack TEST key only (never a live key on a laptop); default: LiftParcel's test key from SSM
+  if [[ -z "${PAYSTACK_SECRET_KEY:-}" ]]; then
+    k="$(aws ssm get-parameter --region "${AWS_REGION:-af-south-1}" --name /apps/liftparcel/PAYSTACK_SECRET_KEY --with-decryption --query Parameter.Value --output text 2>/dev/null || true)"
+    [[ "$k" == sk_test_* ]] && export PAYSTACK_SECRET_KEY="$k"; unset k
+  fi
+  [[ -z "${PAYSTACK_SECRET_KEY:-}" || "$PAYSTACK_SECRET_KEY" == sk_test_* ]] || { echo "✘ PAYSTACK_SECRET_KEY must be a TEST key (sk_test_…) locally"; exit 1; }
 else
   export DATABASE_URL="postgresql://postgres:local@127.0.0.1:${OPS_LOCAL_PG_PORT:-55432}/opsconsole"
 fi

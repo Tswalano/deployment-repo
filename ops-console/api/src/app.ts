@@ -17,6 +17,7 @@ import instances from './routes/instances';
 import failures from './routes/failures';
 import connect from './routes/connect';
 import prepare from './routes/prepare';
+import billingRoutes, { billingGuard } from './routes/billing';
 import { setWorkspaceResolver } from './aws';
 import { workspaceProvider } from './connections';
 import { config } from './config';
@@ -43,7 +44,7 @@ export function createApp() {
         return c.json(dryRun ? { status: 'ok', mode: 'local-dry-run' } : { status: 'ok' });
     });
 
-    app.use('/api/*', loadSession, checkOrigin);
+    app.use('/api/*', loadSession, checkOrigin, billingGuard);
     app.route('/api/auth', auth);
     app.route('/api/account', account);
     app.route('/api/workspaces', workspaces);
@@ -64,6 +65,7 @@ export function createApp() {
     app.route('/api/deployments', deployments);
     app.route('/api/failures', failures);
     app.route('/api/aws-connection', connect);
+    app.route('/api/billing', billingRoutes);
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);
     app.route('/api/backups', backups);

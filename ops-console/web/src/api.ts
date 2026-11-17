@@ -11,6 +11,12 @@ export interface Me {
   workspaceId: number | null;
 }
 export interface Profile { username: string; displayName: string; email: string | null; emailVerifiedAt: string | null; createdAt: string; lastLoginAt: string | null; passwordChangedAt: string | null; isDemo: boolean; role: Role; workspaces: { name: string; role: Role; current: boolean }[] }
+export interface BillingView {
+  enabled: boolean; plan: 'trial' | 'starter' | 'pro' | 'internal'; status: string; trialEndsAt: string | null; currentPeriodEnd: string | null; graceUntil: string | null;
+  active: boolean; reason: string | null; hasSubscription: boolean; billingEmail: string | null;
+  limits: { servers: number | null; apps: number | null; members: number | null; approvals: boolean }; usage: { servers: number; apps: number; members: number };
+  plans: { id: 'starter' | 'pro'; name: string; price: number; limits: { servers: number; apps: number; members: number; approvals: boolean } }[];
+}
 export interface SiteConfig { multiTenant: boolean; productName: string; trialDays: number }
 export interface Workspace { id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; trialEndsAt: string | null; role: Role }
 export interface TeamMember { id: number; username: string; displayName: string; email: string | null; role: Role; joinedAt: string; lastLoginAt: string | null; emailVerified: boolean }
@@ -268,6 +274,14 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 export const api = {
   site: () => call<SiteConfig>('GET', '/api/account/config'),
   signup: (b: { name: string; email: string; password: string; workspace: string; username?: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
+  billing: () => call<BillingView>('GET', '/api/billing'),
+  billingCheckout: (plan: 'starter' | 'pro') => call<{ url: string; reference: string }>('POST', '/api/billing/checkout', { plan }),
+  billingConfirm: (reference: string) => call<{ ok: true; plan: string; status: string }>('POST', '/api/billing/confirm', { reference }),
+  billingCancel: () => call<{ ok: true }>('POST', '/api/billing/cancel'),
+  billingManage: () => call<{ url: string }>('GET', '/api/billing/manage'),
+  setEmail: (email: string, currentPassword: string) => call<{ ok: true }>('POST', '/api/auth/email', { email, currentPassword }),
+  githubAuthorize: () => call<{ url: string }>('POST', '/api/github/authorize'),
+  githubOAuth: (clientId: string, clientSecret: string) => call<{ ok: true; callbackUrl: string }>('PUT', '/api/github/oauth', { clientId, clientSecret }),
   usernameAvailable: (u: string) => call<{ available: boolean; reason?: string }>('GET', `/api/account/username-available?u=${encodeURIComponent(u)}`),
   usernameSuggestion: (email: string) => call<{ username: string | null }>('GET', `/api/account/username-suggestion?email=${encodeURIComponent(email)}`).then((r) => r.username),
   profile: () => call<{ profile: Profile }>('GET', '/api/auth/profile').then((r) => r.profile),
@@ -363,7 +377,7 @@ export const api = {
   saveCostSettings: (b: { monthlyBudget?: string | number | null; zarRate?: string | number | null; currency?: 'USD' | 'ZAR' }) => call<{ settings: CostSettings }>('PUT', '/api/costs/settings', b),
   github: () => call<GithubStatus>('GET', '/api/github'),
   githubInstallLink: () => call<{ url: string }>('POST', '/api/github/install'),
-  githubLinkInstallation: (b: { code: string; installationId: number; state: string }) => call<{ ok: true; account: string }>('POST', '/api/github/installations', b),
+  githubLinkInstallation: (b: { code: string; installationId?: number; state: string }) => call<{ ok: true; account: string }>('POST', '/api/github/installations', b),
   githubUnlink: (id: number) => call<{ ok: true; note: string }>('DELETE', `/api/github/installations/${id}`),
   appsDomain: () => call<{ appsDomain: { domain: string; zoneId: string } | null }>('GET', '/api/aws-connection/apps-domain').then((r) => r.appsDomain),
   setAppsDomain: (domain: string) => call<{ appsDomain: { domain: string; zoneId: string } }>('PUT', '/api/aws-connection/apps-domain', { domain }).then((r) => r.appsDomain),
