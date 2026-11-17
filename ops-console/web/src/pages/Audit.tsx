@@ -26,6 +26,7 @@ const LABELS: Record<string, string> = {
   'backup.verify': 'Restore-tested a backup',
   'backup.download': 'Downloaded a backup',
   'policy.update': 'Changed deploy policy',
+  'app.create': 'Created an app',
   'schedule.update': 'Changed a schedule', 'schedule.skip': 'Skipped tonight’s stop',
   'costs.refresh': 'Refreshed costs', 'costs.settings': 'Changed cost settings',
   'secret.rotate': 'Rotated a secret', 'secret.update': 'Replaced a secret value',

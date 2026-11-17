@@ -274,7 +274,7 @@ def deploy_history(project, n=5):
 
 def projects(events):
     res = []
-    for path in sorted(glob.glob(os.path.join(PIPELINE_DIR, "projects", "*.conf"))):
+    for path in project_confs():
         name = os.path.basename(path)[:-5]
         if name.startswith("_"):
             continue
@@ -388,10 +388,24 @@ SAFE_ENV_VALUES = {"PORT", "NODE_ENV"}          # everything else: names only (u
 SINCE = {"15m": "-15min", "1h": "-1h", "6h": "-6h", "24h": "-24h", "7d": "-7d", "boot": None}
 
 
+def project_confs():
+    """Repo projects first, then apps created from the Ops Console (kept in the state dir, outside the rsync'd repo)."""
+    seen, out = set(), []
+    for d in (os.path.join(PIPELINE_DIR, "projects"), os.path.join(STATE_DIR, "projects")):
+        for path in sorted(glob.glob(os.path.join(d, "*.conf"))):
+            name = os.path.basename(path)
+            if name not in seen:
+                seen.add(name)
+                out.append(path)
+    return out
+
+
 def load_project(name):
     if not NAME_RE.match(name or ""):
         return None
     path = os.path.join(PIPELINE_DIR, "projects", name + ".conf")
+    if not os.path.isfile(path):
+        path = os.path.join(STATE_DIR, "projects", name + ".conf")
     return parse_conf(path) if os.path.isfile(path) else None
 
 

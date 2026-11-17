@@ -15,6 +15,7 @@ import { Instances } from './pages/Instances';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
 import { Settings } from './pages/Settings';
+import { NewApp } from './pages/NewApp';
 import { GithubCallback } from './components/GithubConnect';
 import { Users } from './pages/Users';
 import type { Role } from './api';
@@ -37,6 +38,7 @@ function App() {
         <Route path="instances" element={<Instances />} />
         <Route path="instances/:id" element={<InstanceDetail />} />
         <Route path="instances/:id/apps/:project" element={<AppDetail />} />
+        <Route path="instances/:id/new-app" element={<Protected role="admin"><NewApp /></Protected>} />
         <Route path="activity" element={<Activity />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="backups" element={<Backups />} />

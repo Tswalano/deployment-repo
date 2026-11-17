@@ -12,7 +12,7 @@ FETCH='{{ fetch }}'
 fail() { echo "ops-console: $*" >&2; exit 2; }
 [[ "$PROJECT" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || fail "invalid project"
 [[ "$FETCH" == yes || "$FETCH" == no ]] || fail "invalid fetch"
-CONF="/opt/deploy/projects/$PROJECT.conf"
+CONF="/opt/deploy/projects/$PROJECT.conf"; [[ -f "$CONF" ]] || CONF="/opt/deploy-state/projects/$PROJECT.conf"
 [[ -f "$CONF" ]] || fail "unknown project '$PROJECT'"
 
 fetch_error=""

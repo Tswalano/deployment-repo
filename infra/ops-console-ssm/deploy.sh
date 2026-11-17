@@ -76,4 +76,19 @@ ROTATE_PARAMS='{
   "target": {"type": "String", "allowedPattern": "^[a-z_][a-z0-9_-]{0,30}$"}
 }'
 upsert OpsConsole-RotateSecret rotate-secret.sh "Ops Console: rotate a DB password or JWT secret, or reload an app's secrets, with automatic restore" 600 "$ROTATE_PARAMS"
+CREATE_PARAMS='{
+  "project":        {"type": "String", "allowedPattern": "^[a-z][a-z0-9-]{1,30}$"},
+  "repo":           {"type": "String", "allowedPattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"},
+  "branch":         {"type": "String", "allowedPattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$"},
+  "appSubdir":     {"type": "String", "default": "", "allowedPattern": "^$|^[A-Za-z0-9_][A-Za-z0-9_./-]{0,99}$"},
+  "startScript":   {"type": "String", "allowedPattern": "^[a-z0-9:_-]{1,40}$"},
+  "build":          {"type": "String", "allowedValues": ["yes", "no"]},
+  "migrateScript": {"type": "String", "default": "", "allowedPattern": "^$|^[a-z0-9:_-]{1,40}$"},
+  "healthPath":    {"type": "String", "default": "/", "allowedPattern": "^/[A-Za-z0-9._~/-]{0,100}$"},
+  "domain":         {"type": "String", "allowedPattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,24}$"},
+  "db":             {"type": "String", "allowedValues": ["yes", "no"]},
+  "memoryMb":      {"type": "String", "default": "256", "allowedPattern": "^[0-9]{2,4}$"},
+  "actor":          {"type": "String", "allowedPattern": "^[A-Za-z0-9._@:-]{1,64}$"}
+}'
+upsert OpsConsole-CreateApp create-app.sh "Ops Console: set up a new Node.js app from a GitHub repository and deploy it (rolls back on failure)" 1800 "$CREATE_PARAMS"
 upsert OpsConsole-AppDetail app-detail.sh "Ops Console: read-only detail of one project (unit, health, git, deploys, database)" 60 "$DETAIL_PARAMS"

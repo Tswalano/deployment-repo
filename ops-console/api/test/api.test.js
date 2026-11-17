@@ -47,7 +47,7 @@ before(async () => {
     await pg.initialise();
     await pg.start();
     await pg.createDatabase('opsconsole_test');
-    assert.deepEqual(await dist('migrate').migrate(), ['001_init.sql', '002_instances.sql', '003_deployments.sql', '004_db_samples.sql', '005_alerts_uptime.sql', '006_backups.sql', '007_deploy_policy.sql', '008_power.sql', '009_costs.sql', '010_github.sql']);
+    assert.deepEqual(await dist('migrate').migrate(), ['001_init.sql', '002_instances.sql', '003_deployments.sql', '004_db_samples.sql', '005_alerts_uptime.sql', '006_backups.sql', '007_deploy_policy.sql', '008_power.sql', '009_costs.sql', '010_github.sql', '011_new_apps.sql']);
     assert.deepEqual(await dist('migrate').migrate(), [], 'migrations are applied once');
     app = dist('app').createApp();
     await makeUser('admin', 'admin', 'Correct-Horse-1');

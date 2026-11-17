@@ -266,6 +266,23 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
   them; the app restarts and the change is undone automatically if it doesn't come back healthy. Database passwords
   and JWT secrets are rotated, not typed.
 
+
+### New app from GitHub (Ops Console)
+- **Instances → New app** (admin, desktop): pick a repository and branch the GitHub App can see; the console reads
+  `package.json` (start/build/migrate scripts), checks the name and the `<name>.glenify.studio` address (Route 53 zone
+  found by name; existing records pointing elsewhere are refused), shows free memory, then creates the app.
+- `OpsConsole-CreateApp` (every parameter pinned by allowedPattern) runs on the instance: clone as ec2-user → free
+  port 5000–5999 → `/opt/deploy-state/projects/<app>.conf` (outside the rsync'd repo, so `deploy.sh` keeps it; the
+  pipeline, the ops agent and all SSM scripts read both folders) → SSM `/apps/<app>/{PORT,NODE_ENV}` → optional
+  Postgres role + database (password generated on the box, `DATABASE_URL` straight to SSM) → systemd unit → nginx
+  vhost → HTTPS once DNS resolves → first `pipeline.sh deploy`. Any failure removes everything that run created.
+- Private repos: a token scoped to the one repository (read-only, expires within the hour) is left in SSM at
+  `/ops-console/git-tokens/<app>` just before the run (also for deploys of GitHub-linked apps), read on the box into a
+  0600 file used through `GIT_ASKPASS`, and deleted by the console when the run finishes.
+- IAM: `infra/iam/instance-ops-console-apps.json` (Route 53 changes in the apps zone only, find the zone by name,
+  `kms:Decrypt` via SSM in any region). Local test mode simulates the run and never changes DNS.
+- After deploying this, also run `./deploy.sh ops-dashboard install` so the ops agent lists console-created apps.
+
 ## Repository layout
 
 ```

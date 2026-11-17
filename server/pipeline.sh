@@ -23,6 +23,8 @@ set -Eeuo pipefail
 PIPELINE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECTS_DIR="$PIPELINE_ROOT/projects"
 STATE_ROOT="${STATE_ROOT:-/opt/deploy-state}"
+# apps created from the Ops Console live outside the rsync'd repo dir, so deploy.sh never deletes them
+STATE_PROJECTS_DIR="$STATE_ROOT/projects"
 LOCK_FILE="$STATE_ROOT/.pipeline.lock"
 KEEP_BACKUPS="${KEEP_BACKUPS:-10}"
 CURRENT_FILE="$STATE_ROOT/current.json"      # live "deploying now" state (read by ops-dashboard)
@@ -39,12 +41,13 @@ die()  { printf '%s[%s] ✘ %s%s\n' "$c_err" "${PROJECT:-pipeline}" "$*" "$c_off
 
 # ----------------------------------------------------------------------------- config
 list_projects() {
-  find "$PROJECTS_DIR" -maxdepth 1 -name '*.conf' ! -name '_*' -printf '%f\n' | sed 's/\.conf$//' | sort
+  find "$PROJECTS_DIR" "$STATE_PROJECTS_DIR" -maxdepth 1 -name '*.conf' ! -name '_*' -printf '%f\n' 2>/dev/null | sed 's/\.conf$//' | sort -u
 }
 
 load_project() {
   PROJECT="$1"
   local conf="$PROJECTS_DIR/$PROJECT.conf"
+  [[ -f "$conf" ]] || conf="$STATE_PROJECTS_DIR/$PROJECT.conf"
   [[ -f "$conf" ]] || die "unknown project '$PROJECT' (no $conf). Known: $(list_projects | paste -sd' ')"
   # reset optional keys so values don't leak between projects in 'all' runs
   unset SERVICE SOURCE_DIR BRANCH APP_SUBDIR RUN_DIR INSTALL_CMD BUILD_CMD MIGRATE_CMD \

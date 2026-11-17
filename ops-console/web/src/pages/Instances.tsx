@@ -13,7 +13,12 @@ export function Instances() {
       <PageHeader
         title="Instances"
         subtitle={data ? `${data.length} EC2 instance${data.length === 1 ? '' : 's'} managed through AWS SSM` : 'Loading…'}
-        actions={user?.role === 'admin' && <Link to="/settings" className="btn-secondary hidden md:inline-flex">Manage instances</Link>}
+        actions={user?.role === 'admin' && !user.isDemo && (
+          <>
+            <Link to="/settings" className="btn-secondary hidden md:inline-flex">Manage instances</Link>
+            {data && data.length > 0 && <Link to={`/instances/${data.find((i) => i.status && !i.lastError)?.id ?? data[0].id}/new-app`} className="btn-primary hidden md:inline-flex">New app</Link>}
+          </>
+        )}
       />
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
       {!data ? (
