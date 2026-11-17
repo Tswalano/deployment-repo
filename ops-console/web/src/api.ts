@@ -201,6 +201,11 @@ export interface CostSummary {
 }
 export interface CostSettings { monthlyBudget: number | null; zarRate: number | null }
 
+export interface NewAppCreation {
+  id: number; deploymentId: number | null; project: string; repo: string; branch: string; domain: string; withDb: boolean;
+  port: number | null; tls: boolean | null; status: 'running' | 'success' | 'failed'; createdBy: string; createdAt: string; finishedAt: string | null;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
@@ -299,6 +304,7 @@ export const api = {
     call<Detection>('GET', `/api/github/detect?${new URLSearchParams({ repo, branch, subdir })}`),
   newAppCheck: (id: number, project: string, subdomain: string) =>
     call<NewAppCheck>('GET', `/api/instances/${id}/new-app/check?${new URLSearchParams({ project, subdomain })}`),
+  newAppHistory: (id: number) => call<{ creations: NewAppCreation[] }>('GET', `/api/instances/${id}/new-app`).then((r) => r.creations),
   createApp: (id: number, b: NewAppBody) => call<{ deployment: Deployment }>('POST', `/api/instances/${id}/new-app`, b).then((r) => r.deployment),
   audit: (limit = 100) => call<{ entries: AuditEntry[] }>('GET', `/api/audit?limit=${limit}`).then((r) => r.entries),
 };
