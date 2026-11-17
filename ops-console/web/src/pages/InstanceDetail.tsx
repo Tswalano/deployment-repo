@@ -6,6 +6,7 @@ import { ActivityList } from '../components/ActivityList';
 import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, seriesOf, Skeleton, Sparkline } from '../components/ui';
 import { Facts } from './app/shared';
 import { PowerControls, stateTone } from '../components/PowerControls';
+import { PrepareServer } from '../components/PrepareServer';
 import { ScheduleCard } from '../components/ScheduleCard';
 import { appTone } from '../health';
 import { usePoll } from '../usePoll';
@@ -142,7 +143,7 @@ function CreatingBanner({ instanceId }: { instanceId: number }) {
 
 export function InstanceDetail() {
   const id = Number(useParams().id);
-  const { user } = useAuth();
+  const { user, site } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const { data, error, setData } = usePoll(() => api.instance(id), 30_000, [id]);
   const i = data?.instance;
@@ -181,6 +182,7 @@ export function InstanceDetail() {
         )}
       />
       {canRefresh && <CreatingBanner instanceId={i.id} />}
+      {site.multiTenant && (!s || s.source !== 'agent') && i.ec2State !== 'stopped' && <PrepareServer instanceId={i.id} onDone={() => void refresh()} />}
       {powerMsg && <div className="mb-4"><Alert tone="ok">{powerMsg}</Alert></div>}
       {i.lastError && i.ec2State && i.ec2State !== 'running' ? (
         <div className="mb-4"><Alert tone="warn">This instance is {i.ec2State}{i.ec2StateAt ? ` (since ${ago(i.ec2StateAt)})` : ''}. Showing the last snapshot from {ago(i.lastOkAt)}.</Alert></div>

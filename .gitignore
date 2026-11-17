@@ -6,3 +6,4 @@ deploy_key*
 # Ops Console local test server (dev/local.sh)
 ops-console/.local/
 ops-console/.local-saas/
+dist/

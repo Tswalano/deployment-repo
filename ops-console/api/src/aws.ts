@@ -63,6 +63,8 @@ export interface AwsProvider {
     listInstances?(region: string): Promise<Ec2Listing[]>;
     /** Tag an instance (and its security groups) ops-console=managed. */
     tagManaged?(region: string, id: string, groupIds: string[]): Promise<void>;
+    /** Open HTTP and HTTPS (80, 443) to everyone on these security groups (already-open rules are fine). */
+    openWebPorts?(region: string, groupIds: string[]): Promise<string[]>;
     /** Attach an instance profile to an instance that has none. */
     attachInstanceProfile?(region: string, id: string, profileName: string): Promise<void>;
     /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
@@ -431,6 +433,19 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
             await ec2c(region).send(new CreateTagsCommand({ Resources: [id, ...groupIds], Tags: [{ Key: 'ops-console', Value: 'managed' }] }))
                 .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
         },
+        async openWebPorts(region, groupIds) {
+            const opened: string[] = [];
+            for (const g of groupIds) for (const port of [80, 443]) {
+                try {
+                    await ec2c(region).send(new AuthorizeSecurityGroupIngressCommand({ GroupId: g, IpPermissions: [{ IpProtocol: 'tcp', FromPort: port, ToPort: port,
+                        IpRanges: [{ CidrIp: '0.0.0.0/0', Description: 'ops-console web' }], Ipv6Ranges: [{ CidrIpv6: '::/0', Description: 'ops-console web' }] }] }));
+                    opened.push(`${g}:${port}`);
+                } catch (err) {
+                    if ((err as { name?: string }).name !== 'InvalidPermission.Duplicate') throw new Error(sgError(err, region, g));
+                }
+            }
+            return opened;
+        },
         async attachInstanceProfile(region, id, profileName) {
             await ec2c(region).send(new AssociateIamInstanceProfileCommand({ InstanceId: id, IamInstanceProfile: { Name: profileName } }))
                 .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
@@ -458,10 +473,12 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
     const dryAware: AwsProvider = {
         ...realAws,
         async sendDocument(region, id, document, parameters) {
-            if (document !== 'OpsConsole-Deploy' && document !== 'OpsConsole-CreateApp') return real.sendDocument(region, id, document, parameters);
+            if (!['OpsConsole-Deploy', 'OpsConsole-CreateApp', 'OpsConsole-PrepareServer'].includes(document)) return real.sendDocument(region, id, document, parameters);
             const cid = `dryrun-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const p = (k: string) => parameters[k]?.[0] ?? '';
-            simulated.set(cid, { at: Date.now(), text: document === 'OpsConsole-CreateApp'
+            simulated.set(cid, { at: Date.now(), text: document === 'OpsConsole-PrepareServer'
+                ? `DRY RUN (local test mode): nothing was installed.\nWould install nginx, git, certbot, PostgreSQL 15, Node.js, the console's server files, the status agent and backups.\n${JSON.stringify({ ok: true, step: 'done', error: null, node: 'v22 (simulated)', steps: ['packages (simulated)', 'PostgreSQL 15 (simulated)', 'server files (simulated)', 'status agent (simulated)', 'nightly database backups (simulated)', 'nginx running (simulated)'] })}`
+                : document === 'OpsConsole-CreateApp'
                 ? `DRY RUN (local test mode): nothing was changed.\nWould clone ${p('repo')}@${p('branch')} into /opt/apps/${p('project')}, create the service, ${p('db') === 'yes' ? 'a database, ' : ''}nginx + HTTPS for ${p('domain')} and run the first deploy.\n${JSON.stringify({ ok: true, step: 'done', error: null, port: 5000, tls: true, database: p('db') === 'yes' ? p('project').replace(/-/g, '_') : null, domain: p('domain'), dryRun: true })}`
                 : `DRY RUN (local test mode): nothing was changed.\nWould run: pipeline.sh ${p('action')} ${p('project')} ${p('ref')}\nactor=${p('actor')}` });
             return cid;
@@ -491,6 +508,7 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
         async deleteARecord() { /* local test mode */ },
             async tagManaged() { /* local test mode: never tag */ },
             async attachInstanceProfile() { /* local test mode */ },
+            async openWebPorts() { return []; /* local test mode */ },
         async deleteParameter() { /* local test mode */ },
         async runDocument(region, id, document, parameters, timeoutMs) {
             if (document === 'OpsConsole-RotateSecret') {

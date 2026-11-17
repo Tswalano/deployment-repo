@@ -41,4 +41,7 @@ export const config = {
     consolePrincipalArn: process.env.CONSOLE_PRINCIPAL_ARN || '',
     /** Public S3 URL of the Connect-AWS CloudFormation template (enables the one-click "quick create" link). */
     connectTemplateUrl: process.env.CONNECT_TEMPLATE_URL || '',
+    /** Server release bundle for OpsConsole-PrepareServer (from infra/saas/publish-template.sh). */
+    serverBundleUrl: process.env.SERVER_BUNDLE_URL || '',
+    serverBundleSha256: process.env.SERVER_BUNDLE_SHA256 || '',
 };
