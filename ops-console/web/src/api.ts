@@ -239,6 +239,9 @@ export interface SecuritySnapshot {
 export interface TerminalSession { id: number; username: string; ip: string | null; simulated: boolean; startedAt: string; endedAt: string | null; endReason: string | null }
 export interface SecurityView { at: string | null; snapshot: SecuritySnapshot | null; terminalSessions: TerminalSession[]; activeTerminals: { username: string; startedAt: string }[] }
 
+export interface FailedDeploy { instanceId: number; instance: string; project: string; status: string; at: string; actor: string; toSha: string; fromSha: string; trigger: string | null; runUrl: string | null; attempts: number; appExists: boolean }
+export interface FailedCreation { id: number; instanceId: number; instance: string; project: string; repo: string; branch: string; domain: string; createdBy: string; createdAt: string; deploymentId: number | null; error: string | null; step: string | null }
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
@@ -300,6 +303,9 @@ export const api = {
     call<{ instance: Instance }>('PATCH', `/api/instances/${id}`, b).then((r) => r.instance),
   removeInstance: (id: number) => call('DELETE', `/api/instances/${id}`),
   appView: (id: number, project: string) => call<AppView>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}`),
+  failures: () => call<{ deploys: FailedDeploy[]; creations: FailedCreation[] }>('GET', '/api/failures'),
+  dismissFailure: (b: { kind: 'deploy'; instanceId: number; project: string; at: string; note?: string } | { kind: 'create'; creationId: number; note?: string }) =>
+    call<{ ok: true }>('POST', '/api/failures/dismiss', b),
   startDeployment: (id: number, project: string, action: 'deploy' | 'rollback', ref: string, override?: string) =>
     call<{ deployment: Deployment }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/${action}`, override === undefined ? { ref } : { ref, override }).then((r) => r.deployment),
   approveDeployment: (id: number) => call<{ deployment: Deployment }>('POST', `/api/deployments/${id}/approve`).then((r) => r.deployment),

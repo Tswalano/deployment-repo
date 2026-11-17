@@ -234,3 +234,35 @@ test('test notification reports per-channel failures (e.g. SES sandbox) and is a
     const actions = (await a.get('/api/audit')).json.entries.map((e) => e.action);
     for (const x of ['alert.settings', 'alert.ack', 'alert.test']) assert.ok(actions.includes(x), x);
 });
+
+test('failed deployments: listed until fixed, retry-able data, dismiss hides it and clears the alert for good', async () => {
+    const { evaluateInstance } = dist('alerts');
+    const at1 = new Date(Date.now() - 3600e3).toISOString(), at2 = new Date(Date.now() - 1800e3).toISOString();
+    fake.events = [
+        { project: 'alpha', action: 'deploy', status: 'failed', finished_at: at2, duration_s: 30, actor: 'github', from_sha: 'a', to_sha: 'deadbeef' },
+        { project: 'alpha', action: 'deploy', status: 'rolled_back', finished_at: at1, duration_s: 30, actor: 'ci', from_sha: 'a', to_sha: 'cafebabe' },
+        { project: 'gone-app', action: 'deploy', status: 'failed', finished_at: at1, duration_s: 9, actor: 'admin', from_sha: '', to_sha: 'f00d' },
+        { project: 'beta', action: 'deploy', status: 'success', finished_at: at2, duration_s: 9, actor: 'ci', from_sha: '1', to_sha: '2' },
+        { project: 'beta', action: 'deploy', status: 'failed', finished_at: at1, duration_s: 9, actor: 'ci', from_sha: '1', to_sha: '2' },
+    ];
+    const a = await signedIn('admin');
+    await a.get(`/api/instances/${instId}?refresh=1`);
+    await evaluateInstance(await reload());
+    const list = (await a.get('/api/failures')).json;
+    const byApp = Object.fromEntries(list.deploys.map((d) => [d.project, d]));
+    assert.deepEqual(Object.keys(byApp).sort(), ['alpha', 'gone-app'], 'beta was fixed by a later success');
+    assert.deepEqual([byApp.alpha.toSha, byApp.alpha.attempts, byApp.alpha.appExists], ['deadbeef', 2, true], 'newest failure, two attempts in a row');
+    assert.equal(byApp['gone-app'].appExists, false);
+    assert.ok((await openAlerts()).some((x) => x.rule === 'deploy_failed' && x.project === 'gone-app'));
+
+    // viewers can see, not dismiss; a made-up failure can't be dismissed
+    assert.equal((await (await signedIn('viewer')).post('/api/failures/dismiss', { kind: 'deploy', instanceId: instId, project: 'gone-app', at: at1 })).status, 403);
+    assert.equal((await a.post('/api/failures/dismiss', { kind: 'deploy', instanceId: instId, project: 'gone-app', at: at2 })).status, 404);
+    assert.equal((await a.post('/api/failures/dismiss', { kind: 'deploy', instanceId: instId, project: 'gone-app', at: at1, note: 'app was removed' })).status, 200);
+    assert.ok(!(await openAlerts()).some((x) => x.rule === 'deploy_failed' && x.project === 'gone-app'), 'alert cleared');
+    await evaluateInstance(await reload());
+    assert.ok(!(await openAlerts()).some((x) => x.rule === 'deploy_failed' && x.project === 'gone-app'), 'and never raised again');
+    assert.deepEqual((await a.get('/api/failures')).json.deploys.map((d) => d.project), ['alpha']);
+    assert.ok((await a.get('/api/audit')).json.entries.some((e) => e.action === 'failure.dismiss_deploy'));
+    fake.events = null;
+});

@@ -1,4 +1,5 @@
 import { InstanceRow } from './collector';
+import { deployKey, dismissedDeploys } from './failures';
 import { db } from './db';
 import { notifier } from './notify';
 import { alertSettings, AlertSettings } from './settings';
@@ -121,8 +122,10 @@ export async function evaluateInstance(inst: InstanceRow, s?: AlertSettings): Pr
     // a deploy that failed (or was rolled back automatically) and hasn't been followed by a success
     const failKeys = new Set<string>();
     const events = snap.deployEvents;
+    const dismissed = await dismissedDeploys(id);   // dismissed on the Activity page: never raised again
     for (const e of events) {
         if (e.action !== 'deploy' || !['failed', 'rolled_back'].includes(e.status)) continue;
+        if (dismissed.has(deployKey(e.project, e.at))) continue;
         if (Date.now() - new Date(e.at).getTime() > 24 * 3_600_000) continue;
         const later = events.some((x) => x.project === e.project && x.status === 'success' && x.at > e.at);
         if (later) continue;
