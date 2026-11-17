@@ -138,13 +138,26 @@ export function Landing() {
 export function Signup() {
   const { refresh, site } = useAuth();
   const navigate = useNavigate();
-  const [f, setF] = useState({ name: '', email: '', password: '', workspace: '' });
+  const [f, setF] = useState({ name: '', email: '', password: '', workspace: '', username: '' });
   const [busy, setBusy] = useState(false);
+  // username: suggested from the email until the person types their own; checked as they type
+  const [touched, setTouched] = useState(false);
+  const [avail, setAvail] = useState<'ok' | 'taken' | 'format' | null>(null);
+  useEffect(() => {
+    if (touched || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email)) return;
+    const t = setTimeout(() => { api.usernameSuggestion(f.email).then((u) => { if (u) setF((x) => ({ ...x, username: u })); }).catch(() => undefined); }, 400);
+    return () => clearTimeout(t);
+  }, [f.email, touched]);
+  useEffect(() => {
+    if (!f.username) { setAvail(null); return; }
+    const t = setTimeout(() => { api.usernameAvailable(f.username.toLowerCase()).then((r) => setAvail(r.available ? 'ok' : r.reason === 'format' ? 'format' : 'taken')).catch(() => setAvail(null)); }, 350);
+    return () => clearTimeout(t);
+  }, [f.username]);
   const [error, setError] = useState<string | null>(null);
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(null);
     try {
-      await api.signup({ ...f, workspace: f.workspace.trim() || `${f.name.trim().split(' ')[0] || 'My'}'s team` });
+      await api.signup({ ...f, username: f.username.trim() || undefined, workspace: f.workspace.trim() || `${f.name.trim().split(' ')[0] || 'My'}'s team` });
       await refresh(); navigate('/');
     } catch (e2) { setError(err(e2)); } finally { setBusy(false); }
   }
@@ -155,10 +168,21 @@ export function Signup() {
         {error && <Alert>{error}</Alert>}
         <div><label className="label" htmlFor="su-name">Your name</label><input id="su-name" className="input" autoComplete="name" value={f.name} onChange={set('name')} required /></div>
         <div><label className="label" htmlFor="su-email">Work email</label><input id="su-email" type="email" className="input" autoComplete="email" value={f.email} onChange={set('email')} required /></div>
+        <div>
+          <label className="label" htmlFor="su-user">Username</label>
+          <div className="relative">
+            <span className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center text-sm text-slate-500">@</span>
+            <input id="su-user" className="input pl-7" autoComplete="username" placeholder="e.g. thandi" maxLength={30} value={f.username}
+                   onChange={(e) => { setTouched(true); setF({ ...f, username: e.target.value.toLowerCase().replace(/\s+/g, '') }); }} />
+          </div>
+          <p className={`mt-1 text-xs ${avail === 'taken' || avail === 'format' ? 'text-rose-300' : 'text-slate-500'}`}>
+            {avail === 'taken' ? 'That username is taken.' : avail === 'format' ? '3–30 letters, numbers, dots, dashes or underscores.' : avail === 'ok' ? 'Available. You can sign in with it or with your email.' : 'You can sign in with it or with your email.'}
+          </p>
+        </div>
         <div><label className="label" htmlFor="su-pw">Password</label><input id="su-pw" type="password" className="input" autoComplete="new-password" minLength={8} value={f.password} onChange={set('password')} required />
           <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p></div>
         <div><label className="label" htmlFor="su-ws">Company or team name</label><input id="su-ws" className="input" placeholder="e.g. Acme" value={f.workspace} onChange={set('workspace')} /></div>
-        <button className="btn-primary w-full" disabled={busy || !f.name || !f.email || f.password.length < 8}>{busy ? 'Creating…' : 'Create account'}</button>
+        <button className="btn-primary w-full" disabled={busy || !f.name || !f.email || f.password.length < 8 || avail === 'taken' || avail === 'format'}>{busy ? 'Creating…' : 'Create account'}</button>
         <p className="text-center text-xs text-slate-500">Already have an account? <Link to="/login" className="text-indigo-300 hover:underline">Sign in</Link></p>
       </form>
     </FormShell>

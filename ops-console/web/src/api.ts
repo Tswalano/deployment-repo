@@ -10,6 +10,7 @@ export interface Me {
   emailVerified: boolean;
   workspaceId: number | null;
 }
+export interface Profile { username: string; displayName: string; email: string | null; emailVerifiedAt: string | null; createdAt: string; lastLoginAt: string | null; passwordChangedAt: string | null; isDemo: boolean; role: Role; workspaces: { name: string; role: Role; current: boolean }[] }
 export interface SiteConfig { multiTenant: boolean; productName: string; trialDays: number }
 export interface Workspace { id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; trialEndsAt: string | null; role: Role }
 export interface TeamMember { id: number; username: string; displayName: string; email: string | null; role: Role; joinedAt: string; lastLoginAt: string | null; emailVerified: boolean }
@@ -262,7 +263,11 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 
 export const api = {
   site: () => call<SiteConfig>('GET', '/api/account/config'),
-  signup: (b: { name: string; email: string; password: string; workspace: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
+  signup: (b: { name: string; email: string; password: string; workspace: string; username?: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
+  usernameAvailable: (u: string) => call<{ available: boolean; reason?: string }>('GET', `/api/account/username-available?u=${encodeURIComponent(u)}`),
+  usernameSuggestion: (email: string) => call<{ username: string | null }>('GET', `/api/account/username-suggestion?email=${encodeURIComponent(email)}`).then((r) => r.username),
+  profile: () => call<{ profile: Profile }>('GET', '/api/auth/profile').then((r) => r.profile),
+  updateProfile: (b: { displayName?: string; username?: string }) => call<{ ok: true }>('PATCH', '/api/auth/profile', b),
   verifyEmail: (token: string) => call<{ ok: true }>('POST', '/api/account/verify', { token }),
   resendVerification: () => call<{ ok: true }>('POST', '/api/account/resend-verification'),
   forgotPassword: (email: string) => call<{ ok: true }>('POST', '/api/account/forgot', { email }),
