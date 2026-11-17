@@ -105,7 +105,7 @@ export interface AppView {
   repo: { repo: string; branch: string; autoDeploy: boolean; linkedBy: string | null } | null;
 }
 export interface GithubStatus {
-  connected: boolean; webhookUrl: string; app?: { slug: string; owner: string; htmlUrl: string };
+  connected: boolean; webhookUrl?: string; app?: { slug: string; owner?: string; htmlUrl: string } | null; multiTenant?: boolean; canManageApp?: boolean; linkable?: boolean;
   installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
 }
 export interface Detection { found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
@@ -362,6 +362,11 @@ export const api = {
   refreshCosts: () => call<{ summary: CostSummary; settings: CostSettings; fetched: boolean }>('POST', '/api/costs/refresh'),
   saveCostSettings: (b: { monthlyBudget?: string | number | null; zarRate?: string | number | null; currency?: 'USD' | 'ZAR' }) => call<{ settings: CostSettings }>('PUT', '/api/costs/settings', b),
   github: () => call<GithubStatus>('GET', '/api/github'),
+  githubInstallLink: () => call<{ url: string }>('POST', '/api/github/install'),
+  githubLinkInstallation: (b: { code: string; installationId: number; state: string }) => call<{ ok: true; account: string }>('POST', '/api/github/installations', b),
+  githubUnlink: (id: number) => call<{ ok: true; note: string }>('DELETE', `/api/github/installations/${id}`),
+  appsDomain: () => call<{ appsDomain: { domain: string; zoneId: string } | null }>('GET', '/api/aws-connection/apps-domain').then((r) => r.appsDomain),
+  setAppsDomain: (domain: string) => call<{ appsDomain: { domain: string; zoneId: string } }>('PUT', '/api/aws-connection/apps-domain', { domain }).then((r) => r.appsDomain),
   githubManifest: (org?: string) => call<{ action: string; manifest: object }>('POST', '/api/github/manifest', org ? { org } : {}),
   githubExchange: (code: string, state: string) => call<{ connected: boolean; installUrl: string }>('POST', '/api/github/exchange', { code, state }),
   githubDisconnect: () => call<{ ok: boolean; deleteAppUrl: string | null }>('DELETE', '/api/github'),

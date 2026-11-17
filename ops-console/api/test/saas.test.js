@@ -340,3 +340,77 @@ test('prepare a fresh server: only through the customer role; agent password in 
     assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
     assert.equal((await b.post(`/api/instances/${id}/prepare`, {})).status, 404, "another workspace's server doesn't exist for you");
 });
+
+test('GitHub per workspace: verified installation linking, repos only from your installations, webhook to linked workspaces; apps domain in your Route 53', async () => {
+    const crypto = require('crypto');
+    const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const cfg = { appId: '42', slug: 'ops-console-test', privateKey: privateKey.export({ type: 'pkcs1', format: 'pem' }), webhookSecret: 'whsec', htmlUrl: 'https://github.com/apps/ops-console-test', owner: 'platform', clientId: 'Iv1.abc', clientSecret: 'shh' };
+    // the platform's app lives in the HOST account
+    dist('aws').setAwsProvider(new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => (prop === 'getConsoleSecret' && args[1] === '/ops-console/github/app' ? JSON.stringify(cfg) : null)) }));
+    const realFetch = global.fetch;
+    const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+    global.fetch = async (url, init) => {
+        const u = String(url);
+        if (u === 'https://github.com/login/oauth/access_token') return json(JSON.parse(init.body).code === 'good-code-123' ? { access_token: 'user-token' } : { error_description: 'bad_verification_code' });
+        if (u.includes('/user/installations')) return json({ total_count: 1, installations: [{ id: 555, account: { login: 'acme-org', type: 'Organization' } }] });
+        const m = /\/app\/installations\/(\d+)\/access_tokens/.exec(u);
+        if (m) return json({ token: `inst-${m[1]}` });
+        if (u.includes('/installation/repositories')) {
+            const tok = init.headers.authorization ?? init.headers.Authorization;
+            const repos = tok.includes('inst-555') ? [{ full_name: 'acme-org/shop', private: true, default_branch: 'main', pushed_at: null, description: null }]
+                : [{ full_name: 'globex/secret', private: true, default_branch: 'main', pushed_at: null, description: null }];
+            return json({ total_count: repos.length, repositories: repos });
+        }
+        return realFetch(url, init);
+    };
+    try {
+        const a = client();
+        assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+        const b = client();
+        assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+
+        const st = (await a.get('/api/github')).json;
+        assert.deepEqual([st.connected, st.canManageApp, st.installations, st.linkable], [true, false, [], true]);
+        assert.equal((await a.post('/api/github/manifest', {})).status, 403, 'only platform admins create the shared app');
+
+        const link = (await a.post('/api/github/install')).json.url;
+        const state = new URL(link).searchParams.get('state');
+        assert.match(link, /^https:\/\/github\.com\/apps\/ops-console-test\/installations\/new\?state=/);
+        assert.equal((await a.post('/api/github/installations', { code: 'good-code-123', installationId: 555, state: 'wrong' })).status, 400);
+        assert.equal((await b.post('/api/github/installations', { code: 'good-code-123', installationId: 555, state })).status, 400, "Alice's state is not Bob's");
+        const other = await a.post('/api/github/installations', { code: 'good-code-123', installationId: 666, state });
+        assert.equal(other.status, 400);
+        assert.match(other.json.error, /don't have access/, 'an installation id alone is not enough');
+        const ok = await a.post('/api/github/installations', { code: 'good-code-123', installationId: 555, state: (new URL((await a.post('/api/github/install')).json.url)).searchParams.get('state') });
+        assert.equal(ok.status, 200, JSON.stringify(ok.json));
+        assert.equal(ok.json.account, 'acme-org');
+
+        assert.deepEqual((await a.get('/api/github/repos')).json.repos.map((r) => r.fullName), ['acme-org/shop']);
+        assert.deepEqual((await b.get('/api/github/repos')).json.repos, [], "Bob sees no one else's repositories");
+        assert.deepEqual((await b.get('/api/github')).json.installations, []);
+
+        // webhook: only workspaces that linked installation 555
+        const send = async (installationId) => {
+            const body = JSON.stringify({ ref: 'refs/heads/main', after: 'a'.repeat(40), repository: { full_name: 'acme-org/shop' }, installation: { id: installationId } });
+            const sig = 'sha256=' + crypto.createHmac('sha256', 'whsec').update(body).digest('hex');
+            const r = await app.request('/api/github/webhook', { method: 'POST', headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-github-delivery': `d-${installationId}-${Date.now()}`, 'x-hub-signature-256': sig }, body });
+            return r.json();
+        };
+        assert.equal((await send(555)).workspaces, 1);
+        assert.equal((await send(999)).workspaces, 0, 'an installation nobody linked reaches no workspace');
+
+        // apps domain: must be a hosted zone in the workspace's own account
+        const conn = dist('connections');
+        conn.setWorkspaceProviderFactory(() => new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => (prop === 'hostedZoneId' ? (args[0] === 'acme.com' ? 'ZACME' : null) : null)) }));
+        const put = (cl, domain) => app.request('/api/aws-connection/apps-domain', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: cl.cookieHeader() }, body: JSON.stringify({ domain }) });
+        assert.equal((await put(a, 'not a domain')).status, 400);
+        assert.equal((await put(a, 'nope.com')).status, 409);
+        const set = await put(a, 'Acme.com.');
+        assert.equal(set.status, 200, await set.clone().text());
+        assert.deepEqual((await a.get('/api/aws-connection/apps-domain')).json.appsDomain, { domain: 'acme.com', zoneId: 'ZACME' });
+        assert.equal((await put(b, 'acme.com')).status, 409, 'Bob has no AWS account connected');
+        assert.equal((await b.get('/api/aws-connection/apps-domain')).json.appsDomain, null);
+    } finally {
+        global.fetch = realFetch;
+    }
+});

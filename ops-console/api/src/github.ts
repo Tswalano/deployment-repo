@@ -1,5 +1,6 @@
 import { createHmac, createSign, randomBytes, timingSafeEqual } from 'crypto';
-import { aws } from './aws';
+import { config } from './config';
+import { aws, hostAws } from './aws';
 import { db } from './db';
 
 /**
@@ -13,19 +14,19 @@ export const WEBHOOK_URL = process.env.GITHUB_WEBHOOK_URL || 'https://ops.glenif
 export const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 export const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
-export interface GitHubConfig { appId: string; slug: string; privateKey: string; webhookSecret: string; htmlUrl: string; owner: string }
+export interface GitHubConfig { appId: string; slug: string; privateKey: string; webhookSecret: string; htmlUrl: string; owner: string; clientId?: string; clientSecret?: string }
 
 let cfgCache: { at: number; cfg: GitHubConfig | null } | null = null;
 export async function githubConfig(): Promise<GitHubConfig | null> {
     if (cfgCache && Date.now() - cfgCache.at < 60_000) return cfgCache.cfg;
-    const a = aws();
+    const a = hostAws();   // the platform's app lives in the console host's account, never a customer's
     const raw = a.getConsoleSecret ? await a.getConsoleSecret(REGION, `${PARAM}/app`).catch(() => null) : null;
     const cfg = raw ? JSON.parse(raw) as GitHubConfig : null;
     cfgCache = { at: Date.now(), cfg };
     return cfg;
 }
 export async function saveGithubConfig(cfg: GitHubConfig | null): Promise<void> {
-    const a = aws();
+    const a = hostAws();
     if (!a.putConsoleSecret || !a.deleteConsoleSecret) throw new Error('Secret storage is not available.');
     if (cfg) await a.putConsoleSecret(REGION, `${PARAM}/app`, JSON.stringify(cfg));
     else await a.deleteConsoleSecret(REGION, `${PARAM}/app`);
@@ -38,7 +39,11 @@ export function manifest(origin: string, name: string) {
         name, url: origin.startsWith('http://localhost') || origin.startsWith('http://127.') ? 'https://ops.glenify.studio' : origin,
         hook_attributes: { url: WEBHOOK_URL, active: true },
         redirect_url: `${origin}/github/callback`,
-        setup_url: `${origin}/github/callback?installed=1`,
+        // multi-customer: GitHub asks the installer to authorise the app, so the console can confirm which
+        // installations that person can access before linking one to their workspace
+        ...(config.multiTenant
+            ? { setup_url: `${origin}/github/installed`, callback_urls: [`${origin}/github/installed`], request_oauth_on_install: true }
+            : { setup_url: `${origin}/github/callback?installed=1` }),
         setup_on_update: true,
         public: false,
         default_permissions: { contents: 'read', metadata: 'read' },
@@ -51,8 +56,8 @@ export async function exchangeManifestCode(code: string): Promise<GitHubConfig> 
     if (!/^[A-Za-z0-9_-]{8,100}$/.test(code)) throw new Error('Invalid code.');
     const r = await fetch(`${API}/app-manifests/${code}/conversions`, { method: 'POST', headers: hdr() });
     if (!r.ok) throw new Error(`GitHub refused the app setup (HTTP ${r.status}). The link is single-use and expires after an hour; start again.`);
-    const j = await r.json() as { id: number; slug: string; pem: string; webhook_secret: string; html_url: string; owner: { login: string } };
-    return { appId: String(j.id), slug: j.slug, privateKey: j.pem, webhookSecret: j.webhook_secret, htmlUrl: j.html_url, owner: j.owner.login };
+    const j = await r.json() as { id: number; slug: string; pem: string; webhook_secret: string; html_url: string; owner: { login: string }; client_id: string; client_secret: string };
+    return { appId: String(j.id), slug: j.slug, privateKey: j.pem, webhookSecret: j.webhook_secret, htmlUrl: j.html_url, owner: j.owner.login, clientId: j.client_id, clientSecret: j.client_secret };
 }
 
 // ------------------------------------------------------------------ authentication
@@ -89,9 +94,16 @@ export async function installationToken(cfg: GitHubConfig, installationId: numbe
 }
 
 export interface Repo { fullName: string; private: boolean; defaultBranch: string; pushedAt: string | null; installationId: number; description: string | null }
+/** The installations this workspace may use: its own linked ones (multi-customer), or all of the app's. */
+export async function workspaceInstallations(cfg: GitHubConfig): Promise<Installation[]> {
+    if (!config.multiTenant) return installations(cfg);
+    const { rows } = await db().query<{ installation_id: string; account_login: string }>('SELECT installation_id, account_login FROM github_installations ORDER BY linked_at');
+    return rows.map((r) => ({ id: Number(r.installation_id), account: r.account_login, selection: 'selected' as const }));
+}
+
 export async function allRepos(cfg: GitHubConfig): Promise<Repo[]> {
     const out: Repo[] = [];
-    for (const inst of await installations(cfg)) {
+    for (const inst of await workspaceInstallations(cfg)) {
         const token = await installationToken(cfg, inst.id);
         for (let page = 1; page <= 10; page++) {
             const r = await gh<{ repositories: { full_name: string; private: boolean; default_branch: string; pushed_at: string | null; description: string | null }[]; total_count: number }>(
@@ -141,4 +153,31 @@ export async function recordDelivery(id: string, event: string, repo: string | n
         [id.slice(0, 100), event.slice(0, 50), repo, ref, sha, result.slice(0, 300)]);
     await db().query("DELETE FROM github_deliveries WHERE at < now() - interval '60 days'");
     return (r.rowCount ?? 0) > 0;
+}
+
+// ------------------------------------------------------------------ linking an installation to a workspace
+/**
+ * After "install the app" GitHub returns ?code&installation_id. Exchange the code for the installing user's token
+ * and link the installation ONLY if GitHub lists it among the installations that user can access. (An installation
+ * id alone proves nothing: it's a small number anyone could guess.)
+ */
+export async function linkInstallation(code: string, installationId: number, by: string): Promise<{ account: string }> {
+    const cfg = await githubConfig();
+    if (!cfg?.clientId || !cfg.clientSecret) throw new Error('The GitHub App is not set up for installations yet.');
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(code) || !Number.isInteger(installationId) || installationId <= 0) throw new Error('Invalid GitHub response.');
+    const t = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'ops-console' },
+        body: JSON.stringify({ client_id: cfg.clientId, client_secret: cfg.clientSecret, code }), signal: AbortSignal.timeout(15_000),
+    }).then((r) => r.json() as Promise<{ access_token?: string; error_description?: string }>);
+    if (!t.access_token) throw new Error(`GitHub didn't confirm the installation (${t.error_description ?? 'no token'}). Install the app again from the console.`);
+    let found: { id: number; account: { login: string; type: string } } | undefined;
+    for (let page = 1; page <= 10 && !found; page++) {
+        const r = await gh<{ installations: { id: number; account: { login: string; type: string } }[]; total_count: number }>(`/user/installations?per_page=100&page=${page}`, t.access_token, true);
+        found = r.installations.find((i) => i.id === installationId);
+        if (r.installations.length < 100) break;
+    }
+    if (!found) throw new Error("You don't have access to that GitHub installation.");
+    await db().query(`INSERT INTO github_installations (installation_id, account_login, account_type, linked_by) VALUES ($1, $2, $3, $4)
+                      ON CONFLICT (workspace_id, installation_id) DO UPDATE SET account_login = EXCLUDED.account_login`, [installationId, found.account.login, found.account.type, by]);
+    return { account: found.account.login };
 }
