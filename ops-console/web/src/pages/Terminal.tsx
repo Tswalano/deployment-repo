@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -11,6 +11,7 @@ type State = 'connecting' | 'ready' | 'closed';
 /** Browser shell on an instance through SSM Session Manager (no SSH port needed). */
 export function Terminal() {
   const id = Number(useParams().id);
+  const navigate = useNavigate();
   const [inst, setInst] = useState<Instance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<State>('connecting');
@@ -95,7 +96,7 @@ export function Terminal() {
           <Link to={`/instances/${inst.id}/access`} className="btn-ghost">Access</Link>
           {state === 'closed'
             ? <button className="btn-primary" onClick={connect}>Reconnect</button>
-            : <button className="btn-secondary" onClick={() => sock.current?.close()}>Disconnect</button>}
+            : <button className="btn-secondary" title="End the session and go back to the instance" onClick={() => { const ws = sock.current; sock.current = null; ws?.close(); navigate(`/instances/${inst.id}`); }}>Disconnect</button>}
         </>}
       />
       <DesktopOnly title="The terminal" />

@@ -85,6 +85,15 @@ for line in so.splitlines():
         cfg[k] = v.strip()
 out["sshd"] = cfg
 
+# ---------------------------------------------------------------- host keys (to verify a first SSH connection)
+host_keys = []
+for f in sorted(os.listdir("/etc/ssh")) if os.path.isdir("/etc/ssh") else []:
+    if f.startswith("ssh_host_") and f.endswith("_key.pub"):
+        rc, so, _ = run(["ssh-keygen", "-lf", os.path.join("/etc/ssh", f)], 10)
+        m = re.match(r"^\d+ (SHA256:\S+) .*\((\w+)\)$", so.strip())
+        if m: host_keys.append({"type": m.group(2), "fingerprint": m.group(1)})
+out["hostKeys"] = host_keys
+
 # ---------------------------------------------------------------- authorized keys of every login user
 TYPES = ("ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
          "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com", "ssh-dss")
@@ -119,8 +128,14 @@ for pw in pwd.getpwall():
         if not k: continue
         opts, typ, blob, comment = k
         fp, bits = fingerprint(typ, blob)
+        exp = re.search(r'expiry-time="(\d{8,14})', opts)
+        src = re.search(r'from="([^"]*)"', opts)
+        expires = None
+        if exp:
+            try: expires = int(time.mktime(time.strptime(exp.group(1)[:12].ljust(12, "0"), "%Y%m%d%H%M")))
+            except Exception: expires = None
         keys.append({"type": typ, "bits": bits, "fingerprint": fp, "comment": comment[:100],
-                     "options": bool(opts), "blocked": "command=" in opts})
+                     "options": bool(opts), "blocked": "command=" in opts, "expires": expires, "from": src.group(1)[:200] if src else None})
     users.append({"user": pw.pw_name, "uid": pw.pw_uid, "home": pw.pw_dir, "keys": keys,
                   "manageable": pw.pw_uid != 0 and (pw.pw_uid >= 1000)})
 out["users"] = users

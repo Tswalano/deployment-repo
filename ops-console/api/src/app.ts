@@ -14,7 +14,7 @@ import github, { appRepo } from './routes/github';
 import envRoutes from './routes/env';
 import newapp from './routes/newapp';
 import instances from './routes/instances';
-import access from './routes/access';
+import access, { myKeys } from './routes/access';
 import users from './routes/users';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
@@ -45,6 +45,7 @@ export function createApp() {
     app.route('/api/instances', envRoutes);
     app.route('/api', newapp);
     app.route('/api/instances', access);
+    app.route('/api/ssh-keys', myKeys);
     app.route('/api/instances', apps);
     app.route('/api/instances', instances);
     app.route('/api/deployments', deployments);

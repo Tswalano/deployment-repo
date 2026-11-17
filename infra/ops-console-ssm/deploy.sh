@@ -97,6 +97,9 @@ KEYS_PARAMS='{
   "action":      {"type": "String", "allowedValues": ["add", "remove"]},
   "user":        {"type": "String", "allowedPattern": "^[a-z_][a-z0-9_-]{0,31}$"},
   "key":         {"type": "String", "default": "", "allowedPattern": "^$|^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh[.]com|sk-ecdsa-sha2-nistp256@openssh[.]com) [A-Za-z0-9+/]{40,2000}={0,3}( [A-Za-z0-9@._+-]{1,100})?$"},
-  "fingerprint": {"type": "String", "default": "", "allowedPattern": "^$|^SHA256:[A-Za-z0-9+/]{43}$"}
+  "fingerprint": {"type": "String", "default": "", "allowedPattern": "^$|^SHA256:[A-Za-z0-9+/]{43}$"},
+  "from":        {"type": "String", "default": "", "allowedPattern": "^$|^[0-9a-f.:/,]{1,300}$"},
+  "expires":     {"type": "String", "default": "", "allowedPattern": "^$|^[0-9]{10}$"},
+  "temporary":   {"type": "String", "default": "no", "allowedValues": ["yes", "no"]}
 }'
 upsert OpsConsole-SshKeys ssh-keys.sh "Ops Console: add or remove one public key of a login user (never root; keeps ec2-user's last key)" 60 "$KEYS_PARAMS"

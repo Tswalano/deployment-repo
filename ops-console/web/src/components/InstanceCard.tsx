@@ -28,6 +28,7 @@ export function InstanceCard({ instance: i }: { instance: Instance }) {
       <div className={off ? 'opacity-45 grayscale' : ''}>
         <div className="mt-0.5 truncate text-2xs text-slate-500" title={`${i.awsInstanceId} · ${i.region}`}>
           {s?.host.instanceType ?? 'EC2'} · {s?.host.az ?? i.region}
+          {' · '}<span className={i.environment === 'production' ? 'text-amber-300/80' : i.environment === 'staging' ? 'text-sky-300/80' : 'text-slate-400'}>{i.environment}</span>
         </div>
         <div className="mt-3 min-h-[1.5rem]">
           {s && s.apps.length ? (

@@ -51,6 +51,11 @@ const fake = {
         }
         if (document === 'OpsConsole-SshKeys') {
             if (this.keyAnswer) throw new Error(`SSM command Failed: ${JSON.stringify(this.keyAnswer)}`);
+            if (params.temporary?.[0] === 'yes') {
+                return JSON.stringify(params.action[0] === 'add'
+                    ? { ok: true, action: 'add', user: params.user[0], fingerprint: 'SHA256:x', added: !this.permanentKey, permanent: !!this.permanentKey }
+                    : { ok: true, action: 'remove', user: params.user[0], fingerprint: params.fingerprint[0], removed: 1 });
+            }
             return JSON.stringify({ ok: true, action: params.action[0], user: params.user[0], fingerprint: 'SHA256:' + 'B'.repeat(43), keys: 2 });
         }
         throw new Error('unexpected document ' + document);
@@ -284,4 +289,68 @@ test('keys and snapshot: validated before reaching the instance; refusals from t
     assert.equal(snap.snapshot.updates.newer[0].version, '2023.10.20260120');
     const { rows } = await dist('db').db().query("SELECT action FROM audit_log WHERE action LIKE 'ssh.%' ORDER BY id");
     assert.deepEqual(rows.map((x) => x.action), ['ssh.grant', 'ssh.grant', 'ssh.grant', 'ssh.revoke', 'ssh.key.add']);
+});
+
+test('laptop access: saved keys, direct (key from= your IP + port 22 for it) and Session Manager routes, expiry removes both', async () => {
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-key-'));
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'glen@laptop', '-f', path.join(dir, 'k')]);
+    const pub = fs.readFileSync(path.join(dir, 'k.pub'), 'utf8').trim();
+    const expectFp = execFileSync('ssh-keygen', ['-lf', path.join(dir, 'k.pub')]).toString().split(' ')[1];
+
+    const a = await signedIn('admin', '203.0.113.80');
+    assert.equal((await a.post('/api/ssh-keys', { key: '-----BEGIN OPENSSH PRIVATE KEY-----\nabc' })).status, 400, 'private keys are refused');
+    const saved = await a.post('/api/ssh-keys', { name: '', key: pub });
+    assert.equal(saved.status, 200, JSON.stringify(saved.json));
+    assert.equal(saved.json.key.fingerprint, expectFp, 'same fingerprint as ssh-keygen');
+    assert.equal(saved.json.key.name, 'glen@laptop');
+    assert.equal((await a.post('/api/ssh-keys', { key: pub })).status, 409);
+    assert.equal((await (await signedIn('deployer')).get('/api/ssh-keys')).status, 403);
+    const keyId = saved.json.key.id;
+
+    // direct
+    const docsBefore = fake.docs.length, authBefore = fake.authorized.length;
+    const d = await a.post('/api/instances/1/laptop-access', { keyId, route: 'direct', hours: 2 });
+    assert.equal(d.status, 200, JSON.stringify(d.json));
+    const [doc, params] = fake.docs[docsBefore];
+    assert.equal(doc, 'OpsConsole-SshKeys');
+    assert.deepEqual([params.action[0], params.user[0], params.key[0], params.from[0], params.temporary[0]], ['add', 'ec2-user', pub, '203.0.113.80/32', 'yes']);
+    const exp = Number(params.expires[0]);
+    assert.ok(Math.abs(exp - (Date.now() / 1000 + 7200)) < 60, 'expiry-time two hours out');
+    assert.deepEqual(fake.authorized.slice(authBefore).map(([g, c]) => [g, c]), [['sg-web', '203.0.113.80/32']], 'port 22 opened for that IP only');
+    assert.equal(d.json.host, '203.0.113.10');
+    assert.equal(d.json.ipGrant.cidr, '203.0.113.80/32');
+    assert.equal(d.json.grant.keyAdded, true);
+
+    // the same key again through Session Manager replaces the open key grant, opens no port
+    const authMid = fake.authorized.length;
+    const m = await a.post('/api/instances/1/laptop-access', { keyId, route: 'ssm', hours: 1 });
+    assert.equal(m.status, 200, JSON.stringify(m.json));
+    assert.equal(fake.docs.at(-1)[1].from[0], '127.0.0.1/32,::1/128', 'the key only works through the Session Manager tunnel');
+    assert.equal(fake.authorized.length, authMid);
+    assert.equal(m.json.ipGrant, null);
+    const { rows: open } = await dist('db').db().query("SELECT route FROM ssh_grants WHERE kind = 'key' AND revoked_at IS NULL");
+    assert.deepEqual(open.map((x) => x.route), ['ssm']);
+
+    // somebody else can't use my key
+    const other = await signedIn('admin', '203.0.113.81');
+    assert.equal((await other.post('/api/instances/1/laptop-access', { keyId: keyId + 999, route: 'ssm', hours: 1 })).status, 404);
+
+    // expiry: temporary key removed (temporary=yes, never a permanent copy), port closed
+    await dist('db').db().query("UPDATE ssh_grants SET expires_at = now() - interval '1 minute' WHERE revoked_at IS NULL");
+    const revBefore = fake.revoked.length;
+    await dist('access').expireSshGrants();
+    const removal = fake.docs.filter(([doc, p]) => doc === 'OpsConsole-SshKeys' && p.action[0] === 'remove' && p.temporary?.[0] === 'yes');
+    assert.equal(removal.length, 1);
+    assert.equal(removal[0][1].fingerprint[0], expectFp);
+    assert.ok(fake.revoked.slice(revBefore).some(([, c]) => c === '203.0.113.80/32'), 'the port opened for the laptop closes');
+    const { rows: left } = await dist('db').db().query('SELECT count(*)::int AS n FROM ssh_grants WHERE revoked_at IS NULL');
+    assert.equal(left[0].n, 0);
+
+    // a key that already has permanent access is left alone: nothing to remove later
+    fake.permanentKey = true;
+    const p2 = await a.post('/api/instances/1/laptop-access', { keyId, route: 'ssm', hours: 1 });
+    assert.equal(p2.json.permanent, true);
+    assert.equal(p2.json.grant.keyAdded, false);
+    fake.permanentKey = false;
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api, ApiError, Instance, SecurityView, SshAccessView } from '../api';
+import { api, ApiError, Instance, MyKey, SecurityView, SshAccessView, SshGrant } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, Kpi, PageHeader, Skeleton } from '../components/ui';
 
@@ -77,6 +77,7 @@ export function Access() {
 
       {snap ? <Summary snap={snap} /> : <div className="card mb-6 text-sm text-slate-400">{checking ? 'Taking the first security snapshot (a few seconds)…' : 'No snapshot yet: press Check now.'}</div>}
 
+      {canWrite && <LaptopCard inst={inst} ssh={ssh} reload={loadSsh} onMessage={setMsg} />}
       <SshAccessCard instanceId={inst.id} ssh={ssh} error={sshError} canWrite={canWrite} reload={loadSsh} onMessage={setMsg} />
       {snap && <KeysCard instanceId={inst.id} sec={sec} canWrite={canWrite} onChanged={async (m) => { setMsg(m); const s = await api.security(id); setSec(s); }} />}
       {snap && <LoginsCard sec={sec} />}
@@ -115,9 +116,9 @@ function SshAccessCard({ instanceId, ssh, error, canWrite, reload, onMessage }:
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [fail, setFail] = useState<string | null>(null);
-  const open = ssh?.grants.filter((g) => !g.revokedAt) ?? [];
-  const recent = ssh?.grants.filter((g) => g.revokedAt).slice(0, 5) ?? [];
-  const mineOpen = open.find((g) => ssh?.yourIp && g.cidr.startsWith(`${ssh.yourIp}/`));
+  const open = ssh?.grants.filter((g) => !g.revokedAt && g.kind === 'ip') ?? [];
+  const recent = ssh?.grants.filter((g) => g.revokedAt && g.kind === 'ip').slice(0, 5) ?? [];
+  const mineOpen = open.find((g) => ssh?.yourIp && !!g.cidr?.startsWith(`${ssh.yourIp}/`));
 
   async function grant() {
     setBusy(true); setFail(null);
@@ -173,7 +174,7 @@ function SshAccessCard({ instanceId, ssh, error, canWrite, reload, onMessage }:
           <thead><tr><th className="w-[22%]">Address</th><th className="w-[16%]">Closes in</th><th className="w-[16%]">Opened by</th><th>Reason</th><th className="w-[14%] text-right"></th></tr></thead>
           <tbody>{open.map((g) => (
             <tr key={g.id}>
-              <td className="num">{g.cidr}{ssh?.yourIp && g.cidr.startsWith(`${ssh.yourIp}/`) && <span className="pill-info ml-2">you</span>}</td>
+              <td className="num">{g.cidr}{ssh?.yourIp && !!g.cidr?.startsWith(`${ssh.yourIp}/`) && <span className="pill-info ml-2">you</span>}</td>
               <td title={g.expiresAt}>{until(g.expiresAt)}{g.error && <span className="pill-bad ml-2" title={g.error}>close failed, retrying</span>}</td>
               <td>{g.grantedBy}</td>
               <td title={g.reason ?? ''} className="text-slate-400">{g.reason ?? '—'}</td>
@@ -290,7 +291,7 @@ function KeysCard({ instanceId, sec, canWrite, onChanged }: { instanceId: number
               {k ? <>
                 <td className="text-xs">{k.type.replace('ssh-', '').replace('ecdsa-sha2-', 'ecdsa ')}{k.bits ? ` · ${k.bits}` : ''}</td>
                 <td className="num text-xs" title={k.fingerprint ?? ''}>{short(k.fingerprint)}</td>
-                <td className="text-slate-400" title={k.comment}>{k.blocked ? <span className="pill-mute">login blocked (AWS default)</span> : k.comment || '—'}</td>
+                <td className="text-slate-400" title={k.comment}>{k.blocked ? <span className="pill-mute">login blocked (AWS default)</span> : k.comment || '—'}{k.expires ? <span className="pill-info ml-2" title={`from ${k.from ?? 'anywhere'}`}>temporary · {k.expires * 1000 > Date.now() ? `ends in ${until(new Date(k.expires * 1000).toISOString())}` : 'expired'}</span> : null}</td>
                 <td>{k.fingerprint && lastUsed.has(k.fingerprint) ? ago(when(lastUsed.get(k.fingerprint)!)) : <span className="dim">not in 7 days</span>}</td>
                 <td className="text-right">{canWrite && u.manageable && k.fingerprint && (
                   <button className="btn-danger px-2.5 py-1 text-xs" disabled={!!busy} onClick={() => void remove(u.user, k.fingerprint!, k.comment || short(k.fingerprint))}>{busy === k.fingerprint ? 'Removing…' : 'Remove'}</button>
@@ -425,6 +426,187 @@ function UpdatesCard({ sec, canTerminal, instanceId }: { sec: SecurityView; canT
         </div>
       )}
       {(u.rebootRequired || u.kernelPending) && <Alert tone="warn">A reboot is needed to finish earlier updates{u.kernelPending ? ` (kernel ${u.newestKernel} is installed but ${os.kernel} is running)` : ''}. Use Power → Reboot on the instance page.</Alert>}
+    </section>
+  );
+}
+
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'server';
+const keyFile = (type: string) => (type.includes('ed25519') ? '~/.ssh/id_ed25519' : type.includes('ecdsa') ? '~/.ssh/id_ecdsa' : '~/.ssh/id_rsa');
+
+function Copyable({ text, label }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <div>
+      {label && <div className="label">{label}</div>}
+      <div className="relative">
+        <pre className="overflow-x-auto whitespace-pre rounded-lg border border-ink-700 bg-ink-950 p-3 pr-20 font-mono text-[12px] leading-5 text-slate-200">{text}</pre>
+        <button className="btn-ghost absolute right-2 top-2 px-2 py-1 text-xs" onClick={() => { void navigator.clipboard?.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); }}>{done ? 'Copied' : 'Copy'}</button>
+      </div>
+    </div>
+  );
+}
+
+/** SSH from your own laptop with your own key: time-limited, locked to your IP or to the Session Manager tunnel. */
+function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: SshAccessView | null; reload: () => Promise<void>; onMessage: (m: string) => void }) {
+  const [keys, setKeys] = useState<MyKey[] | null>(null);
+  const [keyId, setKeyId] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [newKey, setNewKey] = useState('');
+  const [route, setRoute] = useState<'direct' | 'ssm'>('direct');
+  const [hours, setHours] = useState(2);
+  const [ip, setIp] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [fail, setFail] = useState<string | null>(null);
+
+  const loadKeys = useCallback(async () => {
+    const k = await api.myKeys();
+    setKeys(k);
+    setKeyId((cur) => (cur && k.some((x) => x.id === cur) ? cur : k[0]?.id ?? null));
+    if (!k.length) setAdding(true);
+  }, []);
+  useEffect(() => { loadKeys().catch((e) => setFail(err(e))); }, [loadKeys]);
+
+  const active = ssh?.grants.filter((g) => g.kind === 'key' && !g.revokedAt) ?? [];
+  const keyOf = (g: SshGrant) => keys?.find((k) => k.fingerprint === g.keyFingerprint);
+
+  async function saveKey() {
+    setBusy(true); setFail(null);
+    try { const k = await api.saveMyKey({ key: newKey.trim() }); setNewKey(''); setAdding(false); await loadKeys(); setKeyId(k.id); }
+    catch (e) { setFail(err(e)); }
+    finally { setBusy(false); }
+  }
+  async function connect() {
+    if (!keyId) return;
+    setBusy(true); setFail(null);
+    try {
+      const r = await api.laptopAccess(inst.id, { keyId, route, hours, ip: route === 'direct' ? ip.trim() || undefined : undefined });
+      onMessage(r.permanent
+        ? `That key already has permanent access to ${inst.name}, so it was left as it is${r.ipGrant ? '; port 22 is open for your IP until ' + new Date(r.grant.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}.`
+        : `Your laptop can connect until ${new Date(r.grant.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.${r.simulated ? ' (Local test mode: nothing was changed on the server.)' : ''}`);
+      await reload(); await loadKeys();
+    } catch (e) { setFail(err(e)); }
+    finally { setBusy(false); }
+  }
+  async function end(g: SshGrant) {
+    setBusy(true); setFail(null);
+    try {
+      await api.revokeSsh(inst.id, g.id);
+      // the port opened for this laptop (same address) closes with it
+      const ipG = ssh?.grants.find((x) => x.kind === 'ip' && !x.revokedAt && g.route === 'direct' && x.cidr === g.keyFrom);
+      if (ipG) await api.revokeSsh(inst.id, ipG.id);
+      onMessage('Laptop access ended: the key is removed' + (ipG ? ' and port 22 is closed again.' : '.'));
+      await reload();
+    } catch (e) { setFail(err(e)); }
+    finally { setBusy(false); }
+  }
+
+  const host = ssh?.host ?? '<server IP>';
+  const alias = slug(inst.name);
+  const commands = (g: SshGrant) => {
+    const file = keyFile(keyOf(g)?.type ?? 'ed25519');
+    const cfg = g.route === 'ssm'
+      ? `Host ${alias}\n  HostName ${ssh?.awsInstanceId}\n  User ec2-user\n  IdentityFile ${file}\n  IdentitiesOnly yes\n  ProxyCommand aws ssm start-session --region ${ssh?.region} --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p`
+      : `Host ${alias}\n  HostName ${host}\n  User ec2-user\n  IdentityFile ${file}\n  IdentitiesOnly yes`;
+    return { cfg, ssh: `ssh ${alias}`, tunnel: `ssh -N -L 5433:127.0.0.1:5432 ${alias}`, copy: `scp ./file.txt ${alias}:~/` };
+  };
+
+  return (
+    <section className="card mb-6 space-y-4">
+      <div>
+        <h2 className="font-medium text-slate-100">Connect from your laptop</h2>
+        <p className="mt-1 text-sm text-slate-400">
+          Use your own SSH key and your own terminal, including tunnels and file copies. The console installs your public key for <b className="font-medium text-slate-300">ec2-user</b>, locked to one route and set to expire. When the time is up it removes the key and closes the port; even if that failed, the server itself refuses the key after it expires.
+        </p>
+      </div>
+      {fail && <Alert>{fail}</Alert>}
+
+      {active.map((g) => {
+        const c = commands(g);
+        return (
+          <div key={g.id} className="space-y-3 rounded-lg border border-indigo-400/30 bg-indigo-500/[0.05] p-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="pill-ok">active</span>
+              <span className="text-slate-200">{keyOf(g)?.name ?? 'key'} · {g.route === 'ssm' ? 'through Session Manager (no open port)' : `direct from ${g.keyFrom}`}</span>
+              <span className="text-slate-400">· by {g.grantedBy} · ends in {until(g.expiresAt)}</span>
+              {!g.keyAdded && <span className="pill-mute" title="This key was already in authorized_keys without an expiry">permanent key, unchanged</span>}
+              {g.error && <span className="pill-bad" title={g.error}>clean-up failed, retrying</span>}
+              <button className="btn-danger ml-auto px-2.5 py-1 text-xs" disabled={busy} onClick={() => void end(g)}>End now</button>
+            </div>
+            <Copyable label="1. Add this to ~/.ssh/config on your laptop (once)" text={c.cfg} />
+            <div className="grid gap-3 md:grid-cols-3">
+              <Copyable label="2. Connect" text={c.ssh} />
+              <Copyable label="Tunnel: the server's Postgres on your localhost:5433" text={c.tunnel} />
+              <Copyable label="Copy a file" text={c.copy} />
+            </div>
+            {g.route === 'ssm' && <p className="text-xs text-slate-400">Needs the AWS CLI v2 and the Session Manager plugin on your laptop, and AWS credentials allowed to run <code>ssm:StartSession</code> on this instance with the <code>AWS-StartSSHSession</code> document.</p>}
+            {ssh?.hostKeys.length ? (
+              <p className="text-xs text-slate-400">The first time, ssh asks you to confirm the server's fingerprint. Only answer yes if it is: {ssh.hostKeys.map((k) => <span key={k.type} className="num ml-1 text-slate-300">{k.type} {k.fingerprint}</span>)}</p>
+            ) : <p className="text-xs text-slate-500">Press Check now (top of the page) to see the server's fingerprints so you can verify the first connection.</p>}
+          </div>
+        );
+      })}
+
+      {keys && (
+        <div className="space-y-3">
+          {adding ? (
+            <div className="space-y-2">
+              <label className="label" htmlFor="my-key">Your public key: on your laptop, run <code>cat ~/.ssh/id_ed25519.pub</code> (or create one with <code>ssh-keygen -t ed25519</code>) and paste the line</label>
+              <textarea id="my-key" rows={2} className="input num text-xs" placeholder="ssh-ed25519 AAAAC3Nza… you@laptop" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+              {/PRIVATE KEY/.test(newKey) && <Alert>That is your <b>private</b> key: never paste it anywhere. Use the <code>.pub</code> file.</Alert>}
+              <div className="flex gap-2">
+                <button className="btn-secondary" disabled={!newKey.trim() || /PRIVATE KEY/.test(newKey) || busy} onClick={() => void saveKey()}>Save key</button>
+                {keys.length > 0 && <button className="btn-ghost" onClick={() => setAdding(false)}>Cancel</button>}
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,1fr)_auto] md:items-end">
+              <div>
+                <label className="label" htmlFor="lap-key">Your key</label>
+                <div className="flex gap-2">
+                  <select id="lap-key" className="input" value={keyId ?? ''} onChange={(e) => setKeyId(Number(e.target.value))}>
+                    {keys.map((k) => <option key={k.id} value={k.id}>{k.name} ({k.fingerprint.slice(7, 15)}…)</option>)}
+                  </select>
+                  <button className="btn-ghost px-2.5" title="Add another key" onClick={() => setAdding(true)}>+</button>
+                </div>
+              </div>
+              <div>
+                <span className="label">Route</span>
+                <div className="flex gap-1 rounded-lg border border-ink-600 bg-ink-950 p-1 text-xs">
+                  {(['direct', 'ssm'] as const).map((r) => (
+                    <button key={r} className={`flex-1 rounded-md px-2 py-1.5 ${route === r ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:text-slate-200'}`}
+                      disabled={r === 'direct' && !ssh?.target} title={r === 'direct' && !ssh?.target ? 'No security group is tagged for the console yet' : undefined}
+                      onClick={() => setRoute(r)}>{r === 'direct' ? 'Direct SSH from my IP' : 'Session Manager tunnel'}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="label" htmlFor="lap-hours">For</label>
+                <select id="lap-hours" className="input" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+                  {(ssh?.hours ?? [0.5, 1, 2, 4, 8]).map((h) => <option key={h} value={h}>{h < 1 ? `${h * 60} min` : `${h} h`}</option>)}
+                </select>
+              </div>
+              <div>
+                {route === 'direct' ? <>
+                  <label className="label" htmlFor="lap-ip">Your IP</label>
+                  <input id="lap-ip" className="input num" placeholder={ssh?.yourIp ?? 'e.g. 203.0.113.7'} value={ip} onChange={(e) => setIp(e.target.value)} />
+                </> : <p className="pb-2 text-xs text-slate-500">No port opens: works from any network, via AWS.</p>}
+              </div>
+              <button className="btn-primary" disabled={busy || !keyId || (route === 'direct' && !ip.trim() && !ssh?.yourIp)} onClick={() => void connect()}>
+                {busy ? 'Setting up…' : active.length ? 'Allow again / extend' : 'Allow my laptop'}
+              </button>
+            </div>
+          )}
+          {keys.length > 0 && !adding && (
+            <p className="text-xs text-slate-500">
+              Saved keys: {keys.map((k) => (
+                <span key={k.id} className="mr-3">{k.name} <span className="num">{k.fingerprint.slice(0, 15)}…</span>{' '}
+                  <button className="text-rose-300 underline-offset-2 hover:underline" onClick={async () => { if (confirm(`Forget ${k.name}? (Access already granted ends on its own.)`)) { await api.deleteMyKey(k.id); await loadKeys(); } }}>forget</button>
+                </span>
+              ))}
+            </p>
+          )}
+        </div>
+      )}
     </section>
   );
 }

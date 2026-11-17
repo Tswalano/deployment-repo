@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api, ApiError, Instance } from '../api';
 import { Alert, DesktopOnly, Dot, PageHeader, ago } from '../components/ui';
 import { AlertSettingsForm } from '../components/AlertSettingsForm';
+import { CostCurrencyForm } from '../components/CostCurrencyForm';
 import { DeployPolicyForm } from '../components/DeployPolicyForm';
 import { GithubConnect } from '../components/GithubConnect';
 import { usePoll } from '../usePoll';
@@ -146,6 +147,7 @@ export function Settings() {
         <GithubConnect />
         <DeployPolicyForm />
         <AlertSettingsForm />
+        <CostCurrencyForm />
       </div>
     </div>
   );

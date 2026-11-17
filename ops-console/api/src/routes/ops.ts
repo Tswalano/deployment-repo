@@ -77,8 +77,16 @@ costs.post('/refresh', requireRole('admin'), async (c) => {
 costs.put('/settings', requireRole('admin'), async (c) => {
     const b = await c.req.json().catch(() => ({}));
     const num = (v: unknown, max: number) => (v === null || v === '' || v === undefined ? null : Number.isFinite(Number(v)) && Number(v) > 0 && Number(v) <= max ? Math.round(Number(v) * 100) / 100 : NaN);
-    const s = { monthlyBudget: num(b.monthlyBudget, 1_000_000), zarRate: num(b.zarRate, 1000) };
+    // partial update: only the fields sent change (the Costs page sends the budget, Settings the currency)
+    const cur = await costSettings();
+    const s = {
+        monthlyBudget: 'monthlyBudget' in b ? num(b.monthlyBudget, 1_000_000) : cur.monthlyBudget,
+        zarRate: 'zarRate' in b ? num(b.zarRate, 1000) : cur.zarRate,
+        currency: 'currency' in b ? b.currency : cur.currency,
+    };
     if (Number.isNaN(s.monthlyBudget) || Number.isNaN(s.zarRate)) return c.json({ error: 'Budget and exchange rate must be positive numbers (or empty).' }, 400);
+    if (s.currency !== 'USD' && s.currency !== 'ZAR') return c.json({ error: 'Currency must be USD or ZAR.' }, 400);
+    if (s.currency === 'ZAR' && !s.zarRate) return c.json({ error: 'Enter the exchange rate (Rand per US dollar) to show costs in Rand.' }, 400);
     const user = c.get('user')!;
     await saveCostSettings(s, user.username);
     await audit({ id: user.id, username: user.username }, 'costs.settings', 'cost settings', s, c.get('ip'));

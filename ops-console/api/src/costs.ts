@@ -6,7 +6,8 @@ import { db } from './db';
  * AWS spend from Cost Explorer. Every request costs USD 0.01, so one refresh = 2 requests (daily-by-service for last
  * month + this month, and the month-end forecast), done at most once a day automatically and once an hour on demand.
  */
-export interface CostSettings { monthlyBudget: number | null; zarRate: number | null }
+/** Budget is kept in US dollars (what AWS bills in); currency only changes how amounts are shown (ZAR needs zarRate). */
+export interface CostSettings { monthlyBudget: number | null; zarRate: number | null; currency: 'USD' | 'ZAR' }
 export interface CostSummary {
     fetchedAt: string; currency: string;
     monthToDate: number; lastMonth: number; lastMonthSamePeriod: number; forecast: number; forecastSource: 'aws' | 'linear';
@@ -22,7 +23,9 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 export async function costSettings(): Promise<CostSettings> {
     const { rows } = await db().query("SELECT value FROM settings WHERE key = 'costs'");
-    return { monthlyBudget: null, zarRate: null, ...(rows[0]?.value ?? {}) };
+    const s: CostSettings = { monthlyBudget: null, zarRate: null, currency: 'USD', ...(rows[0]?.value ?? {}) };
+    if (s.currency === 'ZAR' && !s.zarRate) s.currency = 'USD';
+    return s;
 }
 export async function saveCostSettings(s: CostSettings, by: string): Promise<void> {
     await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('costs', $1, $2)
@@ -102,10 +105,10 @@ export async function refreshCosts(kind: 'auto' | 'manual'): Promise<{ summary: 
 }
 
 export async function budgetAlerts(s: CostSummary): Promise<void> {
-    const { monthlyBudget: b } = await costSettings();
+    const { monthlyBudget: b, currency, zarRate } = await costSettings();
     const key = 'cost_budget';
     if (!b) return resolve(key);
-    const money = (n: number) => `${s.currency} ${n.toFixed(2)}`;
+    const money = (n: number) => (currency === 'ZAR' && zarRate ? `R${(n * zarRate).toFixed(0)} (${s.currency} ${n.toFixed(2)})` : `${s.currency} ${n.toFixed(2)}`);
     if (s.monthToDate > b) {
         await raise({ key, rule: 'cost_budget', severity: 'critical', instanceId: null, title: `AWS spend is over budget: ${money(s.monthToDate)} of ${money(b)}`,
             detail: `Month to date ${money(s.monthToDate)}; forecast ${money(s.forecast)} for the month.` });

@@ -1,8 +1,18 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError, CostSettings, CostSummary } from '../api';
 import { useAuth } from '../auth';
 import { Alert, Kpi, PageHeader, Skeleton } from '../components/ui';
 import { usePoll } from '../usePoll';
+
+/** Amount formatting in the chosen display currency (AWS bills in USD; ZAR uses the saved rate). */
+export interface Money { fmt: (usd: number) => string; other: (usd: number) => string | undefined; zar: boolean; rate: number | null }
+export function moneyFor(st: CostSettings): Money {
+  const zar = st.currency === 'ZAR' && !!st.zarRate;
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  const rand = (n: number) => `R${(n * (st.zarRate ?? 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return { fmt: zar ? rand : usd, other: (n) => (zar ? usd(n) : undefined), zar, rate: st.zarRate };
+}
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 
@@ -10,7 +20,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const longDate = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
 
 /** Daily bars for last month and this month, month labels underneath, details on hover/focus. */
-function Bars({ s, zarRate }: { s: CostSummary; zarRate: number | null }) {
+function Bars({ s, m }: { s: CostSummary; m: Money }) {
   const days = s.daily;
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(0.01, ...days.map((d) => d.total));
@@ -28,10 +38,10 @@ function Bars({ s, zarRate }: { s: CostSummary; zarRate: number | null }) {
           <>
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-slate-200">{longDate(h.day)}{h.day === s.period.today ? ' · today (so far)' : ''}</span>
-              <span className="num font-medium text-slate-100">${h.total.toFixed(2)}{zarRate ? <span className="ml-2 text-xs text-slate-400">≈ R{(h.total * zarRate).toFixed(2)}</span> : null}</span>
+              <span className="num font-medium text-slate-100">{m.fmt(h.total)}{m.other(h.total) ? <span className="ml-2 text-xs text-slate-400">{m.other(h.total)}</span> : null}</span>
             </div>
             <div className="mt-0.5 truncate text-xs text-slate-500">
-              {h.top?.length ? h.top.map((t) => `${t.name.replace(/^Amazon |^AWS /, '')} $${t.amount.toFixed(2)}`).join(' · ') : 'No breakdown for this day'}
+              {h.top?.length ? h.top.map((t) => `${t.name.replace(/^Amazon |^AWS /, '')} ${m.fmt(t.amount)}`).join(' · ') : 'No breakdown for this day'}
             </div>
           </>
         ) : <span className="text-xs text-slate-500">Hover over (or tap) a bar to see that day&apos;s date, amount and what it was spent on.</span>}
@@ -64,43 +74,32 @@ function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) =
   );
 }
 
-/** Two optional extras, each with a plain on/off switch and one number. */
+/** The budget alert (amount entered in the display currency, kept in US dollars). Currency is chosen in Settings. */
 function CostOptions({ settings, onSaved, onError }: { settings: CostSettings; onSaved: (s: CostSettings) => void; onError: (t: string) => void }) {
+  const m = moneyFor(settings);
+  const toShown = (usd: number) => (m.zar ? Math.round(usd * m.rate!) : usd);
   const [budgetOn, setBudgetOn] = useState(settings.monthlyBudget != null);
-  const [budget, setBudget] = useState(String(settings.monthlyBudget ?? 20));
-  const [zarOn, setZarOn] = useState(settings.zarRate != null);
-  const [rate, setRate] = useState(String(settings.zarRate ?? 18.5));
+  const [budget, setBudget] = useState(String(toShown(settings.monthlyBudget ?? 20)));
   const [busy, setBusy] = useState(false);
-  const dirty = budgetOn !== (settings.monthlyBudget != null) || zarOn !== (settings.zarRate != null)
-    || (budgetOn && Number(budget) !== settings.monthlyBudget) || (zarOn && Number(rate) !== settings.zarRate);
+  const budgetUsd = m.zar ? Math.round((Number(budget) / m.rate!) * 100) / 100 : Number(budget);
+  const dirty = budgetOn !== (settings.monthlyBudget != null) || (budgetOn && String(toShown(settings.monthlyBudget ?? -1)) !== budget);
   return (
     <section className="card mt-5 space-y-4">
-      <h2 className="font-medium text-slate-100">Options</h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-medium text-slate-100">Budget alert</h2>
+        <span className="text-xs text-slate-500">Amounts in {m.zar ? `Rand ($1 = R${m.rate})` : 'US dollars'} · <Link to="/settings#costs" className="underline-offset-2 hover:underline">change currency in Settings</Link></span>
+      </div>
       <div className="flex items-start gap-4 rounded-lg border border-ink-700 p-4">
         <Toggle on={budgetOn} onChange={setBudgetOn} label="Budget alert" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-slate-200">Budget alert</div>
-          <p className="mt-0.5 text-sm text-slate-500">Emails you when this month&apos;s AWS bill is <i>forecast</i> to go over the amount (warning), and again if it actually does (critical). Off = no cost alerts.</p>
+          <div className="text-sm font-medium text-slate-200">Email me about the AWS bill</div>
+          <p className="mt-0.5 text-sm text-slate-500">When this month&apos;s bill is <i>forecast</i> to go over the amount (warning), and again if it actually does (critical). Off = no cost alerts.</p>
           {budgetOn && (
             <div className="mt-3 flex items-center gap-2">
               <span className="text-sm text-slate-400">Alert me above</span>
-              <span className="text-sm text-slate-400">$</span>
-              <input type="number" min={1} step="1" className="input num w-28" value={budget} onChange={(e) => setBudget(e.target.value)} aria-label="Monthly budget in US dollars" />
-              <span className="text-sm text-slate-500">per month</span>
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="flex items-start gap-4 rounded-lg border border-ink-700 p-4">
-        <Toggle on={zarOn} onChange={setZarOn} label="Show amounts in Rand" />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-slate-200">Show amounts in Rand too</div>
-          <p className="mt-0.5 text-sm text-slate-500">AWS bills in US dollars. Turn this on to see an approximate Rand amount next to each figure, using the exchange rate you enter. Off = dollars only.</p>
-          {zarOn && (
-            <div className="mt-3 flex items-center gap-2">
-              <span className="text-sm text-slate-400">$1 =</span>
-              <span className="text-sm text-slate-400">R</span>
-              <input type="number" min={1} step="0.01" className="input num w-28" value={rate} onChange={(e) => setRate(e.target.value)} aria-label="Rand per US dollar" />
+              <span className="text-sm text-slate-400">{m.zar ? 'R' : '$'}</span>
+              <input type="number" min={1} step="1" className="input num w-28" value={budget} onChange={(e) => setBudget(e.target.value)} aria-label={`Monthly budget in ${m.zar ? 'Rand' : 'US dollars'}`} />
+              <span className="text-sm text-slate-500">per month{m.zar && Number(budget) > 0 ? ` (≈ $${budgetUsd.toFixed(2)})` : ''}</span>
             </div>
           )}
         </div>
@@ -109,7 +108,7 @@ function CostOptions({ settings, onSaved, onError }: { settings: CostSettings; o
         <button className="btn-primary" disabled={busy || !dirty} onClick={async () => {
           setBusy(true);
           try {
-            const r = await api.saveCostSettings({ monthlyBudget: budgetOn ? budget : null, zarRate: zarOn ? rate : null });
+            const r = await api.saveCostSettings({ monthlyBudget: budgetOn ? budgetUsd : null });
             onSaved(r.settings);
           } catch (e) { onError(err(e)); } finally { setBusy(false); }
         }}>{busy ? 'Saving…' : 'Save'}</button>
@@ -127,14 +126,15 @@ export function Costs() {
   if (error && !data) return <Alert>{error}</Alert>;
   if (!data) return <div className="space-y-3"><Skeleton className="h-12 w-60" /><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   const { summary: s, settings } = data;
-  const money = (n: number) => `$${n.toFixed(2)}`;
-  const zar = (n: number) => (settings.zarRate ? `≈ R${(n * settings.zarRate).toFixed(0)}` : undefined);
+  const m = moneyFor(settings);
+  const money = m.fmt;
+  const zar = m.other;
   const vs = s.lastMonthSamePeriod ? Math.round(((s.monthToDate - s.lastMonthSamePeriod) / s.lastMonthSamePeriod) * 100) : null;
   const over = settings.monthlyBudget != null && s.forecast > settings.monthlyBudget;
 
   return (
     <div>
-      <PageHeader title="Costs" subtitle={<>AWS Cost Explorer · updated {new Date(s.fetchedAt).toLocaleString()} · amounts in {s.currency}, before tax and credits</>}
+      <PageHeader title="Costs" subtitle={<>AWS Cost Explorer · updated {new Date(s.fetchedAt).toLocaleString()} · {m.zar ? <>amounts in Rand at $1 = R{m.rate} (AWS bills in {s.currency})</> : <>amounts in {s.currency}</>}, before tax and credits</>}
         actions={isAdmin && (
           <button className="btn-secondary" disabled={busy} title="Each refresh costs USD 0.02 (2 Cost Explorer requests); limited to once an hour"
                   onClick={async () => { setBusy(true); setMsg(null); try { const r = await api.refreshCosts(); setData({ summary: r.summary, settings: r.settings }); setMsg(r.fetched ? { tone: 'ok', text: 'Refreshed from Cost Explorer.' } : { tone: 'warn', text: 'Already refreshed in the last hour (Cost Explorer charges per request).' }); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); } finally { setBusy(false); } }}>
@@ -158,7 +158,7 @@ export function Costs() {
         </div>
       )}
       <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
-        <section className="card min-w-0"><h2 className="mb-3 font-medium text-slate-100">Daily spend</h2><Bars s={s} zarRate={settings.zarRate} /></section>
+        <section className="card min-w-0"><h2 className="mb-3 font-medium text-slate-100">Daily spend</h2><Bars s={s} m={m} /></section>
         <section className="card overflow-hidden p-0">
           <h2 className="px-5 py-4 font-medium text-slate-100">By service</h2>
           <table className="tbl">

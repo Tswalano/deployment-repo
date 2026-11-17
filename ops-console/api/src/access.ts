@@ -6,6 +6,7 @@
  *  - Security snapshot: keys, SSH logins and failed attempts, sshd settings, OS updates (OpsConsole-Security),
  *    cached per instance and refreshed on demand.
  */
+import { createHash } from 'crypto';
 import { get as httpsGet } from 'https';
 import { isIP } from 'net';
 import { gunzipSync } from 'zlib';
@@ -22,12 +23,15 @@ export const FP_RE = /^SHA256:[A-Za-z0-9+/]{43}$/;
 export const LOGIN_USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
 export interface GrantRow {
-    id: number; instance_id: number; group_id: string; cidr: string; reason: string | null; granted_by: string;
+    id: number; instance_id: number; group_id: string | null; cidr: string | null; reason: string | null; granted_by: string;
     granted_at: string; expires_at: string; revoked_at: string | null; revoked_by: string | null; error: string | null;
+    kind: 'ip' | 'key'; route: 'direct' | 'ssm' | null; key_user: string | null; key_fingerprint: string | null;
+    key_from: string | null; key_added: boolean; user_key_id: number | null;
 }
 export const grantView = (g: GrantRow) => ({
-    id: g.id, groupId: g.group_id, cidr: g.cidr, reason: g.reason, grantedBy: g.granted_by, grantedAt: g.granted_at,
+    id: g.id, kind: g.kind, groupId: g.group_id, cidr: g.cidr, reason: g.reason, grantedBy: g.granted_by, grantedAt: g.granted_at,
     expiresAt: g.expires_at, revokedAt: g.revoked_at, revokedBy: g.revoked_by, error: g.error,
+    route: g.route, keyUser: g.key_user, keyFingerprint: g.key_fingerprint, keyFrom: g.key_from, keyAdded: g.key_added,
 });
 
 // ---------------------------------------------------------------------------------------------- addresses
@@ -82,7 +86,7 @@ export async function sshAccess(inst: InstanceRow) {
     const { rows: grants } = await db().query<GrantRow>(
         `SELECT * FROM ssh_grants WHERE instance_id = $1 AND (revoked_at IS NULL OR revoked_at > now() - interval '7 days')
           ORDER BY revoked_at IS NULL DESC, granted_at DESC LIMIT 30`, [inst.id]);
-    const open = grants.filter((g) => !g.revoked_at);
+    const open = grants.filter((g) => !g.revoked_at && g.kind === 'ip');
     return {
         groups: groups.map((g) => ({
             ...g,
@@ -107,7 +111,7 @@ export async function grantSsh(inst: InstanceRow, user: string, cidr: string, ho
     }
     const until = new Date(Date.now() + hours * 3600_000);
     const { rows: [existing] } = await db().query<GrantRow>(
-        'SELECT * FROM ssh_grants WHERE instance_id = $1 AND group_id = $2 AND cidr = $3 AND revoked_at IS NULL', [inst.id, target.groupId, cidr]);
+        `SELECT * FROM ssh_grants WHERE instance_id = $1 AND group_id = $2 AND cidr = $3 AND revoked_at IS NULL AND kind = 'ip'`, [inst.id, target.groupId, cidr]);
     if (existing) {
         // same address again: extend (never shorten) the open grant, no second rule
         const { rows: [g] } = await db().query<GrantRow>(
@@ -124,23 +128,35 @@ export async function grantSsh(inst: InstanceRow, user: string, cidr: string, ho
     return g;
 }
 
+/** Undo one grant on AWS / the instance: close the port 22 rule, or take the temporary key out again. */
+async function undo(g: GrantRow, region: string, awsInstanceId: string): Promise<void> {
+    if (g.kind === 'ip' && g.group_id && g.cidr) await aws().revokeSsh!(region, g.group_id, g.cidr);
+    if (g.kind === 'key' && g.key_added && g.key_user && g.key_fingerprint) {
+        // temporary=yes only ever removes lines that carry an expiry-time: a permanent copy of the key stays
+        const out = await aws().runDocument(region, awsInstanceId, KEYS_DOCUMENT,
+            { action: ['remove'], user: [g.key_user], key: [''], fingerprint: [g.key_fingerprint], from: [''], expires: [''], temporary: ['yes'] }, 60_000);
+        const r = JSON.parse(out.trim().split('\n').filter(Boolean).pop() ?? '{}');
+        if (!r.ok) throw new Error(r.error ?? 'removing the temporary key failed');
+    }
+}
+
 export async function revokeGrant(inst: InstanceRow, grantId: number, by: string): Promise<GrantRow> {
     const { rows: [g] } = await db().query<GrantRow>('SELECT * FROM ssh_grants WHERE id = $1 AND instance_id = $2', [grantId, inst.id]);
     if (!g) throw new DeployError('Grant not found.', 404);
     if (g.revoked_at) return g;
-    await aws().revokeSsh!(inst.region, g.group_id, g.cidr);
+    await undo(g, inst.region, inst.aws_instance_id).catch((err) => { throw new DeployError((err as Error).message.slice(0, 300), 409); });
     const { rows: [r] } = await db().query<GrantRow>('UPDATE ssh_grants SET revoked_at = now(), revoked_by = $2, error = NULL WHERE id = $1 RETURNING *', [g.id, by]);
     return r;
 }
 
 /** Poller: close every grant whose time is up. A failure is kept on the row and retried next minute. */
 export async function expireSshGrants(): Promise<number> {
-    const { rows } = await db().query<GrantRow & { region: string }>(
-        `SELECT g.*, i.region FROM ssh_grants g JOIN instances i ON i.id = g.instance_id WHERE g.revoked_at IS NULL AND g.expires_at <= now()`);
+    const { rows } = await db().query<GrantRow & { region: string; aws_instance_id: string }>(
+        `SELECT g.*, i.region, i.aws_instance_id FROM ssh_grants g JOIN instances i ON i.id = g.instance_id WHERE g.revoked_at IS NULL AND g.expires_at <= now()`);
     let closed = 0;
     for (const g of rows) {
         try {
-            await aws().revokeSsh!(g.region, g.group_id, g.cidr);
+            await undo(g, g.region, g.aws_instance_id);
             await db().query(`UPDATE ssh_grants SET revoked_at = now(), revoked_by = 'expired', error = NULL WHERE id = $1`, [g.id]);
             closed++;
         } catch (err) {
@@ -191,4 +207,86 @@ export async function changeKey(inst: InstanceRow, action: 'add' | 'remove', use
     try { r = JSON.parse(line); } catch { throw new DeployError(out.slice(0, 200) || 'No answer from the instance.'); }
     if (!r.ok) throw new DeployError(r.error ?? 'The key change failed.', 409);
     return { fingerprint: r.fingerprint ?? null, keys: r.keys, dryRun: r.dryRun };
+}
+
+// ---------------------------------------------------------------------------------------------- your own laptop
+
+export interface UserKeyRow { id: number; user_id: number; name: string; public_key: string; fingerprint: string; key_type: string; created_at: string; last_used_at: string | null }
+export const userKeyView = (k: UserKeyRow) => ({ id: k.id, name: k.name, fingerprint: k.fingerprint, type: k.key_type, createdAt: k.created_at, lastUsedAt: k.last_used_at });
+
+/** OpenSSH's SHA256 fingerprint of a public key line (same as `ssh-keygen -lf`). */
+export function keyFingerprint(line: string): string {
+    const blob = line.trim().split(/\s+/)[1] ?? '';
+    return 'SHA256:' + createHash('sha256').update(Buffer.from(blob, 'base64')).digest('base64').replace(/=+$/, '');
+}
+
+export async function saveUserKey(userId: number, name: string, key: string): Promise<UserKeyRow> {
+    const line = key.trim().replace(/\s+/g, ' ');
+    if (/PRIVATE KEY/.test(line)) throw new DeployError('That is a private key: never share it. Paste the matching .pub file instead.');
+    if (!KEY_RE.test(line)) throw new DeployError('Paste one OpenSSH public key line, for example "ssh-ed25519 AAAA… you@laptop".');
+    const parts = line.split(' ');
+    const label = (name.trim() || parts.slice(2).join(' ') || 'my laptop').replace(/[^A-Za-z0-9 ._@+-]/g, '').slice(0, 60) || 'my laptop';
+    const fp = keyFingerprint(line);
+    try {
+        const { rows: [k] } = await db().query<UserKeyRow>(
+            'INSERT INTO user_ssh_keys (user_id, name, public_key, fingerprint, key_type) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [userId, label, line, fp, parts[0]]);
+        return k;
+    } catch (err) {
+        if ((err as { code?: string }).code === '23505') throw new DeployError('You already saved this key.', 409);
+        throw err;
+    }
+}
+
+export async function userKeys(userId: number): Promise<UserKeyRow[]> {
+    const { rows } = await db().query<UserKeyRow>('SELECT * FROM user_ssh_keys WHERE user_id = $1 ORDER BY created_at', [userId]);
+    return rows;
+}
+
+export interface LaptopAccess { grant: GrantRow; ipGrant: GrantRow | null; permanent: boolean; host: string | null; awsInstanceId: string; region: string; user: string; ipAlreadyAllowed: boolean }
+
+/**
+ * Let someone's own laptop in over SSH for a while:
+ *  - direct: the key is restricted to their public IP and port 22 opens for that IP only
+ *  - ssm:    no port opens; SSH runs inside Session Manager (AWS-StartSSHSession), so the key only works from
+ *            the instance itself (from="127.0.0.1,::1")
+ * Either way the key carries expiry-time (sshd refuses it afterwards even if clean-up failed) and is removed on expiry.
+ */
+export async function laptopAccess(inst: InstanceRow, requester: { id: number; username: string }, keyId: number, route: 'direct' | 'ssm',
+    hours: number, ip: string | null, reason: string | null): Promise<LaptopAccess> {
+    if (!GRANT_HOURS.includes(hours)) throw new DeployError(`Choose a duration of ${GRANT_HOURS.join(', ')} hours.`);
+    const { rows: [key] } = await db().query<UserKeyRow>('SELECT * FROM user_ssh_keys WHERE id = $1 AND user_id = $2', [keyId, requester.id]);
+    if (!key) throw new DeployError('Choose one of your saved keys.', 404);
+    const info = await aws().describeInstance(inst.region, inst.aws_instance_id);
+    if (!info) throw new DeployError('The instance no longer exists in AWS.', 409);
+    if (info.state !== 'running') throw new DeployError(`${inst.name} is ${info.state}.`, 409);
+    if (route === 'direct' && !info.publicIp) throw new DeployError(`${inst.name} has no public IP: use the Session Manager route.`, 409);
+
+    const cidr = route === 'direct' ? hostCidr(ip ?? '') : null;
+    let ipGrant: GrantRow | null = null, ipAlreadyAllowed = false;
+    if (cidr) {
+        try { ipGrant = await grantSsh(inst, requester.username, cidr, hours, reason ?? 'laptop SSH'); }
+        catch (err) {
+            if (err instanceof DeployError && err.code === 'already_allowed') ipAlreadyAllowed = true;   // a permanent rule already lets this IP in
+            else throw err;
+        }
+    }
+    const until = new Date(Date.now() + hours * 3600_000);
+    const from = cidr ?? '127.0.0.1/32,::1/128';
+    const out = await aws().runDocument(inst.region, inst.aws_instance_id, KEYS_DOCUMENT, {
+        action: ['add'], user: ['ec2-user'], key: [key.public_key], fingerprint: [''], from: [from], expires: [String(Math.floor(until.getTime() / 1000))], temporary: ['yes'],
+    }, 60_000).catch((err) => { throw new DeployError((err as Error).message.slice(0, 300)); });
+    let r: { ok?: boolean; error?: string; added?: boolean; permanent?: boolean };
+    try { r = JSON.parse(out.trim().split('\n').filter(Boolean).pop() ?? '{}'); } catch { r = { ok: false, error: out.slice(0, 200) }; }
+    if (!r.ok) throw new DeployError(r.error ?? 'Installing the key failed.', 409);
+
+    // one open key grant per key and instance: a new request replaces (extends) the old one
+    await db().query(`UPDATE ssh_grants SET revoked_at = now(), revoked_by = 'replaced' WHERE instance_id = $1 AND kind = 'key' AND key_user = 'ec2-user' AND key_fingerprint = $2 AND revoked_at IS NULL`,
+        [inst.id, key.fingerprint]);
+    const { rows: [g] } = await db().query<GrantRow>(
+        `INSERT INTO ssh_grants (instance_id, kind, route, key_user, key_fingerprint, key_from, key_added, user_key_id, reason, granted_by, expires_at)
+         VALUES ($1, 'key', $2, 'ec2-user', $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [inst.id, route, key.fingerprint, from, !!r.added, key.id, reason, requester.username, until]);
+    await db().query('UPDATE user_ssh_keys SET last_used_at = now() WHERE id = $1', [key.id]);
+    return { grant: g, ipGrant, permanent: !!r.permanent, host: info.publicIp ?? null, awsInstanceId: inst.aws_instance_id, region: inst.region, user: 'ec2-user', ipAlreadyAllowed };
 }
