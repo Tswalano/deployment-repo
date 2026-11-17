@@ -53,7 +53,7 @@ export function EnvTab({ instanceId, project, isAdmin }: { instanceId: number; p
                   <input className="input py-1 font-mono text-xs" value={editVal} onChange={(e) => setEditVal(e.target.value)} autoFocus spellCheck={false} />
                 ) : shown[v.key] !== undefined ? (
                   <span className="flex items-center gap-2"><span className="truncate text-slate-200" title={shown[v.key]}>{shown[v.key]}</span>
-                    <button className="shrink-0 text-2xs text-indigo-300 hover:underline" onClick={() => void navigator.clipboard?.writeText(shown[v.key])}>copy</button></span>
+                    <button className="btn-ghost shrink-0 px-2 py-0.5 text-2xs" onClick={() => void navigator.clipboard?.writeText(shown[v.key])}>copy</button></span>
                 ) : <span className="text-slate-600">••••••••</span>}
               </td>
               <td title={v.lastModified ?? ''}>{ago(v.lastModified)}</td>

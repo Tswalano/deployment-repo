@@ -16,12 +16,13 @@
   .muted { @apply text-slate-400; }
   .dim { @apply text-slate-500; }
 
-  .btn { @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-medium transition
+  .btn { @apply inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-medium transition
               focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950
               disabled:cursor-not-allowed disabled:opacity-50; }
   .btn-primary { @apply btn bg-indigo-500 text-white shadow-[0_0_0_1px_rgba(129,140,248,0.4)] hover:bg-indigo-400; }
   .btn-secondary { @apply btn border border-ink-600 bg-ink-850 text-slate-200 hover:border-ink-500 hover:bg-ink-800; }
-  .btn-ghost { @apply btn text-slate-300 hover:bg-ink-800 hover:text-white; }
+  /* every button looks like a button: the quiet variant still has an outline and a surface */
+  .btn-ghost { @apply btn border border-ink-700 bg-ink-900 text-slate-300 hover:border-ink-500 hover:bg-ink-800 hover:text-white; }
   .btn-danger { @apply btn border border-rose-900/70 bg-ink-850 text-rose-300 hover:border-rose-700 hover:bg-rose-950/40; }
 
   .input { @apply block w-full rounded-lg border border-ink-600 bg-ink-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500

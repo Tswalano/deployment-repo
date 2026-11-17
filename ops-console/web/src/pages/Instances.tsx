@@ -3,6 +3,7 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { InstanceCard } from '../components/InstanceCard';
 import { Alert, PageHeader, Skeleton } from '../components/ui';
+import { sortInstances } from '../health';
 import { usePoll } from '../usePoll';
 
 export function Instances() {
@@ -21,7 +22,7 @@ export function Instances() {
       ) : data.length === 0 ? (
         <div className="card py-12 text-center text-sm text-slate-500">No instances yet.{user?.role === 'admin' && <> Add one under <Link to="/settings" className="text-indigo-300 hover:underline">Settings</Link>.</>}</div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{data.map((i) => <InstanceCard key={i.id} instance={i} />)}</div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{sortInstances(data).map((i) => <InstanceCard key={i.id} instance={i} />)}</div>
       )}
     </div>
   );

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, AppDetailData, AppView, DbPoint, Deployment } from '../api';
+import { api, AppDetailData, AppView, DbPoint, Deployment, LogsResult } from '../api';
 import { useAuth } from '../auth';
-import { ago, Alert, bytes, Dot, dur, Kpi, PageHeader, Skeleton, Sparkline } from '../components/ui';
+import { ago, Alert, bytes, Dot, dur, Kpi, PageHeader, seriesOf, Skeleton, Sparkline } from '../components/ui';
 import { appTone } from '../health';
 import { fmtPct, pctTone, UptimeBars } from '../components/uptime';
 import { usePoll } from '../usePoll';
@@ -55,7 +55,8 @@ function UptimeCard({ instanceId, project }: { instanceId: number; project: stri
   const { data } = usePoll(() => api.appUptime(instanceId, project), 60_000, [instanceId, project]);
   if (!data) return null;
   const { summary: s, series, incidents } = data;
-  const lat = series.map((p) => p.avgMs).filter((x): x is number => x != null);
+  const L = seriesOf(series, (p) => p.avgMs);
+  const lat = L.values;
   return (
     <section className="card">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -70,7 +71,7 @@ function UptimeCard({ instanceId, project }: { instanceId: number; project: stri
       <div className="mt-5 grid gap-5 md:grid-cols-[minmax(0,1fr)_280px]">
         <div className="hidden md:block">
           <div className="mb-1 flex items-baseline justify-between text-xs"><span className="text-slate-500">Response time · 24h (10-min average)</span><span className="num text-slate-300">p95 {s.p95ms24h != null ? `${s.p95ms24h} ms` : '—'}</span></div>
-          <Sparkline values={lat} tone="info" max={Math.max(200, ...lat)} height={56} />
+          <Sparkline values={lat} times={L.times} tone="info" max={Math.max(200, ...lat)} height={56} format={(v) => `${Math.round(v)} ms`} label="avg response (10 min)" />
         </div>
         <div className="min-w-0">
           <div className="eyebrow mb-2">Incidents</div>
@@ -88,11 +89,57 @@ function UptimeCard({ instanceId, project }: { instanceId: number; project: stri
   );
 }
 
+/** Latest errors and warnings (deployers/admins see the lines; everyone sees the counts). */
+function ProblemsCard({ view }: { view: AppView }) {
+  const { app, instance, canOperate } = view;
+  const [logs, setLogs] = useState<LogsResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!canOperate) return;
+    api.appLogs(instance.id, app.project, { lines: 1000, level: 'warning', since: '24h', q: '' }).then(setLogs).catch((e) => setError(errMsg(e)));
+  }, [instance.id, app.project, canOperate]);
+  // counts cover the whole 24 hours (counted on the instance); the list shows the most recent lines found
+  const errs = app.errors24h;
+  const warns = Math.max(0, app.warnings24h - app.errors24h);
+  const recent = (logs?.entries ?? []).slice(-8).reverse();
+  const open = (level: string) => `/instances/${instance.id}/apps/${app.project}?tab=logs&level=${level}&since=24h`;
+  return (
+    <section className="card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-medium text-slate-100">Errors and warnings <span className="ml-1 text-sm font-normal text-slate-500">last 24 hours</span></h2>
+        <div className="flex gap-2">
+          <Link to={open('error')} className={`${errs ? 'pill-bad' : 'pill-ok'} px-3 py-1 hover:brightness-125`}>{errs} error{errs === 1 ? '' : 's'}</Link>
+          <Link to={open('warning')} className={`${warns ? 'pill-warn' : 'pill-ok'} px-3 py-1 hover:brightness-125`}>{warns} warning{warns === 1 ? '' : 's'}</Link>
+          {canOperate && <Link to={open('all')} className="btn-secondary hidden px-3 py-1 text-xs md:inline-flex">Open all logs</Link>}
+        </div>
+      </div>
+      {!canOperate ? (
+        <p className="mt-3 text-sm text-slate-500">Log lines are visible to deployers and admins.</p>
+      ) : error ? <div className="mt-3"><Alert tone="warn">{error}</Alert></div> : !logs ? <Skeleton className="mt-3 h-24" /> : recent.length === 0 ? (
+        errs + warns > 0
+          ? <p className="mt-3 text-sm text-slate-400">{errs + warns} problem line{errs + warns === 1 ? '' : 's'} were counted in the last 24 hours but are older than the lines fetched here. <Link className="text-indigo-300 hover:underline" to={open(errs ? 'error' : 'warning')}>Open the logs</Link> to see them.</p>
+          : <p className="mt-3 text-sm text-emerald-300">Nothing logged at warning level or above in the last 24 hours.</p>
+      ) : (
+        <ul className="mt-3 divide-y divide-ink-800 rounded-lg border border-ink-800 bg-ink-950 font-mono text-[12px]">
+          {recent.map((e, i) => (
+            <li key={i} className="flex gap-3 px-3 py-1.5">
+              <span className="shrink-0 text-slate-600">{new Date(e.ts).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+              <span className={`shrink-0 rounded px-1 text-[10px] font-semibold uppercase leading-5 ${e.level === 'error' ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>{e.level.slice(0, 4)}</span>
+              <span className={`min-w-0 truncate ${e.level === 'error' ? 'text-rose-200' : 'text-amber-100'}`} title={e.message}>{e.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function OverviewTab({ view, detail }: { view: AppView; detail: AppDetailData | null }) {
   const { app } = view;
   const u = detail?.unit, h = detail?.health, g = detail?.git;
   return (
     <div className="space-y-5">
+      <ProblemsCard view={view} />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Kpi label="Health" tone={app.healthy ? 'ok' : 'bad'} value={app.healthy ? `HTTP ${app.healthCode}` : 'Down'} unit={app.healthMs != null ? `${app.healthMs} ms` : undefined} />
         <Kpi label="Memory" tone="info" value={bytes(app.memory)} unit={`${app.restarts ?? 0} restarts`} />
