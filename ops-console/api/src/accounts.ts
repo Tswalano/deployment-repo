@@ -11,6 +11,33 @@ import { notifier } from './notify';
 import { hashPassword, passwordProblem } from './password';
 import { Role } from './sessions';
 
+/** Usernames: 3-30 of a-z 0-9 . _ - , starting with a letter or digit; never an email (no @). */
+export const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/;
+
+export async function usernameTaken(u: string, exceptUserId?: number): Promise<boolean> {
+    const { rows } = await db().query('SELECT 1 FROM users WHERE (lower(username) = $1 OR lower(email) = $1) AND id <> $2', [u.toLowerCase(), exceptUserId ?? 0]);
+    return rows.length > 0;
+}
+
+/** Check a chosen username (lower-cased); throws a friendly error. */
+export async function cleanUsername(v: unknown, exceptUserId?: number): Promise<string> {
+    const u = String(v ?? '').trim().toLowerCase();
+    if (!USERNAME_RE.test(u)) throw new DeployError('Usernames are 3 to 30 characters: letters, numbers, dots, dashes and underscores, starting with a letter or number.', 400, 'bad_username');
+    if (await usernameTaken(u, exceptUserId)) throw new DeployError('That username is taken: try another.', 409, 'username_taken');
+    return u;
+}
+
+/** A free username made from the email's first part (e.g. moganegb@… → moganegb, then moganegb-2 …). */
+export async function suggestUsername(email: string): Promise<string> {
+    let base = email.split('@')[0].toLowerCase().replace(/\+.*$/, '').replace(/[^a-z0-9._-]/g, '').replace(/^[._-]+/, '').slice(0, 24);
+    if (base.length < 3) base = `${base}user`.slice(0, 24);
+    for (let i = 1; i < 200; i++) {
+        const u = i === 1 ? base : `${base}-${i}`;
+        if (!(await usernameTaken(u))) return u;
+    }
+    return `${base}-${randomBytes(3).toString('hex')}`;
+}
+
 export const EMAIL_RE = /^[^\s@<>()",;:]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const newToken = () => randomBytes(32).toString('base64url');
@@ -67,7 +94,7 @@ export async function sendVerification(userId: number, email: string): Promise<v
 }
 
 /** Sign-up: user + workspace (trial) + admin membership, then the verification email. */
-export async function signUp(input: { name: unknown; email: unknown; password: unknown; workspace: unknown }) {
+export async function signUp(input: { name: unknown; email: unknown; password: unknown; workspace: unknown; username?: unknown }) {
     const email = cleanEmail(input.email);
     const name = cleanName(input.name, 'Your name');
     const wsName = cleanName(input.workspace ?? `${name}'s team`, 'The workspace name');
@@ -75,10 +102,11 @@ export async function signUp(input: { name: unknown; email: unknown; password: u
     if (problem) throw new DeployError(problem);
     const exists = await db().query('SELECT 1 FROM users WHERE lower(email) = $1 OR lower(username) = $1', [email]);
     if (exists.rows.length) throw new DeployError('An account with this email already exists: sign in, or reset your password.', 409, 'exists');
+    const username = String(input.username ?? '').trim() ? await cleanUsername(input.username) : await suggestUsername(email);
     const hash = await hashPassword(String(input.password));
     const { rows: [u] } = await db().query<{ id: number; username: string }>(
         `INSERT INTO users (username, display_name, role, password_hash, password_changed_at, email)
-         VALUES ($1, $2, 'viewer', $3, now(), $1) RETURNING id, username`, [email, name, hash]);
+         VALUES ($1, $2, 'viewer', $3, now(), $4) RETURNING id, username`, [username, name, hash, email]);
     const ws = await createWorkspace(u.id, wsName);
     await sendVerification(u.id, email);
     return { user: u, workspace: ws };
@@ -177,7 +205,7 @@ export async function inviteInfo(token: string) {
  * Accept an invitation. Signed in: the invite must be for the signed-in email. Signed out: creates the account
  * (the invite proves the email) unless one exists, in which case the person must sign in first.
  */
-export async function acceptInvite(token: string, signedIn: { id: number; email: string | null } | null, account?: { name: unknown; password: unknown }) {
+export async function acceptInvite(token: string, signedIn: { id: number; email: string | null } | null, account?: { name: unknown; password: unknown; username?: unknown }) {
     const { rows: [i] } = await db().query<{ id: number; workspace_id: number; email: string; role: Role }>(
         `SELECT id, workspace_id, email, role FROM workspace_invites WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > now()`, [sha256(token)]);
     if (!i) throw new DeployError('This invitation is invalid, already used, or expired.', 404);
@@ -191,9 +219,10 @@ export async function acceptInvite(token: string, signedIn: { id: number; email:
         const name = cleanName(account?.name, 'Your name');
         const problem = passwordProblem(account?.password);
         if (problem) throw new DeployError(problem);
+        const username = String(account?.username ?? '').trim() ? await cleanUsername(account?.username) : await suggestUsername(i.email);
         const { rows: [u] } = await db().query<{ id: number }>(
             `INSERT INTO users (username, display_name, role, password_hash, password_changed_at, email, email_verified_at)
-             VALUES ($1, $2, 'viewer', $3, now(), $1, now()) RETURNING id`, [i.email.toLowerCase(), name, await hashPassword(String(account?.password))]);
+             VALUES ($1, $2, 'viewer', $3, now(), $4, now()) RETURNING id`, [username, name, await hashPassword(String(account?.password)), i.email.toLowerCase()]);
         userId = u.id;
     }
     await db().query(`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (workspace_id, user_id) DO NOTHING`, [i.workspace_id, userId, i.role]);

@@ -265,3 +265,26 @@ test('connect AWS: per-workspace external ID, verified by assuming the role; ser
     assert.notEqual(after.externalId, ca.connection.externalId);
     assert.equal((await a.get('/api/aws-connection/servers')).status, 409);
 });
+
+test('usernames: generated from the email or chosen at sign-up; unique; sign in with either; change on the profile', async () => {
+    const me = (await alice.get('/api/auth/me')).json.user;
+    assert.equal(me.username, 'alice', 'generated from the email (Alice@Example.com → alice), never the email itself');
+    assert.equal((await client().get('/api/account/username-available?u=alice')).json.available, false);
+    assert.equal((await client().get('/api/account/username-suggestion?email=alice@other.test')).json.username, 'alice-2');
+
+    const d = client();
+    assert.equal((await d.post('/api/account/signup', { name: 'Dee', email: 'dee@example.com', password: 'correct-horse-4', workspace: 'Dee Co', username: 'alice' })).status, 409);
+    assert.equal((await d.post('/api/account/signup', { name: 'Dee', email: 'dee@example.com', password: 'correct-horse-4', workspace: 'Dee Co', username: 'd@x' })).status, 400);
+    const r = await d.post('/api/account/signup', { name: 'Dee', email: 'dee@example.com', password: 'correct-horse-4', workspace: 'Dee Co', username: 'Dee.Ops' });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal((await d.get('/api/auth/me')).json.user.username, 'dee.ops');
+    for (const login of ['dee.ops', 'DEE@example.com']) {
+        assert.equal((await client().post('/api/auth/login', { username: login, password: 'correct-horse-4' })).status, 200, `sign in with ${login}`);
+    }
+    const p = (await d.get('/api/auth/profile')).json.profile;
+    assert.deepEqual([p.username, p.email, p.displayName, p.workspaces[0].name], ['dee.ops', 'dee@example.com', 'Dee', 'Dee Co']);
+    assert.equal((await d.patch('/api/auth/profile', { username: 'alice' })).status, 409);
+    assert.equal((await d.patch('/api/auth/profile', { username: 'dee', displayName: 'Dee Dlamini' })).status, 200);
+    const after = (await d.get('/api/auth/me')).json.user;
+    assert.deepEqual([after.username, after.displayName], ['dee', 'Dee Dlamini']);
+});

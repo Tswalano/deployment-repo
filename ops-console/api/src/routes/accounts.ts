@@ -1,6 +1,6 @@
 import { Context, Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
-import { acceptInvite, createWorkspace, forgotPassword, invite, inviteInfo, myWorkspaces, removeMember, renameWorkspace, resetPassword,
+import { cleanEmail, suggestUsername, usernameTaken, USERNAME_RE, acceptInvite, createWorkspace, forgotPassword, invite, inviteInfo, myWorkspaces, removeMember, renameWorkspace, resetPassword,
     sendVerification, setMemberRole, signUp, team, verifyEmail } from '../accounts';
 import { audit } from '../audit';
 import { config } from '../config';
@@ -21,6 +21,16 @@ const multiOnly = async (c: Context<Env>, next: () => Promise<void>) => (config.
 
 /** Public: sign-up, email verification, password reset, invitations. Mounted at /api/account. */
 export const account = new Hono<Env>();
+
+/** Live check for the sign-up form. */
+account.get('/username-available', rateLimit(60, 60_000, (c) => `uname:${ip(c)}`), async (c) => {
+    const u = String(c.req.query('u') ?? '').trim().toLowerCase();
+    if (!USERNAME_RE.test(u)) return c.json({ available: false, reason: 'format' });
+    return c.json({ available: !(await usernameTaken(u)) });
+});
+account.get('/username-suggestion', rateLimit(60, 60_000, (c) => `usugg:${ip(c)}`), async (c) => {
+    try { return c.json({ username: await suggestUsername(cleanEmail(c.req.query('email'))) }); } catch { return c.json({ username: null }); }
+});
 
 account.get('/config', (c) => c.json({ multiTenant: config.multiTenant, productName: config.productName, trialDays: config.trialDays }));
 
@@ -67,7 +77,7 @@ account.post('/invites/:token/accept', multiOnly, rateLimit(10, 60 * 60_000, (c)
     const b = await c.req.json().catch(() => ({}));
     const u = c.get('user');
     try {
-        const r = await acceptInvite(c.req.param('token'), u && !u.isDemo ? { id: u.id, email: u.email } : null, { name: b.name, password: b.password });
+        const r = await acceptInvite(c.req.param('token'), u && !u.isDemo ? { id: u.id, email: u.email } : null, { name: b.name, password: b.password, username: b.username });
         const raw = getCookie(c, config.cookieName);
         if (u && raw) await switchWorkspace(raw, u.id, r.workspaceId);
         else {
