@@ -25,6 +25,8 @@ export const loadSession: MiddlewareHandler<Env> = async (c, next) => {
 
 /** CSRF: state-changing requests must come from an allowed Origin (cookies are SameSite=Strict too). */
 export const checkOrigin: MiddlewareHandler<Env> = async (c, next) => {
+    // GitHub webhooks carry no Origin; they are authenticated by their HMAC signature instead.
+    if (c.req.path === '/api/github/webhook') return next();
     if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
         const origin = c.req.header('origin');
         const loopback = config.allowLoopbackOrigins && !!origin && /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/.test(origin);

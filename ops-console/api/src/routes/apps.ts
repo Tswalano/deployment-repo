@@ -43,6 +43,7 @@ apps.get('/:id/apps/:project', async (c) => {
         deployments: rows.map((d) => deploymentView(d, withOutput)),
         canOperate: withOutput,
         policy: await policyFor(inst.environment),
+        repo: (await db().query('SELECT repo, branch, auto_deploy AS "autoDeploy", linked_by AS "linkedBy" FROM app_repos WHERE instance_id = $1 AND project = $2', [inst.id, project])).rows[0] ?? null,
     });
 });
 

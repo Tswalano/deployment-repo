@@ -254,6 +254,18 @@ per-instance agent (127.0.0.1:9100) report host metrics only.
   Rand conversion and monthly budget alerts. Cost Explorer charges USD 0.01 per request, so the console fetches
   once a day (2 requests, ~USD 0.60/month) and allows a manual refresh at most once an hour.
 
+
+### GitHub and environment variables (Ops Console)
+- **Settings → GitHub → Connect GitHub** creates a private GitHub App from a manifest (read-only access to code and
+  metadata, push events). Its credentials are stored in SSM under `/ops-console/github/*`; installation tokens are
+  minted per request and expire within an hour. Then install the app on your account/organisation and pick repos.
+- On an app's **Deploy** tab, **Repository** links it to a repo and branch; with auto-deploy on, every push to that
+  branch deploys the pushed commit (deploy approvals and freeze windows still apply). Webhooks go to
+  `https://ops.glenify.studio/api/github/webhook` and are verified by their HMAC signature.
+- An app's **Environment** tab lists its variables (`/apps/<service>/*`): admins reveal (logged), add, change and remove
+  them; the app restarts and the change is undone automatically if it doesn't come back healthy. Database passwords
+  and JWT secrets are rotated, not typed.
+
 ## Repository layout
 
 ```
