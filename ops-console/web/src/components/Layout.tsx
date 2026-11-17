@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NoWorkspace } from '../pages/Team';
+import { Onboarding } from '../pages/Onboarding';
 import { useTheme } from '../theme';
 import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
+
+/** Pages reachable while a new workspace is being set up (multi-customer mode). */
+const SETUP_PATHS = ['/', '/team', '/account', '/settings'];
 
 type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; mobile?: boolean; group?: 'Operations' | 'Administration'; icon: JSX.Element };
 
@@ -154,6 +158,13 @@ export function Layout() {
   const [wss, setWss] = useState<Workspace[]>([]);
   const [resent, setResent] = useState(false);
   useEffect(() => { if (user && site.multiTenant && user.workspaceId != null) api.workspaces().then((r) => setWss(r.workspaces)).catch(() => undefined); }, [user, site.multiTenant]);
+  // Setup mode (multi-customer): until the workspace has a server, show the onboarding screen without the app's
+  // navigation; only Team, Account and Settings stay reachable. (Phase 12b: "AWS connected" instead of "has a server".)
+  const [setupMode, setSetupMode] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!user || !site.multiTenant || user.workspaceId == null) { setSetupMode(false); return; }
+    api.instances().then((l) => setSetupMode(l.length === 0)).catch(() => setSetupMode(false));
+  }, [user, site.multiTenant]);
   const { pathname } = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   const [alerts, setAlerts] = useState({ open: 0, critical: 0 });
@@ -168,6 +179,9 @@ export function Layout() {
   }, [user, pathname]);
   if (!user) return null;
   if (site.multiTenant && user.workspaceId == null) return <NoWorkspace />;
+  if (site.multiTenant && setupMode === null) return null;
+  const setup = !!setupMode;
+  if (setup && !SETUP_PATHS.includes(pathname)) return <Navigate to="/" replace />;
   const current = wss.find((w) => w.id === user.workspaceId);
   const trialDays = current?.plan === 'trial' && current.trialEndsAt ? Math.max(0, Math.ceil((Date.parse(current.trialEndsAt) - Date.now()) / 86400e3)) : null;
   // with many customers the global Users page becomes the workspace's Team page (all members see it)
@@ -190,7 +204,7 @@ export function Layout() {
           {resent ? 'Sent again.' : <button className="underline underline-offset-2" onClick={() => { void api.resendVerification().then(() => setResent(true)); }}>Send it again</button>}
         </div>
       )}
-      {trialDays != null && (
+      {trialDays != null && !setup && (   /* during setup the onboarding page shows the trial itself */
         <div className="border-b border-indigo-400/20 bg-indigo-500/10 px-4 py-2 text-center text-xs text-indigo-200">
           Free trial: {trialDays === 0 ? 'ends today' : `${trialDays} day${trialDays === 1 ? '' : 's'} left`}. Plans and billing arrive soon; nothing is charged during the trial.
         </div>
@@ -210,10 +224,12 @@ export function Layout() {
             {site.multiTenant && current && <span className="hidden max-w-[12rem] truncate rounded-md border border-ink-600 px-2 py-0.5 text-xs text-slate-400 sm:inline" title="Current workspace">{current.name}</span>}
           </NavLink>
           <div className="ml-auto flex items-center gap-2">
+            {setup && <NavLink to="/team" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Team</NavLink>}
+            {setup && user.role === 'admin' && <NavLink to="/settings" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Settings</NavLink>}
             <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
         </div>
-        <nav aria-label="Main" className="mx-auto hidden max-w-[1400px] gap-1 px-4 sm:px-6 md:flex">
+        {!setup && <nav aria-label="Main" className="mx-auto hidden max-w-[1400px] gap-1 px-4 sm:px-6 md:flex">
           {tabs.filter((t) => !t.group).map((t) => (
             <NavLink key={t.to} to={t.to} end={t.end}
                      className={({ isActive }) => `-mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors ${isActive
@@ -224,15 +240,15 @@ export function Layout() {
           ))}
           <NavGroup label="Operations" items={tabs.filter((t) => t.group === 'Operations')} />
           <NavGroup label="Administration" items={tabs.filter((t) => t.group === 'Administration')} />
-        </nav>
+        </nav>}
       </header>
 
       <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
-        <Outlet />
+        {setup && pathname === '/' ? <Onboarding /> : <Outlet />}
       </main>
 
       {/* Phones: only the views that make sense on a small screen */}
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+      {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
         {TABS.filter((t) => t.mobile).map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end}
                    className={({ isActive }) => `relative flex flex-col items-center gap-1 py-2.5 text-2xs font-medium ${isActive ? 'text-indigo-300' : 'text-slate-500'}`}>
@@ -240,7 +256,7 @@ export function Layout() {
             {t.to === '/alerts' && alerts.open > 0 && <span className={`absolute right-[calc(50%-1.1rem)] top-1.5 h-2 w-2 rounded-full ${alerts.critical ? 'bg-rose-500' : 'bg-amber-400'}`} />}
           </NavLink>
         ))}
-      </nav>
+      </nav>}
     </div>
   );
 }
