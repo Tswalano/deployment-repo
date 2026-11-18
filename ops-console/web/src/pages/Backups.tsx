@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError, BackupVerification, InstanceBackups } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, bytes, Kpi, PageHeader, Skeleton } from '../components/ui';
@@ -26,7 +27,6 @@ function InstanceSection({ b, canOperate, isAdmin, downloads, reload }:
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
 
-  if (!b.ok) return <section className="card"><h2 className="font-medium text-slate-100">{b.instance}</h2><div className="mt-3"><Alert tone="warn">Couldn't read backups: {b.error}</Alert></div></section>;
   const files = b.files ?? [];
   const dbs = [...new Set(files.filter((f) => f.file.endsWith('.dump')).map((f) => f.db))];
   const latestVerify = (db: string, file?: string) => b.verifications.find((v) => v.db === db && (!file || v.file === file));
@@ -137,6 +137,43 @@ sudo systemctl start <service>`}</pre>
   );
 }
 
+const STATE: Record<string, [string, string]> = {
+  stopped: ['Stopped', 'bg-slate-500'], stopping: ['Stopping', 'bg-amber-400'], pending: ['Starting', 'bg-amber-400'],
+  running: ['Running, not responding', 'bg-rose-400'], terminated: ['Terminated', 'bg-slate-600'],
+};
+
+/** Servers whose backups can't be read right now (stopped or not responding), with a link to start or reboot them. */
+function Unreachable({ list }: { list: InstanceBackups[] }) {
+  if (!list.length) return null;
+  return (
+    <section>
+      <h2 className="font-medium text-slate-100">Other servers</h2>
+      <p className="mt-1 text-sm text-slate-500">Backups on these servers can't be read until they are running and reachable.</p>
+      <div className="mt-3 overflow-x-auto rounded-xl border border-ink-700">
+        <table className="w-full min-w-[36rem] text-sm">
+          <thead className="bg-ink-900 text-left text-xs text-slate-500">
+            <tr><th className="px-4 py-2 font-medium">Server</th><th className="px-4 py-2 font-medium">Region</th><th className="px-4 py-2 font-medium">Status</th><th className="px-4 py-2 font-medium">Last reachable</th><th className="px-4 py-2" /></tr>
+          </thead>
+          <tbody className="divide-y divide-ink-800">
+            {list.map((b) => {
+              const [label, dot] = STATE[b.state ?? ''] ?? ['Not reachable', 'bg-rose-400'];
+              return (
+                <tr key={b.instanceId}>
+                  <td className="px-4 py-2.5 text-slate-200">{b.instance}</td>
+                  <td className="num px-4 py-2.5 text-slate-400">{b.region ?? '—'}</td>
+                  <td className="px-4 py-2.5 text-slate-300" title={b.error}><span className="inline-flex items-center gap-2"><span className={`h-1.5 w-1.5 rounded-full ${dot}`} />{label}</span></td>
+                  <td className="px-4 py-2.5 text-slate-400">{b.lastOkAt ? ago(b.lastOkAt) : 'never'}</td>
+                  <td className="px-4 py-2.5 text-right"><Link to={`/instances/${b.instanceId}`} className="text-indigo-300 hover:underline">Open server →</Link></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export function Backups() {
   const { user } = useAuth();
   const { data, error, reload } = usePoll(() => api.backups(), 60_000);
@@ -147,10 +184,11 @@ export function Backups() {
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
       {!data ? <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div> : (
         <div className="space-y-10">
-          {data.instances.map((b) => (
+          {data.instances.filter((b) => b.ok).map((b) => (
             <InstanceSection key={b.instanceId} b={b} canOperate={canOperate} isAdmin={user?.role === 'admin' && !user.isDemo}
                              downloads={data.downloads} reload={async () => { await reload(); }} />
           ))}
+          <Unreachable list={data.instances.filter((b) => !b.ok)} />
         </div>
       )}
     </div>

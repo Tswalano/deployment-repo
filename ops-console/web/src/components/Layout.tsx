@@ -8,7 +8,7 @@ import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
 
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
-const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/installed', '/billing', '/billing/return'];
+const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/callback', '/billing', '/billing/return'];
 
 type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; mobile?: boolean; group?: 'Operations' | 'Administration'; icon: JSX.Element };
 

@@ -11,8 +11,16 @@ const COPY: Record<Action, { title: string; body: string; button: string; danger
   terminate: { title: 'Terminate', body: 'Permanently deletes the instance. Its root disk is usually deleted with it, including any data and local backups on it. This cannot be undone.', button: 'Terminate permanently', danger: true, admin: true },
 };
 
-export const stateTone = (s: string | null | undefined) =>
-  s === 'running' ? 'pill-ok' : s === 'stopped' || s === 'terminated' ? 'pill-bad' : s ? 'pill-warn' : 'pill-mute';
+/** Server power state as a coloured dot and a word: green running, red stopped/terminated, amber in between. */
+export function StateDot({ state, className = '' }: { state: string | null | undefined; className?: string }) {
+  const dot = state === 'running' ? 'bg-emerald-400' : state === 'stopped' || state === 'terminated' ? 'bg-rose-400' : state ? 'bg-amber-400' : 'bg-slate-500';
+  const word = !state ? 'Unknown' : state === 'pending' ? 'Starting' : state === 'shutting-down' ? 'Terminating' : `${state[0].toUpperCase()}${state.slice(1)}`;
+  return (
+    <span className={`items-center gap-2 text-sm text-slate-300 ${className}`} title={`Server state: ${word}`}>
+      <span className={`h-2 w-2 rounded-full ${dot} ${state && state !== 'running' && state !== 'stopped' && state !== 'terminated' ? 'animate-pulse motion-reduce:animate-none' : ''}`} />{word}
+    </span>
+  );
+}
 
 export function PowerControls({ instance, isConsoleHost, dryRun, onDone }:
   { instance: Instance; isConsoleHost: boolean; dryRun: boolean; onDone: (msg: string) => void }) {

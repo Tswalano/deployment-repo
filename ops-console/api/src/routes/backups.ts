@@ -35,7 +35,8 @@ backups.get('/', async (c) => {
                 verifications: v.map(verificationView),
             });
         } catch (err) {
-            out.push({ instanceId: inst.id, instance: inst.name, ok: false, error: (err as Error).message.slice(0, 200), verifications: v.map(verificationView) });
+            out.push({ instanceId: inst.id, instance: inst.name, ok: false, error: (err as Error).message.slice(0, 200), verifications: v.map(verificationView),
+                region: inst.region, state: inst.ec2_state ?? null, lastOkAt: inst.last_ok_at ?? null });
         }
     }
     return c.json({ instances: out, downloads: !!config.transferBucket });

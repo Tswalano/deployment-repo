@@ -1,3 +1,4 @@
+import { ThemeToggle } from '../components/ThemeToggle';
 import { ReactNode, useEffect } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '../auth';
@@ -71,7 +72,7 @@ const ARTICLES: Article[] = [
   { slug: 'deploy', group: 'Servers and apps', title: 'Deploy from GitHub', summary: 'Connect GitHub, create an app and deploy on every push.',
     body: () => (<>
       <H>Connecting GitHub</H>
-      <P>Settings → GitHub → <b>Install on GitHub</b>. Choose the account or organisation and the repositories the app may read. GitHub then asks for authorisation, which confirms the installation belongs to the workspace.</P>
+      <P>Settings → GitHub → <b>Connect GitHub</b> (optionally enter an organisation name first). GitHub creates a private app for the workspace in that account, with read-only access to code. Then select <b>Install on GitHub</b> and choose the repositories the app may read. Each workspace has its own app, so no other workspace can reach its repositories.</P>
       <H>Creating an app</H>
       <OL>
         <li>On a prepared server, select <b>New app</b>, then a repository and branch.</li>
@@ -163,7 +164,7 @@ const ARTICLES: Article[] = [
       <H>The first deploy fails its health check</H>
       <P>Confirm that the app listens on <C>process.env.PORT</C> and that its health path returns HTTP 200. The failure output is under Activity → Failed deployments.</P>
       <H>A repository is not listed</H>
-      <P>Grant the GitHub App access to it: Settings → GitHub → <b>Add another account or change access</b>.</P>
+      <P>Grant the GitHub App access to it: Settings → GitHub → <b>Change repository access</b>.</P>
       <H>An email did not arrive</H>
       <P>Check the spam folder, then resend from the banner at the top of the console. Invitations expire after 7 days; an admin can send a new one.</P>
       <H>A change was refused as read-only</H>
@@ -193,7 +194,7 @@ export function Docs() {
             <span className="font-semibold text-slate-100">{site.productName}</span>
           </Link>
           <span className="text-sm text-slate-500">Docs</span>
-          <div className="ml-auto">{user ? <Link to="/" className="btn-secondary">Open the console</Link> : <Link to="/login" className="btn-ghost">Sign in</Link>}</div>
+          <div className="ml-auto flex items-center gap-2"><ThemeToggle />{user ? <Link to="/" className="btn-secondary">Open the console</Link> : <Link to="/login" className="btn-ghost">Sign in</Link>}</div>
         </div>
       </header>
       <div className="mx-auto grid max-w-6xl gap-10 px-4 py-10 sm:px-6 md:grid-cols-[13rem_minmax(0,1fr)]">

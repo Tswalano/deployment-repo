@@ -112,7 +112,7 @@ export interface AppView {
   repo: { repo: string; branch: string; autoDeploy: boolean; linkedBy: string | null } | null;
 }
 export interface GithubStatus {
-  connected: boolean; webhookUrl?: string; app?: { slug: string; owner?: string; htmlUrl: string } | null; multiTenant?: boolean; canManageApp?: boolean; linkable?: boolean;
+  connected: boolean; webhookUrl?: string; app?: { slug: string; owner?: string; htmlUrl: string } | null;
   installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
 }
 export interface Detection { found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
@@ -176,7 +176,7 @@ export type Severity = 'critical' | 'warning' | 'info';
 export interface Alert {
   id: number; rule: string; severity: Severity; instanceId: number | null; instance: string | null; project: string | null;
   title: string; detail: string; openedAt: string; lastSeenAt: string; resolvedAt: string | null;
-  ackedBy: string | null; ackedAt: string | null; notifyCount: number; lastNotifiedAt: string | null;
+  ackedBy: string | null; ackedAt: string | null; notifyCount: number; lastNotifiedAt: string | null; appExists?: boolean;
 }
 export interface AlertCounts { open: number; critical: number; week?: number }
 export interface AlertSettings {
@@ -203,6 +203,7 @@ export interface InstanceBackups {
   lastRun?: { at: string; ok: boolean; keepDays: number; totalBytes: number; items: { name: string; ok: boolean; file?: string; bytes?: number; seconds?: number }[] } | null;
   files?: { db: string; file: string; bytes: number; at: string }[];
   verifications: BackupVerification[];
+  region?: string; state?: string | null; lastOkAt?: string | null;   // unreachable servers
 }
 
 export interface Schedule {
@@ -282,8 +283,6 @@ export const api = {
   billingCancel: () => call<{ ok: true }>('POST', '/api/billing/cancel'),
   billingManage: () => call<{ url: string }>('GET', '/api/billing/manage'),
   setEmail: (email: string, currentPassword: string) => call<{ ok: true }>('POST', '/api/auth/email', { email, currentPassword }),
-  githubAuthorize: () => call<{ url: string }>('POST', '/api/github/authorize'),
-  githubOAuth: (clientId: string, clientSecret: string) => call<{ ok: true; callbackUrl: string }>('PUT', '/api/github/oauth', { clientId, clientSecret }),
   usernameAvailable: (u: string) => call<{ available: boolean; reason?: string }>('GET', `/api/account/username-available?u=${encodeURIComponent(u)}`),
   usernameSuggestion: (email: string) => call<{ username: string | null }>('GET', `/api/account/username-suggestion?email=${encodeURIComponent(email)}`).then((r) => r.username),
   profile: () => call<{ profile: Profile }>('GET', '/api/auth/profile').then((r) => r.profile),
@@ -378,9 +377,6 @@ export const api = {
   refreshCosts: () => call<{ summary: CostSummary; settings: CostSettings; fetched: boolean }>('POST', '/api/costs/refresh'),
   saveCostSettings: (b: { monthlyBudget?: string | number | null; zarRate?: string | number | null; currency?: 'USD' | 'ZAR' }) => call<{ settings: CostSettings }>('PUT', '/api/costs/settings', b),
   github: () => call<GithubStatus>('GET', '/api/github'),
-  githubInstallLink: () => call<{ url: string }>('POST', '/api/github/install'),
-  githubLinkInstallation: (b: { code: string; installationId?: number; state: string }) => call<{ ok: true; account: string }>('POST', '/api/github/installations', b),
-  githubUnlink: (id: number) => call<{ ok: true; note: string }>('DELETE', `/api/github/installations/${id}`),
   appsDomain: () => call<{ appsDomain: { domain: string; zoneId: string } | null }>('GET', '/api/aws-connection/apps-domain').then((r) => r.appsDomain),
   setAppsDomain: (domain: string) => call<{ appsDomain: { domain: string; zoneId: string } }>('PUT', '/api/aws-connection/apps-domain', { domain }).then((r) => r.appsDomain),
   githubManifest: (org?: string) => call<{ action: string; manifest: object }>('POST', '/api/github/manifest', org ? { org } : {}),
