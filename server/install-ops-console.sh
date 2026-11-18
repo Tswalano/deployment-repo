@@ -49,6 +49,10 @@ SQL
   fi
   psql -X -q -h localhost -U postgres -w -d postgres -c "REVOKE CONNECT ON DATABASE opsconsole FROM PUBLIC" -c "GRANT CONNECT ON DATABASE opsconsole TO opsconsole"
   ok "database ready"
+  # the console's own database is in the nightly backups (and their off-site copies) like the apps' databases
+  { sudo cat /opt/deploy-state/backup-extra-dbs 2>/dev/null; echo opsconsole; } | grep -E '^[a-z0-9_]{1,40}$' | sort -u | sudo tee /opt/deploy-state/backup-extra-dbs.tmp >/dev/null
+  sudo install -m 0644 -o ec2-user -g ec2-user /opt/deploy-state/backup-extra-dbs.tmp /opt/deploy-state/backup-extra-dbs && sudo rm -f /opt/deploy-state/backup-extra-dbs.tmp
+  ok "console database in the nightly backups"
 
   log "service"
   sudo install -m 0755 -o root -g root "$ROOT/server/load-app-secrets.sh" /usr/local/bin/load-app-secrets

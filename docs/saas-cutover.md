@@ -148,6 +148,23 @@ customer apps can't set cookies for the console's own domain.
 Customers with DNS elsewhere choose **Domain at another DNS provider**: they add one A record per app, then select
 **Check DNS and enable HTTPS** on the app's page (`OpsConsole-EnableHttps`).
 
+## 12. Off-site backup copies and snapshots (any time)
+
+The connect template creates `ops-console-backups-<account>-<region>` (private, encrypted, versioned; 90-day
+lifecycle) and the `OpsConsoleSnapshots-<region>` role. Workspaces with a stack from an older template update it to the
+latest one (same parameters). For workspace 1:
+
+```bash
+aws cloudformation update-stack --region af-south-1 --stack-name OpsConsoleAccess --template-url "$CONNECT_TEMPLATE_URL" \
+  --capabilities CAPABILITY_NAMED_IAM --parameters ParameterKey=ExternalId,UsePreviousValue=true \
+  ParameterKey=ConsolePrincipal,UsePreviousValue=true ParameterKey=InstallDocuments,UsePreviousValue=true
+# the original server uses lendify-instance-role, not the template's instance profile: let it add copies
+aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-console-backups \
+  --policy-document "$(sed "s/\${ACCOUNT_ID}/$(aws sts get-caller-identity --query Account --output text)/g" infra/iam/instance-ops-console-backups.json)"
+```
+
+Then Backups → **Copy backups to S3** per server, and optionally **Server snapshots**.
+
 ## Rollback
 
 ```bash

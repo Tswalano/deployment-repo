@@ -208,10 +208,14 @@ export interface InstanceBackups {
   instanceId: number; instance: string; ok: boolean; error?: string; location?: string; diskFree?: number;
   timer?: { next: string | null; last: string | null; running: boolean };
   lastRun?: { at: string; ok: boolean; keepDays: number; totalBytes: number; items: { name: string; ok: boolean; file?: string; bytes?: number; seconds?: number }[] } | null;
-  files?: { db: string; file: string; bytes: number; at: string }[];
+  files?: { db: string; file: string; bytes: number; at: string; offsite?: boolean }[];
   verifications: BackupVerification[];
   region?: string; state?: string | null; lastOkAt?: string | null;   // unreachable servers
+  offsite?: { configured: boolean; ok: boolean; at: string; copied: number; pending: number; error: string | null; keepLocalDays: number } | null;
+  copies?: OffsiteCopy[] | null; copiesError?: string | null;
 }
+export interface OffsiteCopy { key: string; db: string; file: string; bytes: number; at: string; storageClass: string }
+export interface SnapshotState { available: boolean; enabled: boolean; retain: number; regions: { region: string; enabled: boolean }[] }
 
 export interface Schedule {
   name: string; group: string; action: 'start' | 'stop' | 'unknown'; instanceIds: string[]; expression: string; timezone: string;
@@ -365,7 +369,12 @@ export const api = {
   uptime: () => call<{ apps: UptimeApp[] }>('GET', '/api/uptime').then((r) => r.apps),
   appUptime: (instanceId: number, project: string) =>
     call<{ summary: UptimeApp; series: UptimePoint[]; incidents: Alert[] }>('GET', `/api/uptime/${instanceId}/${encodeURIComponent(project)}`),
-  backups: (refresh = false) => call<{ instances: InstanceBackups[]; downloads: boolean }>('GET', `/api/backups${refresh ? '?refresh=1' : ''}`),
+  backups: (refresh = false) => call<{ instances: InstanceBackups[]; downloads: boolean; offsite: { bucket: string; region: string; bucketExists: boolean | null } | null }>('GET', `/api/backups${refresh ? '?refresh=1' : ''}`),
+  setOffsite: (instanceId: number, enabled: boolean) => call<{ ok: boolean; offsite: { copied: number; pending: number; error: string | null } | null }>('POST', `/api/backups/${instanceId}/offsite`, { enabled }),
+  downloadCopy: (instanceId: number, key: string) => call<{ url: string; expiresAt: string }>('POST', `/api/backups/${instanceId}/copies/download`, { key }),
+  verifyCopy: (instanceId: number, key: string) => call<{ verification: BackupVerification }>('POST', `/api/backups/${instanceId}/copies/verify`, { key }).then((r) => r.verification),
+  snapshots: () => call<SnapshotState>('GET', '/api/backups/snapshots'),
+  setSnapshots: (enabled: boolean) => call<SnapshotState>('PUT', '/api/backups/snapshots', { enabled }),
   runBackup: (instanceId: number) => call<{ seconds: number }>('POST', `/api/backups/${instanceId}/run`),
   verifyBackup: (instanceId: number, db: string, file: string) =>
     call<{ verification: BackupVerification }>('POST', `/api/backups/${instanceId}/verify`, { db, file }).then((r) => r.verification),

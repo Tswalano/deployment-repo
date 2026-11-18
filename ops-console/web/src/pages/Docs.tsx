@@ -111,7 +111,11 @@ const ARTICLES: Article[] = [
       <H>Alerts</H>
       <P>Alerts cover apps that are down or slow, unreachable servers, disk and memory, expiring certificates, failed deploys, missing or unrestorable backups, stuck database sessions and the AWS budget. Notifications go by email, Slack or Discord (Settings).</P>
       <H>Backups</H>
-      <P>Databases are backed up nightly and kept on the server for 14 days. The newest backup of each database is restore-tested automatically into a temporary copy to confirm it is usable.</P>
+      <P>Databases are backed up nightly. The newest backup of each database is restore-tested automatically into a temporary copy to confirm it is usable.</P>
+      <H>Off-site copies</H>
+      <P>Backups &rarr; <b>Copy backups to S3</b> copies every nightly backup to a private, encrypted bucket in the connected AWS account (<C>ops-console-backups-&lt;account&gt;-&lt;region&gt;</C>, created by the connection stack). Copies are kept 90 days (moved to cheaper storage after 30); servers can add copies but never delete them. Once copied, backups stay on the server for 3 days instead of 14. Older copies can be downloaded or restore-tested from the Backups page.</P>
+      <H>Server snapshots</H>
+      <P>Optional: switch on <b>Server snapshots</b> on the Backups page for nightly snapshots of every server&rsquo;s disks, kept 7 days, to bring back a whole server. AWS bills snapshots separately (changed data only).</P>
     </>) },
   { slug: 'access', group: 'Operate', title: 'Terminal and SSH access', summary: 'Secure access to servers.',
     body: () => (<>

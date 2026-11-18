@@ -662,3 +662,83 @@ test('app addresses: provided by the platform (default), the workspace\'s own Ro
     assert.deepEqual(asked[0], ['ZPLAT', 'shop.acme-ltd.apps.example.test'], "looked up in the platform's zone, with the host account");
 });
 
+
+test("off-site backup copies and server snapshots: the workspace's own bucket, this server's copies only", async () => {
+    const zlib = require('zlib');
+    const { db, withWorkspace } = dist('db');
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+    const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
+    const conn = (await withWorkspace(wsA, () => db().query('SELECT account_id, region, status FROM aws_connections'))).rows[0];
+    assert.equal(conn.status, 'connected');
+    const bucket = `ops-console-backups-${conn.account_id}-${conn.region}`;
+    const iid = 'i-0f0f0f0f0f0f0f0f1';
+    const { rows: [inst] } = await withWorkspace(wsA, () => db().query("INSERT INTO instances (name, aws_instance_id, region) VALUES ('backup-box', $1, 'af-south-1') RETURNING id", [iid]));
+
+    const sent = [], policies = {};
+    let offsite = null, bucketExists = true, snapshotRole = null;
+    const listing = () => zlib.gzipSync(JSON.stringify({
+        status: { at: '2026-11-18T15:30:00Z', ok: true, keep_days: 14, total_bytes: 10, items: [] }, verifications: [], timer: {}, disk_free: 1, location: '/var/backups/app-db',
+        files: [{ db: 'shop', file: 'shop-20261118T153000Z.dump', bytes: 10, mtime: 1763479800, offsite: !!offsite?.configured }], offsite,
+    })).toString('base64');
+    dist('connections').setWorkspaceProviderFactory(() => new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => {
+        if (prop === 'runDocument') {
+            const [, , doc, params] = args;
+            sent.push([doc, params]);
+            if (doc === 'OpsConsole-Backups') return listing();
+            const action = params.action[0];
+            if (action === 'offsite') {
+                offsite = params.bucket[0] ? { configured: true, ok: true, at: '2026-11-18T15:31:00Z', copied: 3, pending: 0, error: null, keep_local_days: 3 } : { configured: false, ok: false, copied: 0, pending: 1 };
+                return JSON.stringify({ ok: true, offsite });
+            }
+            if (action === 'fetch') return JSON.stringify({ ok: true, db: 'shop', file: 'shop-20261101T153000Z.dump', bytes: 9 });
+            if (action === 'verify') return JSON.stringify({ ok: true, tables: 3, rows: 10, live_tables: 3, live_rows: 12, seconds: 1 });
+        }
+        if (prop === 'listBackupCopies') {
+            if (args[1] !== bucket || !bucketExists) return null;
+            return [{ key: `${iid}/shop/shop-20261101T153000Z.dump`, bytes: 9, at: '2026-11-01T15:31:00Z', storageClass: 'STANDARD_IA' },
+                { key: 'i-0aaaaaaaaaaaaaaa9/shop/shop-20261101T153000Z.dump', bytes: 9, at: '2026-11-01T15:31:00Z', storageClass: 'STANDARD' }];   // filtered by prefix in AWS; never shown here anyway
+        }
+        if (prop === 'presignGet') return `https://s3.example/${args[1]}/${args[2]}`;
+        if (prop === 'snapshotPolicy') return policies[args[0]] ?? null;
+        if (prop === 'setSnapshotPolicy') { policies[args[0]] = { id: 'policy-1', enabled: args[1], retain: args[3] }; snapshotRole = args[2]; return; }
+        return null;
+    }) }));
+    const box = (r) => r.json.instances.find((x) => x.instanceId === inst.id);
+
+    // not copying yet: the workspace's bucket is known, this server's copies are listed (and only this server's)
+    let r = await a.get('/api/backups?refresh=1');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.offsite.bucket, bucket);
+    assert.equal(box(r).offsite, null);
+    assert.deepEqual(box(r).copies.map((c) => c.key), [`${iid}/shop/shop-20261101T153000Z.dump`]);
+
+    // the bucket must exist (created by the connect template) before copying starts
+    bucketExists = false;
+    assert.equal((await a.post(`/api/backups/${inst.id}/offsite`, { enabled: true })).status, 409);
+    bucketExists = true;
+    const on = await a.post(`/api/backups/${inst.id}/offsite`, { enabled: true });
+    assert.equal(on.status, 200, JSON.stringify(on.json));
+    assert.deepEqual(sent.at(-1)[1], { action: ['offsite'], bucket: [bucket], region: [conn.region] });
+    assert.equal(box(await a.get('/api/backups?refresh=1')).offsite.configured, true);
+
+    // downloads and restore tests: only this server's copies
+    assert.equal((await a.post(`/api/backups/${inst.id}/copies/download`, { key: 'i-0aaaaaaaaaaaaaaa9/shop/shop-20261101T153000Z.dump' })).status, 400);
+    const dl = await a.post(`/api/backups/${inst.id}/copies/download`, { key: `${iid}/shop/shop-20261101T153000Z.dump` });
+    assert.equal(dl.json.url, `https://s3.example/${bucket}/${iid}/shop/shop-20261101T153000Z.dump`);
+    const v = await a.post(`/api/backups/${inst.id}/copies/verify`, { key: `${iid}/shop/shop-20261101T153000Z.dump` });
+    assert.equal(v.status, 200, JSON.stringify(v.json));
+    assert.equal(v.json.verification.ok, true);
+    assert.deepEqual(sent.slice(-2).map(([, p]) => p.action[0]), ['fetch', 'verify']);
+    assert.equal((await b.post(`/api/backups/${inst.id}/offsite`, { enabled: false })).status, 404, "another workspace's server");
+
+    // nightly snapshots: one policy per region with servers, using the role the template created
+    assert.deepEqual((await a.get('/api/backups/snapshots')).json.enabled, false);
+    const s = await app.request('/api/backups/snapshots', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: a.cookieHeader() }, body: JSON.stringify({ enabled: true }) });
+    assert.equal(s.status, 200);
+    assert.equal((await s.json()).enabled, true);
+    assert.equal(snapshotRole, `arn:aws:iam::${conn.account_id}:role/OpsConsoleSnapshots-${conn.region}`);
+    assert.equal(policies['af-south-1'].retain, 7);
+});
