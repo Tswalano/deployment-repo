@@ -110,14 +110,17 @@ connect.post('/servers', ...admin, rateLimit(20, 10 * 60_000, (c) => `addserver:
         const steps: string[] = [];
         if (!s.managedTag) { await aws().tagManaged!(conn.region, id, s.securityGroups); steps.push('tagged ops-console=managed'); }
         const profile = `OpsConsoleInstance-${conn.region}`;
+        const attachedWhileRunning = !s.instanceProfile && s.state === 'running';
         if (!s.instanceProfile) { await aws().attachInstanceProfile!(conn.region, id, profile); steps.push(`attached ${profile}`); }
         const name = String(b.name ?? '').trim().slice(0, 60) || s.name || id;
         const { rows: [inst] } = await db().query(
-            `INSERT INTO instances (name, aws_instance_id, region, environment) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (workspace_id, aws_instance_id) DO UPDATE SET name = EXCLUDED.name RETURNING id, name`, [name, id, conn.region, environment]);
+            `INSERT INTO instances (name, aws_instance_id, region, environment, profile_attached_at) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (workspace_id, aws_instance_id) DO UPDATE SET name = EXCLUDED.name, profile_attached_at = coalesce(EXCLUDED.profile_attached_at, instances.profile_attached_at)
+             RETURNING id, name`, [name, id, conn.region, environment, attachedWhileRunning ? new Date().toISOString() : null]);
         await audit({ id: user.id, username: user.username }, 'instance.add', `${name} (${id})`, { region: conn.region, steps }, c.get('ip'));
-        return c.json({ instance: inst, steps,
-            note: s.instanceProfile && s.instanceProfile !== profile ? `This server already has the instance profile ${s.instanceProfile}: give it AmazonSSMManagedInstanceCore (or switch it to ${profile}) so the console can reach it.` : null });
+        return c.json({ instance: inst, steps, rebootToConnect: attachedWhileRunning,
+            note: attachedWhileRunning && !s.ssmOnline ? 'The server was already running, so it only picks up its new access after a restart: reboot it once (about two minutes) before preparing it.'
+                : s.instanceProfile && s.instanceProfile !== profile ? `This server already has the instance profile ${s.instanceProfile}: give it AmazonSSMManagedInstanceCore (or switch it to ${profile}) so the console can reach it.` : null });
     } catch (err) { return fail(c, err); }
 });
 

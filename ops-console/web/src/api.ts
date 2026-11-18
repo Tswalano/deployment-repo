@@ -82,7 +82,9 @@ export interface Snapshot {
 export interface Instance {
   id: number; name: string; awsInstanceId: string; region: string; environment: string;
   createdAt: string; lastFetchedAt: string | null; lastOkAt: string | null; lastError: string | null;
-  ec2State?: string | null; ec2StateAt?: string | null; isConsoleHost?: boolean;
+  ec2State?: string | null; ec2StateAt?: string | null;
+  /** Given the console's instance profile while running and not reached since: a reboot connects it. */
+  rebootToConnect?: boolean; isConsoleHost?: boolean;
   status: Snapshot | null;
 }
 export interface Sample { instanceId?: number; at: string; memPct: number | null; diskPct: number | null; load1: number | null; swapPct: number | null; appsHealthy: number | null; appsTotal: number | null }
@@ -383,7 +385,7 @@ export const api = {
   awsVerify: (roleArn: string) => call<{ connection: AwsConnection }>('POST', '/api/aws-connection/verify', { roleArn }),
   awsDisconnect: () => call<{ ok: true; note: string }>('POST', '/api/aws-connection/disconnect'),
   awsServers: () => call<{ region: string; servers: AwsServer[] }>('GET', '/api/aws-connection/servers'),
-  awsAddServer: (b: { awsInstanceId: string; name?: string; environment: string }) => call<{ instance: { id: number; name: string }; steps: string[]; note: string | null }>('POST', '/api/aws-connection/servers', b),
+  awsAddServer: (b: { awsInstanceId: string; name?: string; environment: string }) => call<{ instance: { id: number; name: string }; steps: string[]; note: string | null; rebootToConnect?: boolean }>('POST', '/api/aws-connection/servers', b),
   failures: () => call<{ deploys: FailedDeploy[]; creations: FailedCreation[] }>('GET', '/api/failures'),
   dismissFailure: (b: { kind: 'deploy'; instanceId: number; project: string; at: string; note?: string } | { kind: 'create'; creationId: number; note?: string }) =>
     call<{ ok: true }>('POST', '/api/failures/dismiss', b),

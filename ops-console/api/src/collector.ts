@@ -26,6 +26,7 @@ export interface InstanceRow {
     last_error: string | null;
     ec2_state?: string | null;
     ec2_state_at?: string | null;
+    profile_attached_at?: string | null;
 }
 
 /** Normalised snapshot, the same shape whatever the instance reported ("agent" or "basic"). */

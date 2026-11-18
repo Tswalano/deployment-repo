@@ -13,7 +13,7 @@ const WHAT = [
 ] as const;
 
 /** A customer server that hasn't been prepared yet (no status agent): install what the console needs. */
-export function PrepareServer({ instanceId, onDone }: { instanceId: number; onDone: () => void }) {
+export function PrepareServer({ instanceId, onDone, rebootToConnect = false }: { instanceId: number; onDone: () => void; rebootToConnect?: boolean }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' && !user.isDemo;
   const [job, setJob] = useState<Deployment | null>(null);
@@ -21,6 +21,9 @@ export function PrepareServer({ instanceId, onDone }: { instanceId: number; onDo
   const [openWeb, setOpenWeb] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needReboot, setNeedReboot] = useState(rebootToConnect);
+  const [rebooting, setRebooting] = useState<'no' | 'busy' | 'done'>('no');
+  const canReboot = !!user && !user.isDemo && (user.role === 'admin' || user.role === 'deployer');
 
   const load = useCallback(() => api.prepareStatus(instanceId).then((r) => { setJob(r.deployment); setConfigured(r.configured); }).catch(() => undefined), [instanceId]);
   useEffect(() => { void load(); }, [load]);
@@ -64,6 +67,22 @@ export function PrepareServer({ instanceId, onDone }: { instanceId: number; onDo
       ) : null}
       {running && <div className="h-1.5 overflow-hidden rounded-full bg-ink-700"><div className="h-full w-1/3 animate-pulse rounded-full bg-indigo-500 motion-reduce:animate-none" /></div>}
       {!configured && <Alert tone="warn">Server preparation isn't set up on this console yet (the server release bundle hasn't been published).</Alert>}
+      {needReboot && !running && job?.status !== 'success' && (
+        <div className="rounded-lg border border-amber-500/30 p-4 text-sm">
+          <p className="font-medium text-slate-200">{rebooting === 'done' ? 'Rebooting: the server connects in about two minutes' : 'Reboot the server once to connect it'}</p>
+          <p className="mt-1 text-slate-400">
+            {rebooting === 'done'
+              ? 'Then select Prepare server below.'
+              : 'It was already running when the console gave it access (its instance profile). AWS Session Manager picks that up when the server starts, so a reboot connects it in about two minutes. Without a reboot it connects by itself within about 30 minutes.'}
+          </p>
+          {canReboot && rebooting !== 'done' && (
+            <button className="btn-primary mt-3" disabled={rebooting === 'busy'} onClick={async () => {
+              setRebooting('busy'); setError(null);
+              try { await api.power(instanceId, 'reboot', {}); setRebooting('done'); } catch (e) { setError(err(e)); setRebooting('no'); }
+            }}>{rebooting === 'busy' ? 'Rebooting…' : 'Reboot now'}</button>
+          )}
+        </div>
+      )}
       {error && <Alert>{error}</Alert>}
       {isAdmin && !running && job?.status !== 'success' && configured && (
         <div className="flex flex-wrap items-center gap-4">
@@ -73,7 +92,13 @@ export function PrepareServer({ instanceId, onDone }: { instanceId: number; onDo
           </label>
           <button className="btn-primary ml-auto" disabled={busy} onClick={async () => {
             setBusy(true); setError(null);
-            try { const r = await api.prepareServer(instanceId, openWeb); setJob(r.deployment); } catch (e) { setError(err(e)); } finally { setBusy(false); }
+            try { const r = await api.prepareServer(instanceId, openWeb); setJob(r.deployment); setNeedReboot(false); }
+            catch (e) {
+              if (e instanceof ApiError && e.code === 'reboot_to_connect') {
+                if (rebooting === 'done') setError('The server is still connecting after the reboot. Try again in a minute.'); else setNeedReboot(true);
+              } else setError(err(e));
+            }
+            finally { setBusy(false); }
           }}>{busy ? 'Starting…' : job?.status === 'failed' ? 'Run again' : 'Prepare server'}</button>
         </div>
       )}

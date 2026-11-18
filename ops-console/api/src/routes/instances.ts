@@ -19,6 +19,8 @@ function view(r: InstanceRow) {
         id: r.id, name: r.name, awsInstanceId: r.aws_instance_id, region: r.region, environment: r.environment,
         createdAt: r.created_at, lastFetchedAt: r.last_fetched_at, lastOkAt: r.last_ok_at, lastError: r.last_error,
         ec2State: r.ec2_state ?? null, ec2StateAt: r.ec2_state_at ?? null,
+        // given the console's instance profile while running, and not reached since: a reboot connects it
+        rebootToConnect: !!r.profile_attached_at && (!r.last_ok_at || r.last_ok_at < r.profile_attached_at),
         status: r.last_status,
     };
 }

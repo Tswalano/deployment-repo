@@ -270,3 +270,29 @@ test('failed deployments: listed until fixed, retry-able data, dismiss hides it 
     assert.ok((await a.get('/api/audit')).json.entries.some((e) => e.action === 'failure.dismiss_deploy'));
     fake.events = null;
 });
+
+test("unreachable: no alert for a server that has never reported in (just added, waiting to connect); a server that has still alerts", async () => {
+    const { evaluateInstance } = dist('alerts');
+    const { db } = dist('db');
+    const open = async () => (await db().query("SELECT count(*)::int AS n FROM alerts WHERE key = $1 AND resolved_at IS NULL", [`instance_unreachable:${instId}`])).rows[0].n;
+    const realNow = Date.now;
+    try {
+        const never = { ...inst, last_error: "SSM can't reach the instance", last_ok_at: null, ec2_state: 'running' };
+        await evaluateInstance(never);
+        const t = realNow();
+        Date.now = () => t + 11 * 60_000;
+        await evaluateInstance(never);
+        assert.equal(await open(), 0, 'never reached: not an outage');
+
+        Date.now = realNow;
+        const lost = { ...inst, last_error: "SSM can't reach the instance", last_ok_at: new Date(t - 3600e3).toISOString(), ec2_state: 'running' };
+        await evaluateInstance(lost);
+        Date.now = () => t + 11 * 60_000;
+        await evaluateInstance(lost);
+        assert.equal(await open(), 1, 'reached before, unreachable for 10+ minutes: alert');
+    } finally {
+        Date.now = realNow;
+        await evaluateInstance(inst);   // back to normal: resolved
+    }
+    assert.equal(await open(), 0);
+});
