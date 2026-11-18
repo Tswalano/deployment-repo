@@ -958,3 +958,21 @@ test("emails are logged: a refused invitation email is reported to the admin and
     assert.match(rows[0].error, /ses:SendEmail/);
     await asSystem(() => db().query('DELETE FROM workspace_invites WHERE lower(email) = $1', [inviteTo]));
 });
+
+test("read-only demo in multi-company mode: one click, the demo account's workspace, nothing can be changed or seen that's private", async () => {
+    const { db, asSystem } = dist('db');
+    await asSystem(() => db().query(
+        `INSERT INTO users (username, display_name, role, is_demo) SELECT 'demo', 'Demo', 'viewer', true WHERE NOT EXISTS (SELECT 1 FROM users WHERE lower(username) = 'demo')`));
+    const { rows: [demo] } = await asSystem(() => db().query("UPDATE users SET is_demo = true, disabled = false WHERE lower(username) = 'demo' RETURNING id"));
+    await asSystem(() => db().query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (1, $1, 'viewer') ON CONFLICT DO NOTHING", [demo.id]));
+    assert.equal((await client().get('/api/account/config')).json.demo, true);
+    const d = client();
+    assert.equal((await d.post('/api/auth/demo')).status, 200);
+    const me = (await d.get('/api/auth/me')).json.user;
+    assert.deepEqual([me.isDemo, me.role, me.workspaceId, me.platformAdmin], [true, 'viewer', 1, false]);
+    assert.equal((await d.get('/api/instances')).status, 200, 'everything is visible');
+    assert.equal((await d.get('/api/team')).status, 403, "team members (emails) aren't");
+    assert.equal((await d.post('/api/team/invites', { email: 'x@example.com', role: 'viewer' })).status, 403, 'nothing can be changed');
+    assert.equal((await d.get('/api/platform/overview')).status, 404);
+    assert.equal((await d.post('/api/auth/login', { username: 'demo', password: 'anything-at-all' })).status, 401, 'no password sign-in for the demo account');
+});

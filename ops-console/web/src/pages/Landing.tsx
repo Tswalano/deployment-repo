@@ -116,7 +116,8 @@ export function Landing() {
             <p className="mt-5 max-w-xl text-lg text-slate-400">Connect an AWS account, add a server and choose a GitHub repository. {site.productName} deploys, monitors, backs up and secures the app, while servers and data stay in the organisation's own account.</p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link to="/signup" className="btn-primary px-5 py-2.5 text-base">Start the {site.trialDays}-day free trial</Link>
-              <a href="#how" className="btn-secondary px-5 py-2.5 text-base">See how it works</a>
+              {site.demo !== false && <Link to="/demo" className="btn-secondary px-5 py-2.5 text-base">Try the live demo</Link>}
+              <a href="#how" className="btn-ghost px-5 py-2.5 text-base">See how it works</a>
             </div>
             <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-slate-500">
               {['No card for the trial', 'Data stays in the AWS account', 'Cancel any time'].map((t) => <li key={t} className="flex items-center gap-1.5"><I d={ICON.check} className="h-4 w-4 text-emerald-300" />{t}</li>)}
