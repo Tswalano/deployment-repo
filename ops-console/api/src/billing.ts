@@ -26,6 +26,7 @@ export interface WorkspaceBilling {
     id: number; name: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; trial_ends_at: string | null; billing_status: string;
     paystack_customer: string | null; subscription_code: string | null; subscription_token: string | null;
     current_period_end: string | null; grace_until: string | null; billing_email: string | null;
+    suspended_at?: string | null; suspended_reason?: string | null; complimentary?: boolean; comp_until?: string | null;
 }
 
 export const billingEnabled = () => config.multiTenant && !!config.paystackSecret;
@@ -40,6 +41,10 @@ async function ws(id: number): Promise<WorkspaceBilling> {
 export function standing(w: WorkspaceBilling, now = Date.now()): { active: boolean; reason: string | null; limits: Limits } {
     if (!config.multiTenant || w.plan === 'internal') return { active: true, reason: null, limits: UNLIMITED };
     const t = (iso: string | null) => (iso ? Date.parse(iso) : 0);
+    const planLimits = w.plan === 'trial' ? PLANS.pro.limits : PLANS[w.plan].limits;
+    if (w.suspended_at) return { active: false, reason: `This workspace is suspended${w.suspended_reason ? ` (${w.suspended_reason})` : ''}. Contact support.`, limits: planLimits };
+    // a plan given by the platform: no payment needed while it lasts
+    if (w.complimentary && w.plan !== 'trial' && (!w.comp_until || t(w.comp_until) > now)) return { active: true, reason: null, limits: planLimits };
     if (w.plan === 'trial') {
         return t(w.trial_ends_at) > now ? { active: true, reason: null, limits: PLANS.pro.limits }
             : { active: false, reason: 'Your free trial has ended. Choose a plan to keep making changes.', limits: PLANS.pro.limits };

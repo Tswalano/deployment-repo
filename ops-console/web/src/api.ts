@@ -8,12 +8,15 @@ export interface Me {
   isDemo: boolean;
   email: string | null;
   emailVerified: boolean;
+  /** Runs the platform (multi-customer): may open the platform owner portal. */
+  platformAdmin?: boolean;
   workspaceId: number | null;
 }
 export interface Profile { username: string; displayName: string; email: string | null; emailVerifiedAt: string | null; createdAt: string; lastLoginAt: string | null; passwordChangedAt: string | null; isDemo: boolean; role: Role; workspaces: { name: string; role: Role; current: boolean }[] }
 export interface BillingView {
   enabled: boolean; plan: 'trial' | 'starter' | 'pro' | 'internal'; status: string; trialEndsAt: string | null; currentPeriodEnd: string | null; graceUntil: string | null;
   active: boolean; reason: string | null; hasSubscription: boolean; billingEmail: string | null;
+  complimentary?: boolean; compUntil?: string | null; suspended?: boolean;
   limits: { servers: number | null; apps: number | null; members: number | null; approvals: boolean }; usage: { servers: number; apps: number; members: number };
   plans: { id: 'starter' | 'pro'; name: string; price: number; limits: { servers: number; apps: number; members: number; approvals: boolean } }[];
 }
@@ -114,6 +117,31 @@ export interface AppView {
 export interface GithubStatus {
   connected: boolean; webhookUrl?: string; app?: { slug: string; owner?: string; htmlUrl: string } | null;
   installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
+}
+// ------------------------------------------------------------------ platform owner portal
+export interface PlatformWorkspace {
+  id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; status: string; active: boolean; createdAt: string;
+  trialEndsAt: string | null; currentPeriodEnd: string | null; billingEmail: string | null; hasSubscription: boolean;
+  suspendedAt: string | null; suspendedReason: string | null; complimentary: boolean; compUntil: string | null; monthly: number;
+  members: number; servers: number; apps: number; serversDown: number; openAlerts: number; lastActivity: string | null;
+  owner: { email: string | null; name: string | null }; aws: string | null;
+}
+export interface PlatformOverview {
+  workspaces: number; signups30d: number; users: number; mrr: number; currency: string; servers: number; serversDown: number; apps: number; openAlerts: number;
+  byStatus: { trial: number; paying: number; complimentary: number; paymentFailed: number; ended: number; cancelling: number; suspended: number };
+}
+export interface PlatformDetail {
+  workspace: PlatformWorkspace;
+  members: { id: number; username: string; name: string | null; email: string | null; verified: boolean; role: Role; lastLogin: string | null; disabled: boolean }[];
+  servers: { id: number; name: string; region: string; state: string; lastOkAt: string | null; error: string | null; apps: { project: string; healthy: boolean }[] }[];
+  aws: { status: string; accountId: string | null; region: string } | null; github: { slug: string; owner: string } | null;
+  invoices: { count: number; total: number }; activity: { at: string; username: string | null; action: string; target: string | null }[];
+}
+export interface PlatformHealth {
+  servers: { id: number; name: string; region: string; state: string; lastOkAt: string | null; error: string | null; workspaceId: number; workspace: string }[];
+  deploys: { id: number; project: string; action: string; at: string | null; server: string; workspaceId: number; workspace: string }[];
+  backups: { id: number; name: string; workspaceId: number; workspace: string; at: string | null }[];
+  alerts: { id: number; title: string; openedAt: string; workspaceId: number; workspace: string }[];
 }
 export type AddressMode = 'platform' | 'route53' | 'external';
 export interface AppAddresses {
@@ -393,6 +421,16 @@ export const api = {
   refreshCosts: () => call<{ summary: CostSummary; settings: CostSettings; fetched: boolean }>('POST', '/api/costs/refresh'),
   saveCostSettings: (b: { monthlyBudget?: string | number | null; zarRate?: string | number | null; currency?: 'USD' | 'ZAR' }) => call<{ settings: CostSettings }>('PUT', '/api/costs/settings', b),
   github: () => call<GithubStatus>('GET', '/api/github'),
+  platformOverview: () => call<PlatformOverview>('GET', '/api/platform/overview'),
+  platformWorkspaces: () => call<{ workspaces: PlatformWorkspace[] }>('GET', '/api/platform/workspaces').then((r) => r.workspaces),
+  platformWorkspace: (id: number) => call<PlatformDetail>('GET', `/api/platform/workspaces/${id}`),
+  platformHealth: () => call<PlatformHealth>('GET', '/api/platform/health'),
+  platformAudit: () => call<{ entries: { at: string; username: string | null; action: string; target: string | null; detail: Record<string, unknown> }[] }>('GET', '/api/platform/audit').then((r) => r.entries),
+  platformSuspend: (id: number, reason: string) => call<{ ok: true }>('POST', `/api/platform/workspaces/${id}/suspend`, { reason }),
+  platformReactivate: (id: number) => call<{ ok: true }>('POST', `/api/platform/workspaces/${id}/reactivate`),
+  platformExtendTrial: (id: number, days: number) => call<{ ok: true; trialEndsAt: string }>('POST', `/api/platform/workspaces/${id}/trial`, { days }),
+  platformComplimentary: (id: number, plan: 'starter' | 'pro' | null, until?: string) => call<{ ok: true }>('POST', `/api/platform/workspaces/${id}/complimentary`, { plan, until }),
+  platformChangeEmail: (userId: number, email: string) => call<{ ok: true }>('PUT', `/api/platform/users/${userId}/email`, { email }),
   appAddresses: () => call<AppAddresses>('GET', '/api/aws-connection/apps-domain'),
   setAppAddresses: (b: { mode: AddressMode; domain?: string }) => call<AppAddresses>('PUT', '/api/aws-connection/apps-domain', b),
   appAddress: (id: number, project: string) => call<{ address: AppAddress | null }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/address`).then((r) => r.address),

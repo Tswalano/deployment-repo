@@ -24,6 +24,7 @@ import { config } from './config';
 import access, { myKeys } from './routes/access';
 import users from './routes/users';
 import { account, teamRoutes, workspaces } from './routes/accounts';
+import platformRoutes from './routes/platform';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
@@ -66,6 +67,7 @@ export function createApp() {
     app.route('/api/failures', failures);
     app.route('/api/aws-connection', connect);
     app.route('/api/billing', billingRoutes);
+    app.route('/api/platform', platformRoutes);
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);
     app.route('/api/backups', backups);
