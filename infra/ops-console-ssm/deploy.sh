@@ -108,3 +108,7 @@ PREPARE_PARAMS='{
   "sha256":    {"type": "String", "allowedPattern": "^[0-9a-f]{64}$"}
 }'
 upsert OpsConsole-PrepareServer prepare-server.sh "Ops Console: install what the console needs on a fresh Amazon Linux 2023 server (safe to re-run)" 1800 "$PREPARE_PARAMS"
+HTTPS_PARAMS='{
+  "project": {"type": "String", "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"}
+}'
+upsert OpsConsole-EnableHttps enable-https.sh "Ops Console: issue the HTTPS certificate of one console-created app once its domain points at this server" 300 "$HTTPS_PARAMS"

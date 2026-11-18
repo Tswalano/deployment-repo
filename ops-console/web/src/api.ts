@@ -115,9 +115,16 @@ export interface GithubStatus {
   connected: boolean; webhookUrl?: string; app?: { slug: string; owner?: string; htmlUrl: string } | null;
   installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
 }
+export type AddressMode = 'platform' | 'route53' | 'external';
+export interface AppAddresses {
+  appsDomain: { mode?: AddressMode; domain?: string; zoneId?: string } | null;
+  current: { kind: 'workspace' | 'platform' | 'external'; base: string } | null;
+  platform?: { base: string | null } | null;
+}
+export interface AppAddress { domain: string; kind: string | null; tls: boolean; expected: string | null; resolves: string[] }
 export interface Detection { found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
 export interface NewAppCheck {
-  project: { ok: boolean; reason?: string }; domain: { status: 'free' | 'ours' | 'taken' | 'invalid'; name: string; reason?: string };
+  project: { ok: boolean; reason?: string }; domain: { status: 'free' | 'ours' | 'taken' | 'invalid' | 'external'; name: string; reason?: string };
   memoryMb: number | null; memoryWarning: string | null; publicIp: string | null; appsDomain: string;
 }
 export interface NewAppBody {
@@ -377,8 +384,10 @@ export const api = {
   refreshCosts: () => call<{ summary: CostSummary; settings: CostSettings; fetched: boolean }>('POST', '/api/costs/refresh'),
   saveCostSettings: (b: { monthlyBudget?: string | number | null; zarRate?: string | number | null; currency?: 'USD' | 'ZAR' }) => call<{ settings: CostSettings }>('PUT', '/api/costs/settings', b),
   github: () => call<GithubStatus>('GET', '/api/github'),
-  appsDomain: () => call<{ appsDomain: { domain: string; zoneId: string } | null }>('GET', '/api/aws-connection/apps-domain').then((r) => r.appsDomain),
-  setAppsDomain: (domain: string) => call<{ appsDomain: { domain: string; zoneId: string } }>('PUT', '/api/aws-connection/apps-domain', { domain }).then((r) => r.appsDomain),
+  appAddresses: () => call<AppAddresses>('GET', '/api/aws-connection/apps-domain'),
+  setAppAddresses: (b: { mode: AddressMode; domain?: string }) => call<AppAddresses>('PUT', '/api/aws-connection/apps-domain', b),
+  appAddress: (id: number, project: string) => call<{ address: AppAddress | null }>('GET', `/api/instances/${id}/apps/${encodeURIComponent(project)}/address`).then((r) => r.address),
+  enableHttps: (id: number, project: string) => call<{ ok: boolean; tls: boolean; reason: string }>('POST', `/api/instances/${id}/apps/${encodeURIComponent(project)}/https`),
   githubManifest: (org?: string) => call<{ action: string; manifest: object }>('POST', '/api/github/manifest', org ? { org } : {}),
   githubExchange: (code: string, state: string) => call<{ connected: boolean; installUrl: string }>('POST', '/api/github/exchange', { code, state }),
   githubDisconnect: () => call<{ ok: boolean; deleteAppUrl: string | null }>('DELETE', '/api/github'),

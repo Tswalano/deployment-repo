@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, AppDetailData, AppView, DbPoint, Deployment, LogsResult } from '../api';
+import { api, ApiError, AppAddress, AppDetailData, AppView, DbPoint, Deployment, LogsResult } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, bytes, Dot, dur, Kpi, PageHeader, seriesOf, Skeleton, Sparkline } from '../components/ui';
 import { appTone } from '../health';
@@ -194,6 +194,53 @@ function OverviewTab({ view, detail }: { view: AppView; detail: AppDetailData | 
   );
 }
 
+/** Shown while an app the console created has no HTTPS yet (usually: DNS at another provider, record not added yet). */
+function AddressPanel({ instanceId, project, canOperate }: { instanceId: number; project: string; canOperate: boolean }) {
+  const [a, setA] = useState<AppAddress | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const load = () => api.appAddress(instanceId, project).then(setA).catch(() => undefined);
+  useEffect(() => { void load(); }, [instanceId, project]);   // eslint-disable-line react-hooks/exhaustive-deps
+  if (!a || (a.tls && !msg)) return null;
+  const pointsHere = !!a.expected && a.resolves.length > 0 && a.resolves.every((x) => x === a.expected);
+  return (
+    <section className="card mb-5 space-y-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className="font-medium text-slate-100">Address</h2>
+        <span className="flex items-center gap-2 text-sm text-slate-300">
+          <span className={`h-2 w-2 rounded-full ${a.tls ? 'bg-emerald-400' : pointsHere ? 'bg-amber-400' : 'bg-rose-400'}`} />
+          {a.tls ? 'HTTPS enabled' : pointsHere ? 'DNS ready; HTTPS not enabled yet' : 'Waiting for DNS'}
+        </span>
+      </div>
+      {!a.tls && (
+        <>
+          <p className="text-sm text-slate-400">
+            {pointsHere ? <>The name now points at this server. Enable HTTPS to get the certificate.</>
+              : <>At the domain&rsquo;s DNS provider, add this record. Changes usually take a few minutes{a.resolves.length ? <> (it currently points at <span className="num">{a.resolves.join(', ')}</span>)</> : null}.</>}
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-ink-700">
+            <table className="w-full text-sm">
+              <thead className="bg-ink-900 text-left text-xs text-slate-500"><tr><th className="px-4 py-2 font-medium">Type</th><th className="px-4 py-2 font-medium">Name</th><th className="px-4 py-2 font-medium">Value</th><th className="px-4 py-2 font-medium">TTL</th></tr></thead>
+              <tbody><tr className="num text-slate-200"><td className="px-4 py-2">A</td><td className="px-4 py-2">{a.domain}</td><td className="px-4 py-2">{a.expected ?? 'server public IP'}</td><td className="px-4 py-2">300</td></tr></tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+      {!a.tls && canOperate && (
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-primary" disabled={busy} onClick={async () => {
+            setBusy(true); setMsg(null);
+            try { const r = await api.enableHttps(instanceId, project); setMsg({ tone: r.tls ? 'ok' : 'bad', text: r.reason }); await load(); }
+            catch (e) { setMsg({ tone: 'bad', text: e instanceof ApiError ? e.message : 'Something went wrong.' }); } finally { setBusy(false); }
+          }}>{busy ? 'Checking DNS and requesting the certificate…' : 'Check DNS and enable HTTPS'}</button>
+          <button className="btn-ghost" disabled={busy} onClick={() => void load()}>Refresh</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function AppDetail() {
   const params = useParams();
   const { user } = useAuth();
@@ -289,6 +336,7 @@ export function AppDetail() {
         ))}
       </nav>
 
+      {tab === 'overview' && <AddressPanel instanceId={instanceId} project={project} canOperate={op} />}
       {tab === 'overview' && <OverviewTab view={data} detail={detail} />}
       {tab === 'deploy' && <div className="mb-5"><RepoCard view={data} isAdmin={user?.role === 'admin' && !user.isDemo} onChange={async () => { await reload(); }} /></div>}
       {tab === 'environment' && op && <div className="hidden md:block"><EnvTab instanceId={instance.id} project={app.project} isAdmin={user?.role === 'admin' && !user.isDemo} /></div>}

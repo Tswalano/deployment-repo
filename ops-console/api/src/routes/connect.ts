@@ -7,7 +7,7 @@ import { config } from '../config';
 import { connection, connectionView, consolePrincipal, disconnect, ensureConnection, REGION_RE, STACK_NAME, verifyConnection } from '../connections';
 import { db } from '../db';
 import { DeployError } from '../deploys';
-import { workspaceAppsDomain } from '../newapp';
+import { addressTarget, AppsDomain, platformBase, platformDomainAvailable, workspaceAppsDomain } from '../newapp';
 import { checkLimit } from '../billing';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
 
@@ -121,22 +121,38 @@ connect.post('/servers', ...admin, rateLimit(20, 10 * 60_000, (c) => `addserver:
     } catch (err) { return fail(c, err); }
 });
 
-// ------------------------------------------------------------------ the workspace's apps domain (Route 53 in its account)
-connect.get('/apps-domain', requireRole('viewer'), async (c) => c.json({ appsDomain: await workspaceAppsDomain() }));
+// ------------------------------------------------------------------ how the workspace's apps get addresses (Settings → App addresses)
+connect.get('/apps-domain', requireRole('viewer'), async (c) => {
+    const t = await addressTarget();
+    return c.json({ appsDomain: await workspaceAppsDomain(), current: t ? { kind: t.kind, base: t.base } : null,
+        platform: platformDomainAvailable() ? { base: await platformBase() } : null });
+});
 connect.put('/apps-domain', ...admin, async (c) => {
     const b = await c.req.json().catch(() => ({}));
-    const domain = String(b.domain ?? '').trim().toLowerCase().replace(/\.$/, '');
-    if (!/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(domain)) return c.json({ error: 'Enter a domain like acme.com or apps.acme.com.' }, 400);
-    const conn = await connection();
-    if (conn?.status !== 'connected') return c.json({ error: 'Connect your AWS account first.' }, 409);
-    try {
-        const zoneId = await aws().hostedZoneId!(domain);
-        if (!zoneId) return c.json({ error: `There's no Route 53 hosted zone for ${domain} in your AWS account. Create one (and point the domain's name servers at it), or use a domain that has one.` }, 409);
+    const mode = b.mode === 'platform' || b.mode === 'external' ? b.mode : 'route53';
+    const user = c.get('user')!;
+    const save = async (value: AppsDomain) => {
         await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('apps_domain', $1, $2)
                           ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
-            [JSON.stringify({ domain, zoneId }), c.get('user')!.username]);
-        await audit({ id: c.get('user')!.id, username: c.get('user')!.username }, 'apps.domain', domain, { zoneId }, c.get('ip'));
-        return c.json({ appsDomain: { domain, zoneId } });
+            [JSON.stringify(value), user.username]);
+        await audit({ id: user.id, username: user.username }, 'apps.domain', 'domain' in value ? value.domain : 'platform addresses', { mode }, c.get('ip'));
+        const t = await addressTarget();
+        return c.json({ appsDomain: value, current: t ? { kind: t.kind, base: t.base } : null });
+    };
+    if (mode === 'platform') {
+        if (!platformDomainAvailable()) return c.json({ error: 'Provided addresses are not available on this platform.' }, 409);
+        return save({ mode: 'platform' });
+    }
+    const domain = String(b.domain ?? '').trim().toLowerCase().replace(/\.$/, '');
+    if (!/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(domain)) return c.json({ error: 'Enter a domain like acme.com or apps.acme.com.' }, 400);
+    if (config.platformAppsDomain && (domain === config.platformAppsDomain || domain.endsWith(`.${config.platformAppsDomain}`))) return c.json({ error: 'That domain belongs to the platform.' }, 400);
+    if (mode === 'external') return save({ mode: 'external', domain });
+    const conn = await connection();
+    if (conn?.status !== 'connected') return c.json({ error: 'Connect the AWS account first.' }, 409);
+    try {
+        const zoneId = await aws().hostedZoneId!(domain);
+        if (!zoneId) return c.json({ error: `There's no Route 53 hosted zone for ${domain} in the connected AWS account. Create one (and point the domain's name servers at it), or choose "Another DNS provider".` }, 409);
+        return save({ mode: 'route53', domain, zoneId });
     } catch (err) { return fail(c, err); }
 });
 

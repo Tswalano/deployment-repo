@@ -135,8 +135,8 @@ export function NewApp() {
   if (!inst) return <Skeleton className="h-64" />;
 
   const step1Ok = !!repo && !!branch && !!det?.found && !!start && (!det?.frontend || frontendAck);
-  const step2Ok = !!chk && chk.project.ok && (chk.domain.status === 'free' || chk.domain.status === 'ours') && (chk.memoryMb == null || chk.memoryMb >= 120 || confirmLow);
-  const domain = chk?.domain.name ?? `${subdomain}.glenify.studio`;
+  const step2Ok = !!chk && chk.project.ok && (chk.domain.status === 'free' || chk.domain.status === 'ours' || chk.domain.status === 'external') && (chk.memoryMb == null || chk.memoryMb >= 120 || confirmLow);
+  const domain = chk?.domain.name ?? `${subdomain}.${chk?.appsDomain ?? '…'}`;
   const scripts = det?.scripts ?? [];
 
   async function create() {
@@ -218,12 +218,12 @@ export function NewApp() {
               <Field label="App name" hint={chk && !chk.project.ok ? <span className="text-rose-300">{chk.project.reason}</span> : 'Used for the service, folder and database.'}>
                 <input className="input font-mono" value={project} onChange={(e) => setProject(slug(e.target.value))} maxLength={31} />
               </Field>
-              <Field label="Address" hint={chk ? <span className={chk.domain.status === 'free' || chk.domain.status === 'ours' ? 'text-emerald-300' : 'text-rose-300'}>
-                {chk.domain.status === 'free' ? `${chk.domain.name} is available; DNS is set up automatically.` : chk.domain.status === 'ours' ? `${chk.domain.name} already points at this instance.` : chk.domain.reason}
+              <Field label="Address" hint={chk ? <span className={chk.domain.status === 'free' || chk.domain.status === 'ours' ? 'text-emerald-300' : chk.domain.status === 'external' ? 'text-slate-400' : 'text-rose-300'}>
+                {chk.domain.status === 'free' ? `${chk.domain.name} is available; DNS is set up automatically.` : chk.domain.status === 'ours' ? `${chk.domain.name} already points at this server.` : chk.domain.reason}
               </span> : 'Checking…'}>
                 <div className="flex items-center gap-2">
                   <input className="input font-mono" value={subdomain} onChange={(e) => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} maxLength={63} />
-                  <span className="shrink-0 text-sm text-slate-400">.{chk?.appsDomain ?? 'glenify.studio'}</span>
+                  <span className="shrink-0 text-sm text-slate-400">.{chk?.appsDomain ?? '…'}</span>
                 </div>
               </Field>
             </div>

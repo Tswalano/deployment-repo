@@ -52,6 +52,9 @@ export const config = {
     legalEntity: process.env.LEGAL_ENTITY || '',
     /** Support and privacy contact shown in the footer and legal pages ('' hides it). */
     supportEmail: process.env.SUPPORT_EMAIL || '',
+    /** Optional: a domain the platform provides app addresses under (shop.<workspace>.<this>), in the console host's Route 53. */
+    platformAppsDomain: (process.env.PLATFORM_APPS_DOMAIN || '').trim().toLowerCase().replace(/\.$/, ''),
+    platformAppsZoneId: (process.env.PLATFORM_APPS_ZONE_ID || '').trim(),
     platformAdmins: (process.env.PLATFORM_ADMINS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     serverBundleSha256: process.env.SERVER_BUNDLE_SHA256 || '',
 };
