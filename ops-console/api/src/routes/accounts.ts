@@ -56,8 +56,8 @@ account.post('/resend-verification', rateLimit(3, 60 * 60_000, (c) => `resend:${
     const u = c.get('user');
     if (!u) return c.json({ error: 'Not signed in' }, 401);
     if (!u.email || u.emailVerified) return c.json({ ok: true });
-    await sendVerification(u.id, u.email);
-    return c.json({ ok: true });
+    const r = await sendVerification(u.id, u.email);
+    return r.ok ? c.json({ ok: true }) : c.json({ error: "The email couldn't be sent right now. Try again in a few minutes." }, 502);
 });
 
 account.post('/forgot', multiOnly, rateLimit(5, 60 * 60_000, (c) => `forgot:${ip(c)}`), async (c) => {
@@ -134,7 +134,9 @@ teamRoutes.post('/invites', requireRole('admin'), denyDemo, rateLimit(30, 60 * 6
     const u = c.get('user')!;
     const b = await c.req.json().catch(() => ({}));
     try {
-        await checkLimit(u.workspaceId!, 'members');
+        // sending a pending invitation again doesn't take another seat
+        const pending = await db().query('SELECT 1 FROM workspace_invites WHERE workspace_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND expires_at > now()', [u.workspaceId, String(b.email ?? '').trim()]);
+        if (!pending.rows.length) await checkLimit(u.workspaceId!, 'members');
         const r = await invite(u.workspaceId!, { id: u.id, name: u.displayName || u.username }, b.email, b.role);
         await audit({ id: u.id, username: u.username }, 'team.invite', r.email, { role: r.role }, c.get('ip'));
         return c.json({ ok: true, ...r });

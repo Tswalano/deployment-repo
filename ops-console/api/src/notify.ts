@@ -1,4 +1,5 @@
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
+import { currentWorkspace, db } from './db';
 
 /** How notifications leave the console; swappable so tests never send anything. */
 export interface Transport {
@@ -39,4 +40,20 @@ let transport: Transport = process.env.ALERTS_DRY_RUN === '1' ? logTransport : r
 export const notifier = () => transport;
 export function setTransport(t: Transport): void {
     transport = t;
+}
+
+/**
+ * Send one email and record it (sent or refused) in email_log. Never throws: the result says what happened, so callers
+ * can tell the person (e.g. "the invitation was created, but the email could not be sent").
+ */
+export async function sendEmail(kind: string, to: string[], subject: string, text: string): Promise<{ ok: boolean; error: string | null }> {
+    let error: string | null = null;
+    try { await transport.email(to, subject, text); } catch (err) { error = (err as Error).message.slice(0, 300); }
+    try {
+        await db().query('INSERT INTO email_log (workspace_id, kind, recipients, subject, ok, error) VALUES ($1, $2, $3, $4, $5, $6)',
+            [currentWorkspace(), kind, to.join(', ').slice(0, 500), subject.slice(0, 200), !error, error]);
+        if (Math.random() < 0.02) await db().query("DELETE FROM email_log WHERE at < now() - interval '90 days'");
+    } catch (err) { console.error('email log write failed:', (err as Error).message); }
+    if (error) console.error(`email (${kind}) failed:`, error);
+    return { ok: !error, error };
 }

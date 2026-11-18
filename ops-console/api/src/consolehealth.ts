@@ -84,10 +84,16 @@ export async function consoleHealth() {
             `SELECT pg_database_size(current_database())::text AS size,
                     (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database())::int AS conns,
                     (SELECT extract(epoch FROM max(now() - query_start))::int FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND pid <> pg_backend_pid()) AS longest`);
-        const { rows: [m] } = await db().query<{ fails: number; last: string | null }>(
-            `SELECT count(*) FILTER (WHERE NOT ok)::int AS fails, max(error) FILTER (WHERE NOT ok) AS last FROM notifications WHERE at > now() - interval '24 hours'`);
-        return { size: Number(r.size), connections: r.conns, longestQuerySeconds: r.longest, emailFailures24h: m.fails, lastEmailError: m.last };
+        // every email the console sent (account emails, invitations, alerts), plus failed Slack/Discord notifications
+        const { rows: [m] } = await db().query<{ sent: number; fails: number; last: string | null; hooks: number }>(
+            `SELECT count(*) FILTER (WHERE ok)::int AS sent, count(*) FILTER (WHERE NOT ok)::int AS fails,
+                    (SELECT error FROM email_log WHERE NOT ok AND at > now() - interval '24 hours' ORDER BY at DESC LIMIT 1) AS last,
+                    (SELECT count(*) FROM notifications WHERE channel = 'webhook' AND NOT ok AND at > now() - interval '24 hours')::int AS hooks
+               FROM email_log WHERE at > now() - interval '24 hours'`);
+        return { size: Number(r.size), connections: r.conns, longestQuerySeconds: r.longest, emailsSent24h: m.sent, emailFailures24h: m.fails, lastEmailError: m.last, webhookFailures24h: m.hooks };
     }).catch((err) => ({ error: (err as Error).message.slice(0, 200) }));
+    const emails = await asSystem(() => db().query<{ at: string; kind: string; recipients: string; subject: string; ok: boolean; error: string | null }>(
+        'SELECT at, kind, recipients, subject, ok, error FROM email_log ORDER BY at DESC LIMIT 30')).then((r) => r.rows).catch(() => []);
     // jobs
     const jobs = [...beats.entries()].map(([name, b]) => ({ name, lastRun: new Date(b.at).toISOString(), everySeconds: Math.round(b.everyMs / 1000),
         late: now - b.at > b.everyMs * 3 + 60_000, ok: b.ok, error: b.error }));
@@ -109,7 +115,8 @@ export async function consoleHealth() {
     if (proc.eventLoopP99Ms > 200) c.push({ level: 'warn', text: `The console was briefly unresponsive (event loop delay ${proc.eventLoopP99Ms} ms).` });
     for (const j of jobs) if (j.late) c.push({ level: 'bad', text: `Background job "${j.name}" hasn't run since ${new Date(j.lastRun).toLocaleString()}.` });
     else if (!j.ok) c.push({ level: 'warn', text: `Background job "${j.name}" failed its last run: ${j.error}` });
-    if ('emailFailures24h' in dbs && dbs.emailFailures24h > 0) c.push({ level: 'warn', text: `${dbs.emailFailures24h} notification${dbs.emailFailures24h === 1 ? '' : 's'} failed to send in 24 hours.` });
+    if ('emailFailures24h' in dbs && dbs.emailFailures24h > 0) c.push({ level: 'bad', text: `${dbs.emailFailures24h} email${dbs.emailFailures24h === 1 ? '' : 's'} could not be sent in the last 24 hours${dbs.lastEmailError ? `: ${dbs.lastEmailError}` : ''}.` });
+    if ('webhookFailures24h' in dbs && dbs.webhookFailures24h > 0) c.push({ level: 'warn', text: `${dbs.webhookFailures24h} Slack/Discord notification${dbs.webhookFailures24h === 1 ? '' : 's'} failed in 24 hours.` });
     if ('longestQuerySeconds' in dbs && (dbs.longestQuerySeconds ?? 0) > 60) c.push({ level: 'warn', text: `A database query has been running for ${dbs.longestQuerySeconds}s.` });
     if (backups && Date.now() - Date.parse(backups.at) > 26 * 3600e3) c.push({ level: 'bad', text: `The last database backup on this server was ${new Date(backups.at).toLocaleString()}.` });
     if (backups && !consoleDump?.ok) c.push({ level: 'bad', text: "The console's own database wasn't in the last backup." });
@@ -117,7 +124,7 @@ export async function consoleHealth() {
     if (certDays != null && certDays < 14) c.push({ level: certDays < 5 ? 'bad' : 'warn', text: `The HTTPS certificate expires in ${certDays} days.` });
     if (Number(process.versions.node.split('.')[0]) < 20) c.push({ level: 'warn', text: `Node.js ${process.version} is past its end of life; plan an upgrade.` });
 
-    return { checkedAt: new Date(now).toISOString(), host, process: proc, requests, database: dbs, jobs,
+    return { checkedAt: new Date(now).toISOString(), host, process: proc, requests, database: dbs, jobs, emails,
         backups: backups ? { at: backups.at, ok: backups.ok, consoleDb: consoleDump, offsite: offsite ? { configured: offsite.configured, ok: offsite.ok, at: offsite.at, error: offsite.error } : null } : null,
         certificateDaysLeft: certDays, concerns: c };
 }

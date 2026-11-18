@@ -925,3 +925,26 @@ test('billing run by the console: credit first, card change (kept as credit), pl
         await asSystem(() => db().query('UPDATE users SET platform_admin = false WHERE id = $1', [alice.id]));
     }
 });
+
+test("emails are logged: a refused invitation email is reported to the admin and logged; resending doesn't take another seat", async () => {
+    const notify = dist('notify');
+    const { db, asSystem } = dist('db');
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const inviteTo = 'newhire@example.com';
+    notify.setTransport({ async email() { throw new Error('not authorized to perform ses:SendEmail'); }, async webhook() {} });
+    try {
+        const r = await a.post('/api/team/invites', { email: inviteTo, role: 'viewer' });
+        assert.equal(r.status, 200, JSON.stringify(r.json));
+        assert.deepEqual([r.json.emailSent, r.json.emailError], [false, 'not authorized to perform ses:SendEmail']);
+    } finally {
+        notify.setTransport({ async email() {}, async webhook() {} });
+    }
+    const resent = await a.post('/api/team/invites', { email: inviteTo, role: 'viewer' });
+    assert.equal(resent.status, 200, 'resending a pending invitation is not blocked by the seat limit');
+    assert.equal(resent.json.emailSent, true);
+    const { rows } = await asSystem(() => db().query("SELECT ok, error FROM email_log WHERE kind = 'invite' AND recipients = $1 ORDER BY id", [inviteTo]));
+    assert.deepEqual(rows.map((x) => x.ok), [false, true]);
+    assert.match(rows[0].error, /ses:SendEmail/);
+    await asSystem(() => db().query('DELETE FROM workspace_invites WHERE lower(email) = $1', [inviteTo]));
+});

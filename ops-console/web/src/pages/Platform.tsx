@@ -389,13 +389,31 @@ export function PlatformConsolePage() {
             )}
           </section>
 
+          <section className="card overflow-hidden p-0">
+            <h2 className="px-5 py-4 font-medium text-slate-100">Recent emails</h2>
+            {!h.emails.length ? <p className="px-5 pb-5 text-sm text-slate-500">No emails recorded yet.</p> : (
+              <table className="tbl">
+                <thead><tr><th className="w-[13%]">When</th><th className="w-[13%]">Kind</th><th className="w-[24%]">To</th><th>Subject</th><th className="w-[22%]">Result</th></tr></thead>
+                <tbody>{h.emails.map((e, i) => (
+                  <tr key={i}>
+                    <td className="text-slate-400" title={e.at}>{ago(e.at)}</td>
+                    <td className="text-slate-300">{({ verify_email: 'Confirm email', reset_password: 'Password reset', invite: 'Invitation', alert: 'Alert', test: 'Test' } as Record<string, string>)[e.kind] ?? e.kind}</td>
+                    <td className="truncate text-slate-300" title={e.recipients}>{e.recipients}</td>
+                    <td className="truncate text-slate-400" title={e.subject}>{e.subject}</td>
+                    <td title={e.error ?? undefined}><span className="inline-flex min-w-0 items-center gap-2"><span className={`h-2 w-2 shrink-0 rounded-full ${e.ok ? 'bg-emerald-400' : 'bg-rose-400'}`} /><span className="truncate">{e.ok ? 'Sent' : `Failed: ${e.error}`}</span></span></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+          </section>
+
           <section className="card">
             <h2 className="font-medium text-slate-100">Data and email</h2>
             <dl className="mt-3 divide-y divide-ink-700 text-sm">
               {([
                 ['Console database backup', h.backups ? `${h.backups.consoleDb?.ok ? 'in' : 'NOT in'} the last nightly backup (${ago(h.backups.at)})` : 'no backup status on this server'],
                 ['Off-site copies', h.backups?.offsite ? (h.backups.offsite.configured ? (h.backups.offsite.ok ? `copied ${ago(h.backups.offsite.at)}` : `failing: ${h.backups.offsite.error}`) : 'off') : '—'],
-                ['Email (24 hours)', dbOk ? (dbOk.emailFailures24h ? `${dbOk.emailFailures24h} failed${dbOk.lastEmailError ? ` · ${dbOk.lastEmailError}` : ''}` : 'no failures') : '—'],
+                ['Email (24 hours)', dbOk ? `${dbOk.emailsSent24h} sent · ${dbOk.emailFailures24h ? `${dbOk.emailFailures24h} failed` : 'none failed'}` : '—'],
                 ['HTTPS certificate', h.certificateDaysLeft != null ? `${h.certificateDaysLeft} days left` : '—'],
               ] as [string, string][]).map(([k, v]) => (
                 <div key={k} className="grid grid-cols-[12rem_minmax(0,1fr)] gap-4 py-2.5"><dt className="text-slate-500">{k}</dt><dd className="text-slate-200">{v}</dd></div>
