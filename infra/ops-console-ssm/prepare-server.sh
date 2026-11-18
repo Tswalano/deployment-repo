@@ -80,6 +80,12 @@ fi
 psql -X -q -h localhost -U postgres -w -d postgres -c 'SELECT 1' >/dev/null || fail "cannot log in to PostgreSQL with the generated password"
 did "PostgreSQL 15 (password logins on localhost)"
 
+# system logs: keep at most 200 MB on the server (older days are copied to the backup bucket with the off-site copies)
+install -d -m 0755 /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/ops-console.conf
+systemctl restart systemd-journald
+did "system logs capped at 200 MB"
+
 # ------------------------------------------------------------------ the console's server files
 STEP=bundle
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
