@@ -5,6 +5,7 @@
  *   node dist/cli.js ensure-demo                 # creates/enables the read-only demo viewer
  *   node dist/cli.js set-email <username> <email> # owner tool: set a user's sign-in email (confirmed again by them)
  *   node dist/cli.js cutover-check | cutover-prepare [region] | cutover-connect <roleArn>   # docs/saas-cutover.md
+ *   node dist/cli.js platform-admin <username> on|off   # who may open the platform owner portal (never granted by invitations)
  */
 import { audit } from './audit';
 import { cutoverCheck, cutoverConnect, cutoverPrepare, setEmail } from './cutover';
@@ -30,6 +31,13 @@ async function main() {
     } else if (cmd === 'set-email') {
         if (!arg || !arg2) throw new Error('usage: set-email <username> <email>');
         await migrate(); await setEmail(arg, arg2);
+    } else if (cmd === 'platform-admin') {
+        if (!arg || (arg2 !== 'on' && arg2 !== 'off')) throw new Error('usage: platform-admin <username> on|off');
+        await migrate();
+        const { rowCount } = await db().query('UPDATE users SET platform_admin = $2 WHERE lower(username) = lower($1) AND NOT is_demo', [arg, arg2 === 'on']);
+        if (!rowCount) throw new Error(`no user ${arg}`);
+        await audit(null, arg2 === 'on' ? 'platform.admin_grant' : 'platform.admin_revoke', arg, { via: 'cli' }, null);
+        console.log(`${arg}: platform admin ${arg2}`);
     } else if (cmd === 'migrate') {
         const applied = await migrate();
         console.log(applied.length ? `applied: ${applied.join(', ')}` : 'up to date');

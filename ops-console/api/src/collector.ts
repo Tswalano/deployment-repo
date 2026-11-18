@@ -6,6 +6,7 @@ import { autoVerify } from './backups';
 import { refreshCosts } from './costs';
 import { reenableExpiredSkips } from './schedule';
 import { expirePending, syncRunning } from './deploys';
+import { tracked } from './consolehealth';
 
 export const COLLECT_DOCUMENT = 'OpsConsole-CollectStatus';
 const FRESH_MS = 30_000;            // serve cached snapshots younger than this
@@ -191,7 +192,7 @@ async function maybeSample(instanceId: number, s: Snapshot): Promise<void> {
 
 export function startPoller(): NodeJS.Timeout {
     // once per workspace, each in its own context (row-level security)
-    const tick = () => forEachWorkspace(async () => {
+    const tick = tracked('Server status checks and alerts', POLL_EVERY_MS, () => forEachWorkspace(async () => {
         const { rows } = await db().query<InstanceRow>('SELECT * FROM instances');
         await syncRunning().catch(() => undefined);
         await expirePending().catch(() => undefined);
@@ -205,7 +206,7 @@ export function startPoller(): NodeJS.Timeout {
         await dispatch().catch((err) => console.error('alert dispatch failed:', (err as Error).message));
         await db().query("DELETE FROM instance_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
         await db().query("DELETE FROM db_samples WHERE at < now() - interval '7 days'").catch(() => undefined);
-    });
+    }));
     setTimeout(() => void tick().catch(() => undefined), 10_000).unref();
     const t = setInterval(() => void tick().catch(() => undefined), POLL_EVERY_MS);
     t.unref();

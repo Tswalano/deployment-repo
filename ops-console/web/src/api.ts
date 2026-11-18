@@ -17,10 +17,11 @@ export interface BillingView {
   enabled: boolean; plan: 'trial' | 'starter' | 'pro' | 'internal'; status: string; trialEndsAt: string | null; currentPeriodEnd: string | null; graceUntil: string | null;
   active: boolean; reason: string | null; hasSubscription: boolean; billingEmail: string | null;
   complimentary?: boolean; compUntil?: string | null; suspended?: boolean;
+  credit?: number; card?: string | null; lastChargeError?: string | null; legacySubscription?: boolean; customLimits?: boolean;
   limits: { servers: number | null; apps: number | null; members: number | null; approvals: boolean }; usage: { servers: number; apps: number; members: number };
   plans: { id: 'starter' | 'pro'; name: string; price: number; limits: { servers: number; apps: number; members: number; approvals: boolean } }[];
 }
-export interface Invoice { id: number; number: string; reference: string; issuedAt: string; plan: string; description: string; amount: number; currency: string; periodStart: string | null; periodEnd: string | null; billedTo: string; billedEmail: string | null; card: string | null; status: string }
+export interface Invoice { id: number; number: string; reference: string; issuedAt: string; plan: string; description: string; amount: number; currency: string; periodStart: string | null; periodEnd: string | null; billedTo: string; billedEmail: string | null; card: string | null; status: string; creditApplied?: number }
 export interface SiteConfig { multiTenant: boolean; productName: string; trialDays: number; legalEntity?: string; supportEmail?: string | null }
 export interface Workspace { id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; trialEndsAt: string | null; role: Role }
 export interface TeamMember { id: number; username: string; displayName: string; email: string | null; role: Role; joinedAt: string; lastLoginAt: string | null; emailVerified: boolean }
@@ -118,31 +119,40 @@ export interface GithubStatus {
   connected: boolean; webhookUrl?: string; app?: { slug: string; owner?: string; htmlUrl: string } | null;
   installations?: { id: number; account: string; selection: 'all' | 'selected' }[]; installUrl?: string; error?: string;
 }
-// ------------------------------------------------------------------ platform owner portal
+// ------------------------------------------------------------------ platform owner portal (business side)
+export interface Usage { used: number; max: number | null; near: boolean; over: boolean }
+export interface LimitOverrides { servers?: number; apps?: number; members?: number; approvals?: boolean; until?: string | null }
 export interface PlatformWorkspace {
-  id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; status: string; active: boolean; createdAt: string;
-  trialEndsAt: string | null; currentPeriodEnd: string | null; billingEmail: string | null; hasSubscription: boolean;
-  suspendedAt: string | null; suspendedReason: string | null; complimentary: boolean; compUntil: string | null; monthly: number;
-  members: number; servers: number; apps: number; serversDown: number; openAlerts: number; lastActivity: string | null;
-  owner: { email: string | null; name: string | null }; aws: string | null;
+  id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro'; status: string; active: boolean; createdAt: string;
+  trialEndsAt: string | null; currentPeriodEnd: string | null; graceUntil: string | null; billingEmail: string | null;
+  card: string | null; legacySubscription: boolean; lastChargeError: string | null; lastChargeAt: string | null;
+  suspendedAt: string | null; suspendedReason: string | null; complimentary: boolean; compUntil: string | null;
+  monthly: number; amountDue: number; credit: number; usage: { servers: Usage; apps: Usage; members: Usage }; nearLimit: boolean;
+  limitOverrides: LimitOverrides | null; lastActivity: string | null; owner: { email: string | null; name: string | null }; aws: string | null;
 }
 export interface PlatformOverview {
-  workspaces: number; signups30d: number; users: number; mrr: number; currency: string; servers: number; serversDown: number; apps: number; openAlerts: number;
-  byStatus: { trial: number; paying: number; complimentary: number; paymentFailed: number; ended: number; cancelling: number; suspended: number };
+  customers: number; signups30d: number; mrr: number; amountDue: number; currency: string; nearLimit: number; creditOutstanding: number;
+  byStatus: { trial: number; paying: number; complimentary: number; paymentFailed: number; cancelling: number; ended: number; suspended: number };
+  byPlan: { starter: number; pro: number; trial: number };
 }
 export interface PlatformDetail {
   workspace: PlatformWorkspace;
   members: { id: number; username: string; name: string | null; email: string | null; verified: boolean; role: Role; lastLogin: string | null; disabled: boolean }[];
-  servers: { id: number; name: string; region: string; state: string; lastOkAt: string | null; error: string | null; apps: { project: string; healthy: boolean }[] }[];
-  aws: { status: string; accountId: string | null; region: string } | null; github: { slug: string; owner: string } | null;
-  invoices: { count: number; total: number }; activity: { at: string; username: string | null; action: string; target: string | null }[];
+  credits: { amount: number; kind: string; note: string | null; by: string; at: string }[];
+  invoices: { number: string; issuedAt: string; plan: string; amount: number; credit: number; periodStart: string | null; periodEnd: string | null; status: string }[];
+  events: { event: string; summary: Record<string, unknown>; at: string }[];
 }
-export interface PlatformHealth {
-  servers: { id: number; name: string; region: string; state: string; lastOkAt: string | null; error: string | null; workspaceId: number; workspace: string }[];
-  deploys: { id: number; project: string; action: string; at: string | null; server: string; workspaceId: number; workspace: string }[];
-  backups: { id: number; name: string; workspaceId: number; workspace: string; at: string | null }[];
-  alerts: { id: number; title: string; openedAt: string; workspaceId: number; workspace: string }[];
+export interface ConsoleHealth {
+  checkedAt: string;
+  host: { cpus: number; load: number[]; mem: { total: number; available: number }; disk: { total: number; free: number } | null; uptimeSeconds: number };
+  process: { node: string; uptimeSeconds: number; rss: number; heapUsed: number; eventLoopP99Ms: number };
+  requests: { last15m: ReqStats; last60m: ReqStats; perMinute: { minute: number; n: number; errors: number }[] };
+  database: { size: number; connections: number; longestQuerySeconds: number | null; emailFailures24h: number; lastEmailError: string | null } | { error: string };
+  jobs: { name: string; lastRun: string; everySeconds: number; late: boolean; ok: boolean; error: string | null }[];
+  backups: { at: string; ok: boolean; consoleDb: { ok: boolean; bytes?: number } | null; offsite: { configured: boolean; ok: boolean; at: string; error: string | null } | null } | null;
+  certificateDaysLeft: number | null; concerns: { level: 'warn' | 'bad'; text: string }[];
 }
+export interface ReqStats { requests: number; errors: number; errorRate: number; p50: number | null; p95: number | null }
 export type AddressMode = 'platform' | 'route53' | 'external';
 export interface AppAddresses {
   appsDomain: { mode?: AddressMode; domain?: string; zoneId?: string } | null;
@@ -320,6 +330,7 @@ export const api = {
   billingCheckout: (plan: 'starter' | 'pro') => call<{ url: string; reference: string }>('POST', '/api/billing/checkout', { plan }),
   billingConfirm: (reference: string) => call<{ ok: true; plan: string; status: string }>('POST', '/api/billing/confirm', { reference }),
   billingCancel: () => call<{ ok: true }>('POST', '/api/billing/cancel'),
+  billingResume: () => call<{ ok: true }>('POST', '/api/billing/resume'),
   billingManage: () => call<{ url: string }>('GET', '/api/billing/manage'),
   setEmail: (email: string, currentPassword: string) => call<{ ok: true }>('POST', '/api/auth/email', { email, currentPassword }),
   usernameAvailable: (u: string) => call<{ available: boolean; reason?: string }>('GET', `/api/account/username-available?u=${encodeURIComponent(u)}`),
@@ -424,11 +435,14 @@ export const api = {
   platformOverview: () => call<PlatformOverview>('GET', '/api/platform/overview'),
   platformWorkspaces: () => call<{ workspaces: PlatformWorkspace[] }>('GET', '/api/platform/workspaces').then((r) => r.workspaces),
   platformWorkspace: (id: number) => call<PlatformDetail>('GET', `/api/platform/workspaces/${id}`),
-  platformHealth: () => call<PlatformHealth>('GET', '/api/platform/health'),
+  platformConsole: () => call<ConsoleHealth>('GET', '/api/platform/console'),
   platformAudit: () => call<{ entries: { at: string; username: string | null; action: string; target: string | null; detail: Record<string, unknown> }[] }>('GET', '/api/platform/audit').then((r) => r.entries),
   platformSuspend: (id: number, reason: string) => call<{ ok: true }>('POST', `/api/platform/workspaces/${id}/suspend`, { reason }),
   platformReactivate: (id: number) => call<{ ok: true }>('POST', `/api/platform/workspaces/${id}/reactivate`),
-  platformExtendTrial: (id: number, days: number) => call<{ ok: true; trialEndsAt: string }>('POST', `/api/platform/workspaces/${id}/trial`, { days }),
+  platformExtend: (id: number, days: number) => call<{ ok: true; result: string }>('POST', `/api/platform/workspaces/${id}/extend`, { days }),
+  platformCredit: (id: number, amount: number, note: string) => call<{ ok: true }>('POST', `/api/platform/workspaces/${id}/credit`, { amount, note }),
+  platformRetry: (id: number) => call<{ ok: true; result: string }>('POST', `/api/platform/workspaces/${id}/retry`),
+  platformLimits: (id: number, body: LimitOverrides | { clear: true }) => call<{ ok: true }>('PUT', `/api/platform/workspaces/${id}/limits`, body),
   platformComplimentary: (id: number, plan: 'starter' | 'pro' | null, until?: string) => call<{ ok: true }>('POST', `/api/platform/workspaces/${id}/complimentary`, { plan, until }),
   platformChangeEmail: (userId: number, email: string) => call<{ ok: true }>('PUT', `/api/platform/users/${userId}/email`, { email }),
   appAddresses: () => call<AppAddresses>('GET', '/api/aws-connection/apps-domain'),

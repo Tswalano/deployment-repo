@@ -165,6 +165,18 @@ aws iam put-role-policy --role-name lendify-instance-role --policy-name ops-cons
 
 Then Backups → **Copy backups to S3** per server, and optionally **Server snapshots**.
 
+## 13. Platform owner portal (Profile menu → Platform admin)
+
+Access is an explicit flag on the account, never granted by an invitation. On the server:
+
+```bash
+cli platform-admin <username> on    # or off
+```
+
+Renewals are run by the console (background job "Subscription renewals", every 15 minutes): credit first, then the
+card Paystack keeps for the workspace. Workspaces still on a Paystack subscription from before keep it until they
+change plan or it ends.
+
 ## Rollback
 
 ```bash

@@ -2,6 +2,7 @@ import { dispatch, raise, resolve } from './alerts';
 import { InstanceRow } from './collector';
 import { db, forEachWorkspace } from './db';
 import { alertSettings } from './settings';
+import { tracked } from './consolehealth';
 
 const PROBE_EVERY_MS = 60_000;
 const STARTUP_GRACE_MS = 3 * 60_000;     // apps start in parallel at 04:00; don't call them down yet
@@ -95,10 +96,10 @@ export async function rollup(): Promise<void> {
 
 export function startUptime(): NodeJS.Timeout {
     let n = 0;
-    const tick = async () => {
+    const tick = tracked('Uptime checks', PROBE_EVERY_MS, async () => {
         const doRollup = n++ % 10 === 0;
         await forEachWorkspace(async () => { await probeAll(); if (doRollup) await rollup(); });
-    };
+    });
     const t = setInterval(() => void tick().catch((err) => console.error('uptime tick failed:', (err as Error).message)), PROBE_EVERY_MS);
     t.unref();
     setTimeout(() => void tick().catch(() => undefined), 20_000).unref();

@@ -152,11 +152,17 @@ const ARTICLES: Article[] = [
         <li><b>Starter</b> R199/month: 1 server, 3 apps, 2 team members.</li>
         <li><b>Pro</b> R599/month: 5 servers, 20 apps, 10 team members, deploy approvals and freeze windows.</li>
       </UL>
-      <P>Administration → <b>Billing</b> to choose or switch a plan (paid securely through Paystack), update the card or cancel. A cancelled subscription keeps working until the end of the paid period.</P>
+      <P>Administration → <b>Billing</b> to choose a plan. The first month is paid on Paystack&rsquo;s secure card page; the card is kept by Paystack and charged each month after that.</P>
+      <UL>
+        <li><b>Switching plans</b> starts the new plan at once: unused time on the current plan is credited, and the rest is charged to the card on file.</li>
+        <li><b>Credit</b> (for example from a plan change) is always used before the card.</li>
+        <li><b>Update card</b> runs a R5 card check on Paystack; the R5 is kept as credit.</li>
+        <li><b>Cancel</b> stops renewals: everything keeps working until the end of the paid period, and <b>Resume</b> undoes it before then.</li>
+      </UL>
       <H>Invoices</H>
-      <P>Every payment produces an invoice on the Billing page. Each can be downloaded as a PDF, and the last six months as a single PDF or a CSV.</P>
+      <P>Every period produces an invoice on the Billing page, showing any credit applied. Each can be downloaded as a PDF, and the last six months as a single PDF or a CSV.</P>
       <H>Failed payments and lapsed subscriptions</H>
-      <P>After a failed payment there is a 7-day grace period to update the card. After that, or when a trial or cancelled plan ends, the workspace becomes read-only: everything stays visible, but changes are paused. Servers and apps keep running, because they are in the organisation's AWS account.</P>
+      <P>When a renewal is declined, the card is tried again daily and there is a 7-day grace period to update it (updating the card retries the payment at once). After that, or when a trial or cancelled plan ends, the workspace becomes read-only: everything stays visible, but changes are paused. Servers and apps keep running, because they are in the organisation's AWS account.</P>
     </>) },
   { slug: 'security', group: 'Account', title: 'Security and data', summary: 'How access, isolation and auditing work.',
     body: ({ product }) => (<>
