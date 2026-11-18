@@ -25,6 +25,7 @@ import access, { myKeys } from './routes/access';
 import users from './routes/users';
 import { account, teamRoutes, workspaces } from './routes/accounts';
 import platformRoutes from './routes/platform';
+import { requestMetrics } from './consolehealth';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
@@ -45,6 +46,7 @@ export function createApp() {
         return c.json(dryRun ? { status: 'ok', mode: 'local-dry-run' } : { status: 'ok' });
     });
 
+    app.use('/api/*', requestMetrics);
     app.use('/api/*', loadSession, checkOrigin, billingGuard);
     app.route('/api/auth', auth);
     app.route('/api/account', account);

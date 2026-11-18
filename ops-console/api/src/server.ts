@@ -12,6 +12,8 @@ import { attachTerminal } from './terminal';
 import { expireSshGrants } from './access';
 import { forEachWorkspace } from './db';
 import type { Server } from 'http';
+import { tracked } from './consolehealth';
+import { billingEnabled, renewDue } from './billing';
 
 async function main() {
     const applied = await migrate();
@@ -30,9 +32,16 @@ async function main() {
 
     startPoller();
     startUptime();
-    setInterval(() => purgeExpiredSessions().catch(() => undefined), 60 * 60 * 1000).unref();
+    setInterval(() => void tracked('Session clean-up', 3600_000, purgeExpiredSessions)().catch(() => undefined), 60 * 60 * 1000).unref();
     // temporary SSH rules close within a minute of expiring (also after a restart: the grants are in the database)
-    setInterval(() => forEachWorkspace(async () => { await expireSshGrants(); }).catch((err) => console.error('closing expired SSH access failed:', (err as Error).message)), 60_000).unref();
+    setInterval(() => void tracked('Closing expired SSH access', 60_000, () => forEachWorkspace(async () => { await expireSshGrants(); }))()
+        .catch((err) => console.error('closing expired SSH access failed:', (err as Error).message)), 60_000).unref();
+    // subscriptions renewed by the console (charging the saved card; credits first)
+    if (billingEnabled()) {
+        const renew = tracked('Subscription renewals', 15 * 60_000, renewDue);
+        setTimeout(() => void renew().catch((err) => console.error('renewals failed:', (err as Error).message)), 60_000).unref();
+        setInterval(() => void renew().catch((err) => console.error('renewals failed:', (err as Error).message)), 15 * 60_000).unref();
+    }
     const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) =>
         console.log(`ops-console listening on http://${info.address}:${info.port}`));
     attachTerminal(server as Server);   // browser terminal (WebSocket → SSM Session Manager)

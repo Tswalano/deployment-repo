@@ -451,14 +451,13 @@ test('billing (Paystack): trial, limits, checkout verified server-side, signed w
     const billing = dist('billing');
     const { db } = dist('db');
     const secret = process.env.PAYSTACK_SECRET_KEY;
-    const ps = { plansCreated: 0, verify: {} };
+    const ps = { verify: {}, charge: null, charged: [] };
     billing.setPaystackFetch(async (url, init) => {
         const u = new URL(url); const body = init.body ? JSON.parse(init.body) : null;
         assert.equal(init.headers.authorization, `Bearer ${secret}`);
         const ok = (data) => new Response(JSON.stringify({ status: true, message: 'ok', data }), { status: 200 });
-        if (u.pathname === '/plan' && init.method === 'GET') return ok([]);
-        if (u.pathname === '/plan' && init.method === 'POST') { ps.plansCreated++; return ok({ plan_code: `PLN_${body.amount}` }); }
         if (u.pathname === '/transaction/initialize') { ps.lastInit = body; return ok({ authorization_url: 'https://checkout.paystack.com/abc123', reference: 'ref_123456' }); }
+        if (u.pathname === '/transaction/charge_authorization') { ps.charged.push(body); return ok({ status: ps.charge ?? 'success', reference: body.reference, amount: body.amount, currency: 'ZAR', metadata: body.metadata, gateway_response: ps.charge === 'failed' ? 'Insufficient Funds' : 'Approved', authorization: { authorization_code: body.authorization_code, reusable: true, brand: 'visa', last4: '4081' } }); }
         const v = /^\/transaction\/verify\/(.+)$/.exec(u.pathname);
         if (v) return ok(ps.verify[v[1]]);
         if (u.pathname === '/subscription/disable') return ok({});
@@ -472,35 +471,45 @@ test('billing (Paystack): trial, limits, checkout verified server-side, signed w
     let b = (await a.get('/api/billing')).json;
     assert.deepEqual([b.enabled, b.plan, b.active, b.limits.servers], [true, 'trial', true, 5]);
 
-    // checkout: Paystack's hosted page, plans created once, workspace in the metadata
+    // checkout: Paystack's hosted card page for the first month (no Paystack plan: the console renews), workspace in the metadata
     const co = await a.post('/api/billing/checkout', { plan: 'pro' });
     assert.equal(co.status, 200, JSON.stringify(co.json));
     assert.equal(co.json.url, 'https://checkout.paystack.com/abc123');
-    assert.deepEqual([ps.lastInit.amount, ps.lastInit.currency, ps.lastInit.plan, ps.lastInit.metadata.workspace_id], [59900, 'ZAR', 'PLN_59900', wsA]);
-    await a.post('/api/billing/checkout', { plan: 'starter' });
-    assert.equal(ps.plansCreated, 2, 'plans are created once and remembered');
+    assert.deepEqual([ps.lastInit.amount, ps.lastInit.currency, ps.lastInit.plan, ps.lastInit.channels, ps.lastInit.metadata.workspace_id, ps.lastInit.metadata.kind], [59900, 'ZAR', undefined, ['card'], wsA, 'subscribe']);
 
-    // confirm: verified with Paystack; another workspace's payment / wrong amount refused
-    ps.verify.ref_other = { status: 'success', reference: 'ref_other', amount: 59900, currency: 'ZAR', metadata: { workspace_id: 999, plan: 'pro' } };
-    ps.verify.ref_cheap = { status: 'success', reference: 'ref_cheap', amount: 100, currency: 'ZAR', metadata: { workspace_id: wsA, plan: 'pro' } };
-    ps.verify.ref_good = { status: 'success', reference: 'ref_good', amount: 59900, currency: 'ZAR', metadata: { workspace_id: wsA, plan: 'pro' }, customer: { customer_code: 'CUS_acme', email: 'alice@example.com' } };
+    // confirm: verified with Paystack; another workspace's payment / wrong amount refused; the card is kept for renewals
+    const card = { authorization_code: 'AUTH_acme', reusable: true, brand: 'visa', last4: '4081' };
+    ps.verify.ref_other = { status: 'success', reference: 'ref_other', amount: 59900, currency: 'ZAR', metadata: { workspace_id: 999, plan: 'pro', kind: 'subscribe' } };
+    ps.verify.ref_cheap = { status: 'success', reference: 'ref_cheap', amount: 100, currency: 'ZAR', metadata: { workspace_id: wsA, plan: 'pro', kind: 'subscribe', credit: 0 } };
+    ps.verify.ref_good = { status: 'success', reference: 'ref_good', amount: 59900, currency: 'ZAR', metadata: { workspace_id: wsA, plan: 'pro', kind: 'subscribe', credit: 0 }, customer: { customer_code: 'CUS_acme', email: 'alice@example.com' }, authorization: card };
     assert.equal((await a.post('/api/billing/confirm', { reference: 'ref_other' })).status, 403);
     assert.equal((await a.post('/api/billing/confirm', { reference: 'ref_cheap' })).status, 409);
     assert.equal((await a.post('/api/billing/confirm', { reference: 'ref_good' })).status, 200);
+    assert.equal((await a.post('/api/billing/confirm', { reference: 'ref_good' })).status, 200, 'a second visit changes nothing');
     b = (await a.get('/api/billing')).json;
-    assert.deepEqual([b.plan, b.status, b.active], ['pro', 'active', true]);
+    assert.deepEqual([b.plan, b.status, b.active, b.card, b.hasSubscription], ['pro', 'active', true, 'Visa •••• 4081', true]);
+    assert.ok(Date.parse(b.currentPeriodEnd) > Date.now() + 27 * 86400e3);
 
-    // webhooks: signature checked, each event once, subscription linked, failed payment → grace
+    // webhooks: signature checked, each event once (the same payment by webhook adds nothing)
     const hook = (e, sig) => { const body = JSON.stringify(e); return app.request('/api/billing/paystack', { method: 'POST', headers: { 'content-type': 'application/json', 'x-paystack-signature': sig ?? crypto.createHmac('sha512', secret).update(body).digest('hex') }, body }); };
-    assert.equal((await hook({ event: 'subscription.create', data: {} }, 'f'.repeat(128))).status, 401);
-    const sub = { event: 'subscription.create', data: { id: 77, subscription_code: 'SUB_acme', email_token: 'tok_acme', customer: { customer_code: 'CUS_acme' }, next_payment_date: new Date(Date.now() + 30 * 86400e3).toISOString() } };
-    assert.equal((await hook(sub)).status, 200);
-    assert.equal((await (await hook(sub)).json()).duplicate, true, 'the same event is applied once');
-    const { rows: [w1] } = await db().query('SELECT subscription_code, subscription_token FROM workspaces WHERE id = $1', [wsA]);
-    assert.deepEqual([w1.subscription_code, w1.subscription_token], ['SUB_acme', 'tok_acme']);
-    await hook({ event: 'invoice.payment_failed', data: { id: 78, subscription_code: 'SUB_acme', customer: { customer_code: 'CUS_acme' } } });
+    assert.equal((await hook({ event: 'charge.success', data: {} }, 'f'.repeat(128))).status, 401);
+    const paid = { event: 'charge.success', data: { id: 501, ...ps.verify.ref_good } };
+    assert.equal((await hook(paid)).status, 200);
+    assert.equal((await (await hook(paid)).json()).duplicate, true, 'the same event is applied once');
+    assert.equal((await dist('db').withWorkspace(wsA, () => db().query("SELECT count(*)::int AS n FROM invoices WHERE reference = 'ref_good'"))).rows[0].n, 1);
+
+    // a renewal the card declines: grace period (still working), retried later
+    await db().query(`UPDATE workspaces SET current_period_end = now() - interval '1 minute' WHERE id = $1`, [wsA]);
+    ps.charge = 'failed';
+    await billing.renewDue();
+    assert.equal(ps.charged.at(-1).authorization_code, 'AUTH_acme');
     b = (await a.get('/api/billing')).json;
     assert.deepEqual([b.status, b.active], ['past_due', true], 'still working during the grace period');
+    assert.equal(b.lastChargeError, 'Insufficient Funds');
+    const tries = ps.charged.length;
+    await billing.renewDue();
+    assert.equal(ps.charged.length, tries, 'not retried before the next attempt is due');
+    ps.charge = null;
 
     // limits on Starter: one server, two members, no approvals
     await db().query(`UPDATE workspaces SET plan = 'starter', billing_status = 'active', grace_until = NULL WHERE id = $1`, [wsA]);
@@ -518,7 +527,7 @@ test('billing (Paystack): trial, limits, checkout verified server-side, signed w
     assert.equal(blocked.status, 402); assert.equal(blocked.json.code, 'billing_required');
     assert.match(blocked.json.error, /servers and apps keep running/);
     assert.equal((await a.get('/api/instances')).status, 200, 'reads still work');
-    assert.equal((await a.post('/api/billing/checkout', { plan: 'pro' })).status, 200, 'billing stays open');
+    assert.notEqual((await a.post('/api/billing/resume')).status, 402, 'billing stays open (nothing to resume here, but not blocked)');
 
     // migration items: email (needs the password), OAuth client for an existing app (platform admin), link existing installations
     await db().query(`UPDATE workspaces SET billing_status = 'active', grace_until = NULL, plan = 'pro' WHERE id = $1`, [wsA]);
@@ -746,7 +755,7 @@ test("off-site backup copies and server snapshots: the workspace's own bucket, t
 test('platform owner portal: only platform admins; suspend/reactivate (read-only for the customer), extend trial, complimentary plan, change email, all audited', async () => {
     const { db, withWorkspace, asSystem } = dist('db');
     const { rows: [alice] } = await db().query("SELECT id FROM users WHERE username = 'alice'");
-    await asSystem(() => db().query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (1, $1, 'admin') ON CONFLICT DO NOTHING", [alice.id]));
+    await asSystem(() => db().query('UPDATE users SET platform_admin = true WHERE id = $1', [alice.id]));
     try {
         const a = client();
         assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
@@ -755,17 +764,24 @@ test('platform owner portal: only platform admins; suspend/reactivate (read-only
         const wsB = (await b.get('/api/auth/me')).json.user.workspaceId;
         assert.equal((await b.get('/api/platform/overview')).status, 404, 'customers never see the portal');
         assert.equal((await b.get('/api/auth/me')).json.user.platformAdmin, false);
-        assert.equal((await a.get('/api/auth/me')).json.user.platformAdmin, true, 'an admin of the internal workspace');
+        assert.equal((await a.get('/api/auth/me')).json.user.platformAdmin, true, 'flagged as a platform admin');
+        // being an admin of the platform's own workspace is not enough (an invitation never grants the portal)
+        const { rows: [bobUser] } = await db().query("SELECT id FROM users WHERE email = 'bob@example.com'");
+        await asSystem(() => db().query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (1, $1, 'admin') ON CONFLICT DO NOTHING", [bobUser.id]));
+        assert.equal((await b.get('/api/platform/overview')).status, 404);
+        await asSystem(() => db().query('DELETE FROM workspace_members WHERE workspace_id = 1 AND user_id = $1', [bobUser.id]));
 
         const ov = (await a.get('/api/platform/overview')).json;
-        assert.ok(ov.workspaces >= 2 && typeof ov.mrr === 'number');
+        assert.ok(ov.customers >= 2 && typeof ov.mrr === 'number');
         const list = (await a.get('/api/platform/workspaces')).json.workspaces;
         const bob = list.find((w) => w.id === wsB);
-        assert.ok(bob && bob.owner.email && typeof bob.servers === 'number');
-        assert.equal(list.find((w) => w.id === 1).status, 'platform');
+        assert.ok(bob && bob.owner.email && typeof bob.usage.servers.used === 'number');
+        assert.equal(list.find((w) => w.id === 1), undefined, "the platform's own workspace isn't a customer");
+        assert.ok(bob.usage && typeof bob.usage.members.used === 'number');
         const det = (await a.get(`/api/platform/workspaces/${wsB}`)).json;
         assert.ok(det.members.some((m) => m.email === 'bob@example.com'));
-        assert.equal((await a.get('/api/platform/health')).status, 200);
+        const health = (await a.get('/api/platform/console')).json;
+        assert.ok(Array.isArray(health.concerns) && health.host.cpus > 0 && health.database.size > 0);
 
         // suspend: the customer's workspace becomes read-only (servers keep running), then reactivate
         const putDomain = (cl) => app.request('/api/aws-connection/apps-domain', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: cl.cookieHeader() }, body: JSON.stringify({ mode: 'external', domain: 'bob-apps.example' }) });
@@ -781,15 +797,15 @@ test('platform owner portal: only platform admins; suspend/reactivate (read-only
 
         // trial and complimentary plans (on a fresh trial workspace); the platform's own workspace is off limits
         const { rows: [ini] } = await asSystem(() => db().query("INSERT INTO workspaces (name, slug, plan, trial_ends_at) VALUES ('Initech', 'initech', 'trial', now() + interval '1 day') RETURNING id"));
-        const ext = await a.post(`/api/platform/workspaces/${ini.id}/trial`, { days: 10 });
+        const ext = await a.post(`/api/platform/workspaces/${ini.id}/extend`, { days: 10 });
         assert.equal(ext.status, 200);
-        assert.ok(Date.parse(ext.json.trialEndsAt) > Date.now() + 10.5 * 86400e3);
-        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/trial`, { days: 500 })).status, 400);
+        assert.ok(Date.parse(ext.json.result) > Date.now() + 10.5 * 86400e3);
+        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/extend`, { days: 500 })).status, 400);
         const until = new Date(Date.now() + 30 * 86400e3).toISOString();
         assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/complimentary`, { plan: 'pro', until })).status, 200);
         let w = (await a.get(`/api/platform/workspaces/${ini.id}`)).json.workspace;
         assert.deepEqual([w.plan, w.status, w.active], ['pro', 'complimentary', true]);
-        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/trial`, { days: 5 })).status, 409, 'no longer on a trial');
+        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/extend`, { days: 5 })).status, 409, 'a complimentary plan has its own end date');
         assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/complimentary`, { plan: null })).status, 200);
         w = (await a.get(`/api/platform/workspaces/${ini.id}`)).json.workspace;
         assert.deepEqual([w.status, w.active], ['ended', false]);
@@ -804,8 +820,108 @@ test('platform owner portal: only platform admins; suspend/reactivate (read-only
         assert.deepEqual([d2.email, d2.email_verified_at], ['dee.new@example.com', null]);
 
         const trail = (await a.get('/api/platform/audit')).json.entries.map((e) => e.action);
-        for (const x of ['platform.suspend', 'platform.reactivate', 'platform.trial', 'platform.complimentary', 'platform.complimentary_end', 'platform.email']) assert.ok(trail.includes(x), x);
+        for (const x of ['platform.suspend', 'platform.reactivate', 'platform.extend', 'platform.complimentary', 'platform.complimentary_end', 'platform.email']) assert.ok(trail.includes(x), x);
     } finally {
-        await asSystem(() => db().query('DELETE FROM workspace_members WHERE workspace_id = 1 AND user_id = $1', [alice.id]));
+        await asSystem(() => db().query('UPDATE users SET platform_admin = false WHERE id = $1', [alice.id]));
+    }
+});
+
+test('billing run by the console: credit first, card change (kept as credit), plan switch with unused time, extensions, custom limits, retry, cancel/resume', async () => {
+    const billing = dist('billing');
+    const { db, asSystem } = dist('db');
+    const ps = { verify: {}, charge: 'success', charged: [], inits: [] };
+    billing.setPaystackFetch(async (url, init) => {
+        const u = new URL(url); const body = init.body ? JSON.parse(init.body) : null;
+        const ok = (data) => new Response(JSON.stringify({ status: true, message: 'ok', data }), { status: 200 });
+        if (u.pathname === '/transaction/initialize') { ps.inits.push(body); return ok({ authorization_url: `https://checkout.paystack.com/${ps.inits.length}`, reference: `init_${ps.inits.length}` }); }
+        if (u.pathname === '/transaction/charge_authorization') { ps.charged.push(body); return ok({ status: ps.charge, reference: body.reference, amount: body.amount, currency: 'ZAR', metadata: body.metadata, gateway_response: ps.charge === 'failed' ? 'Do Not Honour' : 'Approved' }); }
+        const v = /^\/transaction\/verify\/(.+)$/.exec(u.pathname);
+        if (v) return ok(ps.verify[v[1]] ?? { status: 'failed', reference: v[1] });
+        return new Response(JSON.stringify({ status: false, message: 'not found' }), { status: 404 });
+    });
+    const { rows: [alice] } = await db().query("SELECT id FROM users WHERE username = 'alice'");
+    await asSystem(() => db().query('UPDATE users SET platform_admin = true WHERE id = $1', [alice.id]));
+    try {
+        const admin = client();
+        assert.equal((await admin.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+        const b = client();
+        assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+        const ws = (await b.get('/api/auth/me')).json.user.workspaceId;
+        await asSystem(() => db().query(`UPDATE workspaces SET plan = 'trial', trial_ends_at = now() + interval '5 days', billing_status = 'trialing', complimentary = false,
+            paystack_authorization = NULL, card_label = NULL, current_period_end = NULL, subscription_code = NULL WHERE id = $1`, [ws]));
+        const bill = async () => (await b.get('/api/billing')).json;
+        const ended = () => asSystem(() => db().query(`UPDATE workspaces SET current_period_end = now() - interval '1 minute', next_retry_at = NULL WHERE id = $1`, [ws]));
+
+        // the platform gives credit (with a note); it pays for whole months before any card is needed
+        assert.equal((await admin.post(`/api/platform/workspaces/${ws}/credit`, { amount: 450, note: '' })).status, 400, 'a note is required');
+        assert.equal((await admin.post(`/api/platform/workspaces/${ws}/credit`, { amount: 450, note: 'Launch partner' })).status, 200);
+        assert.equal((await bill()).credit, 450);
+        const co = await b.post('/api/billing/checkout', { plan: 'starter' });
+        assert.equal(co.status, 200, JSON.stringify(co.json));
+        assert.match(co.json.url, /\/billing\/return\?reference=oc-/, 'nothing to pay on Paystack');
+        assert.equal(ps.inits.length, 0);
+        assert.equal((await b.post('/api/billing/confirm', { reference: co.json.reference })).status, 200);
+        let s = await bill();
+        assert.deepEqual([s.plan, s.status, s.credit], ['starter', 'active', 251]);
+        await ended(); await billing.renewDue();
+        assert.equal((await bill()).credit, 52, 'renewed from credit');
+        assert.equal(ps.charged.length, 0);
+
+        // not enough credit and no card: payment failed (grace); a card change (R5 kept as credit) retries at once with the rest
+        await ended(); await billing.renewDue();
+        s = await bill();
+        assert.deepEqual([s.status, s.lastChargeError, s.active], ['past_due', 'No card on file.', true]);
+        const cardUrl = (await b.get('/api/billing/manage')).json.url;
+        assert.ok(cardUrl.startsWith('https://checkout.paystack.com/'));
+        assert.deepEqual([ps.inits.at(-1).amount, ps.inits.at(-1).metadata.kind], [500, 'card']);
+        ps.verify.card_1 = { status: 'success', reference: 'card_1', amount: 500, currency: 'ZAR', metadata: { workspace_id: ws, kind: 'card' },
+            customer: { email: 'bob@example.com' }, authorization: { authorization_code: 'AUTH_bob', reusable: true, brand: 'mastercard', last4: '5555' } };
+        assert.equal((await b.post('/api/billing/confirm', { reference: 'card_1' })).status, 200);
+        assert.deepEqual([ps.charged.at(-1).authorization_code, ps.charged.at(-1).amount], ['AUTH_bob', 19900 - 5700], 'R52 + R5 of credit, the rest on the card');
+        s = await bill();
+        assert.deepEqual([s.status, s.credit, s.card], ['active', 0, 'Mastercard •••• 5555']);
+
+        // switching to Pro: unused Starter time becomes credit, Pro starts today, charged without leaving the console
+        const sw = await b.post('/api/billing/checkout', { plan: 'pro' });
+        assert.equal(sw.status, 200, JSON.stringify(sw.json));
+        const charged = ps.charged.at(-1).amount;
+        assert.ok(charged >= 59900 - 19900 && charged <= 59900 - 19800, `about R400 charged (got ${charged})`);
+        s = await bill();
+        assert.deepEqual([s.plan, s.credit], ['pro', 0]);
+
+        // extension: the next renewal moves out (free time)
+        const before = Date.parse(s.currentPeriodEnd);
+        const ex = await admin.post(`/api/platform/workspaces/${ws}/extend`, { days: 30 });
+        assert.equal(ex.status, 200);
+        assert.ok(Math.abs(Date.parse((await bill()).currentPeriodEnd) - before - 30 * 86400e3) < 5000);
+
+        // custom limits above the plan (only raise), then back to the plan's
+        const lim = (body) => app.request(`/api/platform/workspaces/${ws}/limits`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: admin.cookieHeader() }, body: JSON.stringify(body) });
+        assert.equal((await lim({ servers: 'many' })).status, 400);
+        assert.equal((await lim({ servers: 8 })).status, 200);
+        assert.equal((await bill()).limits.servers, 8);
+        assert.equal((await lim({ servers: 2 })).status, 200);
+        assert.equal((await bill()).limits.servers, 5, 'overrides never lower the plan');
+        assert.equal((await lim({ clear: true })).status, 200);
+        assert.equal((await bill()).customLimits, false);
+
+        // a declined renewal, retried by the platform once the customer fixed it
+        await ended(); ps.charge = 'failed'; await billing.renewDue();
+        assert.equal((await bill()).status, 'past_due');
+        ps.charge = 'success';
+        const r = await admin.post(`/api/platform/workspaces/${ws}/retry`);
+        assert.deepEqual([r.status, r.json.result], [200, 'renewed']);
+        assert.equal((await bill()).status, 'active');
+        const owner = (await admin.get(`/api/platform/workspaces/${ws}`)).json;
+        assert.ok(owner.credits.some((c) => c.kind === 'grant' && c.note === 'Launch partner'));
+        assert.ok(owner.invoices.some((i) => i.credit > 0 && i.amount === 0), 'an invoice paid fully by credit');
+
+        // cancel at period end, then undo it
+        assert.equal((await b.post('/api/billing/cancel')).status, 200);
+        assert.equal((await bill()).status, 'cancelling');
+        assert.equal((await b.post('/api/billing/resume')).status, 200);
+        assert.equal((await bill()).status, 'active');
+    } finally {
+        await asSystem(() => db().query('UPDATE users SET platform_admin = false WHERE id = $1', [alice.id]));
     }
 });

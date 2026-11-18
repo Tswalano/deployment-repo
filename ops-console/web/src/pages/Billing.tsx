@@ -66,6 +66,15 @@ export function Billing() {
             {subscribed && !b.complimentary && b.status === 'active' && (
               <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Next renewal</dt><dd className="text-slate-200">{day(b.currentPeriodEnd)}</dd></div>
             )}
+            {b.status === 'past_due' && b.lastChargeError && (
+              <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Last payment</dt><dd className="text-rose-300">{b.lastChargeError}</dd></div>
+            )}
+            {b.card && (
+              <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Card</dt><dd className="text-slate-200">{b.card}</dd></div>
+            )}
+            {!!b.credit && b.credit > 0 && (
+              <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Credit</dt><dd className="text-slate-200">R{b.credit.toFixed(2)} <span className="text-slate-500">· used before the card at the next renewal</span></dd></div>
+            )}
             {b.billingEmail && (
               <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Billing email</dt><dd className="truncate text-slate-200">{b.billingEmail}</dd></div>
             )}
@@ -74,11 +83,17 @@ export function Billing() {
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-ink-700 pt-5">
               {other && b.status === 'active' && (
                 <button className="btn-primary" disabled={!!busy} onClick={async () => {
-                  if (await dialog.confirm({ title: `Switch to ${planName(other.id)}?`, body: `R${other.price} per month. The new plan starts today through Paystack checkout, and the current subscription stops renewing.`, confirmLabel: `Switch to ${planName(other.id)}` })) void go(other.id, async () => { window.location.assign((await api.billingCheckout(other.id)).url); });
+                  if (await dialog.confirm({ title: `Switch to ${planName(other.id)}?`, body: b.card && !b.legacySubscription
+                    ? `R${other.price} per month, starting today. Unused time on the current plan is credited, and the rest is charged to ${b.card}.`
+                    : `R${other.price} per month, starting today through Paystack checkout. The current subscription stops renewing.`, confirmLabel: `Switch to ${planName(other.id)}` })) void go(other.id, async () => { window.location.assign((await api.billingCheckout(other.id)).url); });
                 }}>{busy === other.id ? 'Opening Paystack…' : `Switch to ${planName(other.id)}`}</button>
               )}
-              {b.hasSubscription && <button className="btn-secondary" disabled={!!busy} onClick={() => go('card', async () => { window.location.assign((await api.billingManage()).url); })}>Update card</button>}
-              {b.hasSubscription && b.status === 'active' && <button className="btn-ghost ml-auto" disabled={!!busy} onClick={async () => {
+              {(b.hasSubscription || b.status === 'past_due') && <button className={b.status === 'past_due' ? 'btn-primary' : 'btn-secondary'} disabled={!!busy}
+                      title={b.card && !b.legacySubscription ? 'A R5 card check on Paystack, kept as credit' : undefined}
+                      onClick={() => go('card', async () => { window.location.assign((await api.billingManage()).url); })}>{b.card || b.legacySubscription ? 'Update card' : 'Add a card'}</button>}
+              {b.status === 'cancelling' && !b.legacySubscription && <button className="btn-secondary" disabled={!!busy}
+                      onClick={() => go('resume', async () => { await api.billingResume(); await load(); setBusy(null); setMsg({ tone: 'ok', text: 'The subscription continues; it renews as usual.' }); })}>Resume subscription</button>}
+              {b.status === 'active' && <button className="btn-ghost ml-auto" disabled={!!busy} onClick={async () => {
                 if (await dialog.confirm({ title: 'Cancel the subscription?', body: 'Everything keeps working until the end of the paid period.', confirmLabel: 'Cancel subscription', cancelLabel: 'Keep it', danger: true })) void go('cancel', async () => { await api.billingCancel(); await load(); setBusy(null); setMsg({ tone: 'ok', text: 'The subscription ends at the end of the current period.' }); });
               }}>Cancel subscription</button>}
             </div>
@@ -149,7 +164,7 @@ function Invoices() {
               <td>{day(i.issuedAt)}</td>
               <td className="num text-xs">{i.number}</td>
               <td className="text-slate-400" title={i.card ?? ''}>{i.description}</td>
-              <td className="num text-right">R{i.amount.toFixed(2)}</td>
+              <td className="num text-right">R{i.amount.toFixed(2)}{!!i.creditApplied && <div className="text-2xs text-slate-500">+ R{i.creditApplied.toFixed(2)} credit</div>}</td>
               <td className="capitalize text-slate-400">{i.status}</td>
               <td className="text-right"><a className="text-xs text-slate-300 underline-offset-2 hover:underline" href={`/api/billing/invoices/${i.id}/pdf`} download>PDF</a></td>
             </tr>
@@ -167,7 +182,7 @@ export function BillingReturn() {
   const [state, setState] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
   useEffect(() => {
     const ref = q.get('reference') ?? q.get('trxref') ?? '';
-    api.billingConfirm(ref).then(async (r) => { await refresh(); setState({ tone: 'ok', text: `Payment received. Plan: ${r.plan[0].toUpperCase()}${r.plan.slice(1)}.` }); })
+    api.billingConfirm(ref).then(async (r) => { await refresh(); setState({ tone: 'ok', text: `Done. Plan: ${r.plan[0].toUpperCase()}${r.plan.slice(1)}${r.status === 'active' ? ', active' : ''}.` }); })
       .catch((e) => setState({ tone: 'bad', text: err(e) }));
   }, [q, refresh]);
   return (
