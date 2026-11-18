@@ -19,6 +19,8 @@ process.env.PAYSTACK_SECRET_KEY = 'sk_test_' + 'f'.repeat(40);
 process.env.PLATFORM_ADMINS = 'dee@example.com';
 process.env.SERVER_BUNDLE_URL = 'https://ops-console-public-111111111111-af-south-1.s3.af-south-1.amazonaws.com/bundles/' + 'a'.repeat(64) + '.tar.gz';
 process.env.SERVER_BUNDLE_SHA256 = 'a'.repeat(64);
+process.env.PLATFORM_APPS_DOMAIN = 'apps.example.test';
+process.env.PLATFORM_APPS_ZONE_ID = 'ZPLAT';
 
 const dist = (m) => require(path.join(__dirname, '..', 'dist', m));
 let pg, app, ip = 0;
@@ -436,7 +438,7 @@ test('GitHub per workspace: each workspace creates its own private app, sees onl
         assert.equal((await put(a, 'nope.com')).status, 409);
         const set = await put(a, 'Acme.com.');
         assert.equal(set.status, 200, await set.clone().text());
-        assert.deepEqual((await a.get('/api/aws-connection/apps-domain')).json.appsDomain, { domain: 'acme.com', zoneId: 'ZACME' });
+        assert.deepEqual((await a.get('/api/aws-connection/apps-domain')).json.appsDomain, { mode: 'route53', domain: 'acme.com', zoneId: 'ZACME' });
         assert.equal((await put(b, 'acme.com')).status, 409, 'Bob has no AWS account connected');
         assert.equal((await b.get('/api/aws-connection/apps-domain')).json.appsDomain, null);
     } finally {
@@ -617,3 +619,46 @@ test('cutover: workspace 1 connected through the role before the switch, existin
     await assert.rejects(cut.setEmail('dee', 'alice@example.com'), /already uses/);
     await cut.setEmail('dee', 'dee3@example.com');
 });
+
+test('app addresses: provided by the platform (default), the workspace\'s own Route 53, or another DNS provider', async () => {
+    const { withWorkspace } = dist('db');
+    const na = dist('newapp');
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+    const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
+    const put = (cl, body) => app.request('/api/aws-connection/apps-domain', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: cl.cookieHeader() }, body: JSON.stringify(body) });
+
+    // nothing chosen: provided addresses under the workspace's slug
+    const sb = (await b.get('/api/aws-connection/apps-domain')).json;
+    assert.equal(sb.current.kind, 'platform');
+    assert.match(sb.current.base, /^[a-z0-9-]+\.apps\.example\.test$/);
+    // a Route 53 domain chosen earlier stays as it is
+    assert.deepEqual((await a.get('/api/aws-connection/apps-domain')).json.current, { kind: 'workspace', base: 'acme.com' });
+
+    assert.equal((await put(a, { mode: 'external', domain: 'shop.apps.example.test' })).status, 400, "the platform's domain can't be claimed");
+    const ext = await put(a, { mode: 'external', domain: 'acme-shop.example' });
+    assert.equal(ext.status, 200);
+    assert.deepEqual((await ext.json()).current, { kind: 'external', base: 'acme-shop.example' });
+
+    // pre-flight: provided names live in the platform's zone (host account); external ones are added by the workspace
+    const asked = [];
+    dist('aws').setAwsProvider(new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => {
+        if (prop === 'dnsRecords') { asked.push(args); return []; }
+        return null;
+    }) }));
+    dist('connections').setWorkspaceProviderFactory(() => new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async () => (prop === 'describeInstance' ? { publicIp: '203.0.113.7' } : null)) }));
+    const inst = { id: 999, name: 'web', region: 'af-south-1', aws_instance_id: 'i-0abc', last_status: null };
+    const e = await withWorkspace(wsA, () => na.check(inst, 'shop', 'shop'));
+    assert.equal(e.domain.status, 'external');
+    assert.equal(e.domain.name, 'shop.acme-shop.example');
+    assert.match(e.domain.reason, /add an A record for shop\.acme-shop\.example pointing at 203\.0\.113\.7/);
+    assert.equal(asked.length, 0, 'no Route 53 lookups for another DNS provider');
+
+    assert.equal((await put(a, { mode: 'platform' })).status, 200);
+    const p = await withWorkspace(wsA, () => na.check(inst, 'shop', 'shop'));
+    assert.deepEqual([p.domain.status, p.domain.name], ['free', 'shop.acme-ltd.apps.example.test']);
+    assert.deepEqual(asked[0], ['ZPLAT', 'shop.acme-ltd.apps.example.test'], "looked up in the platform's zone, with the host account");
+});
+

@@ -84,13 +84,20 @@ const ARTICLES: Article[] = [
       <H>Automatic deploys</H>
       <P>Every push to the linked branch deploys that commit. If the new version fails its health check, the previous version is restored. Deploys, retries and rollbacks are on each app's <b>Deploy</b> tab; failures that were not fixed by a later deploy are listed under <b>Activity → Failed deployments</b>.</P>
     </>) },
-  { slug: 'domains', group: 'Servers and apps', title: 'Domains and HTTPS', summary: 'App addresses under the organisation\'s domain, with certificates.',
+  { slug: 'domains', group: 'Servers and apps', title: 'App addresses and HTTPS', summary: 'Choose how apps get their web address, with free certificates.',
     body: () => (<>
-      <P>Settings → <b>Apps domain</b>: enter a domain (for example <C>acme.com</C> or <C>apps.acme.com</C>) whose DNS is a Route 53 hosted zone in the connected account. New apps receive an address under it, such as <C>shop.acme.com</C>; the console creates the DNS record and a free Let's Encrypt certificate.</P>
-      <UL>
-        <li>If HTTPS shows as pending, DNS was still propagating when the app was created; the certificate is issued on the next deploy.</li>
-        <li>When an app creation fails, the DNS record the console created is removed again.</li>
-      </UL>
+      <P>Settings → <b>App addresses</b> sets how new apps get their address. Every option includes a free Let&rsquo;s Encrypt certificate.</P>
+      <H>Provided addresses</H>
+      <P>Where the platform offers them, apps get an address like <C>shop.acme.apps.example.com</C> with no domain needed. DNS is managed by the platform.</P>
+      <H>Domain in Route 53</H>
+      <P>Enter a domain (for example <C>acme.com</C> or <C>apps.acme.com</C>) whose DNS is a hosted zone in the connected AWS account. New apps receive an address such as <C>shop.acme.com</C>; the console creates the record, and removes it again if an app creation fails.</P>
+      <H>Domain at another DNS provider</H>
+      <OL>
+        <li>Enter the domain and create the app as usual.</li>
+        <li>On the app&rsquo;s page, the <b>Address</b> panel shows one A record: add it at the DNS provider.</li>
+        <li>After a few minutes, select <b>Check DNS and enable HTTPS</b>. The server confirms the name points at it and requests the certificate.</li>
+      </OL>
+      <Note>Until the record is added, the app runs but is not reachable at its address. The panel shows where the name points today.</Note>
     </>) },
   { slug: 'settings-env', group: 'Servers and apps', title: 'Environment variables', summary: 'App settings and secrets.',
     body: () => (<>

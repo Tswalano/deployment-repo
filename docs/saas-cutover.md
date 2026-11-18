@@ -131,6 +131,23 @@ Nothing to set up. Each workspace selects **Settings → GitHub → Connect GitH
 in its own GitHub account (credentials in SSM under `/ops-console/github/ws/<workspace>/app`). Webhook deliveries are
 routed to the right workspace by the app's id and checked with that app's secret. Workspace 1 keeps its original app.
 
+## 11. Provided app addresses (optional, any time)
+
+Workspaces without a domain can get addresses like `shop.<workspace>.<platform domain>`. Off until both are set:
+
+```bash
+put PLATFORM_APPS_DOMAIN apps.glenify.studio     # for demos; a separate domain (e.g. a dedicated .app) before real customers
+put PLATFORM_APPS_ZONE_ID <hosted zone id that holds it>
+sudo systemctl restart app-secrets@ops-console ops-console
+```
+
+The console host's role must be allowed to change records in that zone (`infra/iam/instance-ops-console-apps.json`,
+`HOSTED_ZONE_ID`); the glenify.studio zone already is. Use a separate registered domain before real customers, so
+customer apps can't set cookies for the console's own domain.
+
+Customers with DNS elsewhere choose **Domain at another DNS provider**: they add one A record per app, then select
+**Check DNS and enable HTTPS** on the app's page (`OpsConsole-EnableHttps`).
+
 ## Rollback
 
 ```bash

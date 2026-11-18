@@ -6,7 +6,7 @@ import { db } from '../db';
 import { DeployError, deploymentView } from '../deploys';
 import { githubConfig } from '../github';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
-import { appsDomain, check, createApp, detect, validate } from '../newapp';
+import { appAddress, appsDomain, check, createApp, detect, enableHttps, validate } from '../newapp';
 
 /** Mounted on /api; every route carries its own guards. */
 const newapp = new Hono<Env>();
@@ -51,6 +51,24 @@ newapp.get('/instances/:id/new-app', requireRole('deployer'), denyDemo, async (c
                 created_at AS "createdAt", finished_at AS "finishedAt" FROM app_creations WHERE instance_id = $1 ORDER BY created_at DESC LIMIT 20`,
         [Number(c.req.param('id'))]);
     return c.json({ creations: rows });
+});
+
+/** An app's address: DNS status and HTTPS (shown on the app page while HTTPS is missing). */
+newapp.get('/instances/:id/apps/:project/address', requireRole('viewer'), async (c) => {
+    const i = await inst(c);
+    if (!i) return c.json({ error: 'Instance not found' }, 404);
+    try { return c.json({ address: await appAddress(i, c.req.param('project')) }); } catch (err) { return fail(c, err); }
+});
+newapp.post('/instances/:id/apps/:project/https', requireRole('deployer'), denyDemo, rateLimit(10, 10 * 60_000, (c) => `https:${c.get('user')!.id}`), async (c) => {
+    const i = await inst(c);
+    if (!i) return c.json({ error: 'Instance not found' }, 404);
+    const project = c.req.param('project');
+    try {
+        const r = await enableHttps(i, project);
+        const user = c.get('user')!;
+        if (r.tls) await audit({ id: user.id, username: user.username }, 'app.https', `${project} on ${i.name}`, {}, c.get('ip'));
+        return c.json(r);
+    } catch (err) { return fail(c, err); }
 });
 
 export default newapp;

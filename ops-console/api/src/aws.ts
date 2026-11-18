@@ -517,6 +517,9 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
             if (document === 'OpsConsole-SshKeys') {
                 return JSON.stringify({ ok: true, action: parameters?.action?.[0], user: parameters?.user?.[0], fingerprint: parameters?.fingerprint?.[0] || 'SHA256:(dry run)', dryRun: true });
             }
+            if (document === 'OpsConsole-EnableHttps') {
+                return JSON.stringify({ ok: false, tls: false, domain: '', resolves: [], expected: '', reason: 'Local test mode: certificates are not issued.' });
+            }
             if (document === 'OpsConsole-BackupAction' && parameters?.action?.[0] === 'run') {
                 return JSON.stringify({ ok: true, seconds: 0, status: { at: new Date().toISOString(), ok: true, dryRun: true } });
             }
