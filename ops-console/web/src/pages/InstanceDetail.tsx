@@ -187,7 +187,7 @@ export function InstanceDetail() {
         )}
       />
       {canRefresh && <CreatingBanner instanceId={i.id} />}
-      {site.multiTenant && (!s || s.source !== 'agent') && i.ec2State !== 'stopped' && <PrepareServer instanceId={i.id} onDone={() => void refresh()} />}
+      {site.multiTenant && (!s || s.source !== 'agent') && i.ec2State !== 'stopped' && <PrepareServer instanceId={i.id} rebootToConnect={!!i.rebootToConnect} onDone={() => void refresh()} />}
       {powerMsg && <div className="mb-4"><Alert tone="ok">{powerMsg}</Alert></div>}
       {down && (
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-ink-700 px-4 py-3 text-sm">

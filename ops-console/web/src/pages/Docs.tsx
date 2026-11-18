@@ -62,8 +62,10 @@ const ARTICLES: Article[] = [
       <UL>
         <li>Linux only; Amazon Linux 2023 is required for server preparation.</li>
         <li>The server needs outbound internet access (HTTPS) for Session Manager.</li>
-        <li>A newly added server can take a few minutes to become reachable.</li>
       </UL>
+      <H>Reboot once if the server was already running</H>
+      <P>When the console gives a running server its instance profile, AWS Session Manager on the server only notices it when the server starts. The server&rsquo;s page then shows <b>Reboot the server once to connect it</b>: select <b>Reboot now</b>, wait about two minutes, then prepare the server. Without a reboot it connects by itself within about 30 minutes.</P>
+      <Note>To skip this step for new servers, choose <C>OpsConsoleInstance-&lt;region&gt;</C> as the IAM instance profile when launching them in EC2 (Advanced details → IAM instance profile). They are then reachable as soon as they start.</Note>
       <H>Preparing the server</H>
       <P>A new server shows <b>Prepare server</b>. Preparation installs nginx, git, certbot, Node.js, PostgreSQL 15, the console's read-only status agent, the deploy pipeline and nightly database backups. It can be run again safely: every step checks what is already in place. Select <b>Open web ports 80 and 443</b> to make the apps' websites reachable.</P>
       <H>Power</H>
@@ -177,7 +179,12 @@ const ARTICLES: Article[] = [
   { slug: 'troubleshooting', group: 'Help', title: 'Troubleshooting', summary: 'Common problems and their fixes.',
     body: () => (<>
       <H>The server is not reachable</H>
-      <P>Session Manager requires the server to be running, to have the <C>OpsConsoleInstance</C> profile (or <C>AmazonSSMManagedInstanceCore</C>), and outbound HTTPS. A newly added server can take a few minutes.</P>
+      <P>Session Manager requires the server to be running, to have the <C>OpsConsoleInstance</C> profile (or <C>AmazonSSMManagedInstanceCore</C>), and outbound HTTPS.</P>
+      <UL>
+        <li><b>Added while it was running?</b> Reboot it once from its page (<b>Reboot now</b>): the profile is picked up at start, and the server connects in about two minutes. Without a reboot it connects by itself within about 30 minutes.</li>
+        <li><b>Still not reachable after a reboot?</b> Check the server has a public IP or a NAT gateway (outbound HTTPS to AWS), and that its instance profile is <C>OpsConsoleInstance-&lt;region&gt;</C>.</li>
+      </UL>
+      <P>A server that has never been reached doesn&rsquo;t raise &ldquo;unreachable&rdquo; alerts; those start once it has reported in at least once.</P>
       <H>The first deploy fails its health check</H>
       <P>Confirm that the app listens on <C>process.env.PORT</C> and that its health path returns HTTP 200. The failure output is under Activity → Failed deployments.</P>
       <H>A repository is not listed</H>

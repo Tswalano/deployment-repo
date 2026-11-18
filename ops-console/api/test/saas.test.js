@@ -257,6 +257,10 @@ test('connect AWS: per-workspace external ID, verified by assuming the role; ser
     const add = await a.post('/api/aws-connection/servers', { awsInstanceId: 'i-0aaaaaaaaaaaaaaa9', environment: 'staging' });
     assert.equal(add.status, 200, JSON.stringify(add.json));
     assert.deepEqual(add.json.steps, ['tagged ops-console=managed', 'attached OpsConsoleInstance-af-south-1']);
+    // it was running without a profile: it connects after a reboot, and the console says so
+    assert.equal(add.json.rebootToConnect, true);
+    assert.match(add.json.note, /reboot it once/);
+    assert.equal((await a.get('/api/instances')).json.instances.find((i) => i.awsInstanceId === 'i-0aaaaaaaaaaaaaaa9').rebootToConnect, true);
     const tag = calls.find((x) => x.prop === 'tagManaged');
     assert.deepEqual([tag.account, tag.args], ['222222222222', ['af-south-1', 'i-0aaaaaaaaaaaaaaa9', ['sg-0123']]]);
     assert.ok(calls.every((x) => x.account === '222222222222' && x.key === 'AK'), "every call ran on Alice's assumed role");
@@ -304,13 +308,14 @@ test('prepare a fresh server: only through the customer role; agent password in 
     });
     const calls = [];
     const params = {};
+    let online = false;
     conn.setWorkspaceProviderFactory((c) => new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => {
         calls.push({ account: c.role_arn.split(':')[4], prop: String(prop), args });
         switch (prop) {
             case 'documentsReady': return true;
             case 'listInstances': return [{ id: 'i-0ccccccccccccccc7', name: 'fresh-1', state: 'running', type: 't4g.small', az: 'af-south-1a', publicIp: '203.0.113.7', platform: 'Linux/UNIX', managedTag: false, instanceProfile: null, ssmOnline: true, securityGroups: ['sg-0aa'], launchedAt: null }];
             case 'describeInstance': return { name: 'fresh-1', state: 'running', type: 't4g.small', az: 'af-south-1a', managedTag: true, publicIp: '203.0.113.7' };
-            case 'ssmOnline': return true;
+            case 'ssmOnline': return online;
             case 'getParameter': return params[args[1]] ?? null;
             case 'putParameter': params[args[1]] = args[2]; return undefined;
             case 'sshAccess': return [{ groupId: 'sg-0aa', name: 'web', managedTag: true, rules: [], prefixLists: [], openToWorld: false }, { groupId: 'sg-0bb', name: 'other', managedTag: false, rules: [], prefixLists: [], openToWorld: false }];
@@ -329,6 +334,11 @@ test('prepare a fresh server: only through the customer role; agent password in 
     const id = add.json.instance.id;
 
     assert.equal((await a.get(`/api/instances/${id}/prepare`)).json.deployment, null);
+    // given its profile while running and not connected yet: the answer is "reboot once", not a generic error
+    const early = await a.post(`/api/instances/${id}/prepare`, { openWeb: true });
+    assert.deepEqual([early.status, early.json.code], [409, 'reboot_to_connect']);
+    assert.match(early.json.error, /Reboot it once/);
+    online = true;
     const r = await a.post(`/api/instances/${id}/prepare`, { openWeb: true });
     assert.equal(r.status, 202, JSON.stringify(r.json));
     assert.match(params['/apps/ops-dashboard/PGPASSWORD'], /^[A-Za-z0-9_-]{32}$/, 'the agent password is generated and kept in the customer account');

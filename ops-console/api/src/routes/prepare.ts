@@ -42,7 +42,10 @@ prepare.post('/:id/prepare', multiOnly, requireRole('admin'), denyDemo, rateLimi
         if (!info) return c.json({ error: 'The server no longer exists in your AWS account.' }, 409);
         if (info.state !== 'running') return c.json({ error: `The server is ${info.state}: start it first.` }, 409);
         if (!(await aws().ssmOnline(inst.region, inst.aws_instance_id))) {
-            return c.json({ error: "The server isn't reachable through AWS Session Manager yet. Just after adding it this takes a few minutes; if it stays this way, check it has internet access (outbound HTTPS) and the OpsConsoleInstance profile." }, 409);
+            if (inst.profile_attached_at) {
+                return c.json({ error: 'The server was already running when the console gave it access, so AWS Session Manager hasn\'t connected it yet. Reboot it once (about two minutes), then prepare it. Otherwise it connects by itself within about 30 minutes.', code: 'reboot_to_connect' }, 409);
+            }
+            return c.json({ error: "The server isn't reachable through AWS Session Manager yet. Just after adding it this takes a few minutes. If it stays this way, reboot it once, and check it has internet access (outbound HTTPS) and the OpsConsoleInstance profile.", code: 'not_reachable' }, 409);
         }
         // the status agent's read-only database password, kept in the customer's own account
         const existing = await aws().getParameter!(inst.region, '/apps/ops-dashboard/PGPASSWORD').catch(() => null);
