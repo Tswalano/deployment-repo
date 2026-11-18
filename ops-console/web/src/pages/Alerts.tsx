@@ -16,9 +16,13 @@ const RULES: Record<string, string> = {
 };
 const lasted = (a: AlertT) => dur(((a.resolvedAt ? new Date(a.resolvedAt).getTime() : Date.now()) - new Date(a.openedAt).getTime()) / 1000);
 
+/** The app's page while the app exists; otherwise its server (a removed app's page would say "App not found"). */
+const alertLink = (a: AlertT): string | null =>
+  a.project && a.instanceId && a.appExists ? `/instances/${a.instanceId}/apps/${a.project}` : a.instanceId ? `/instances/${a.instanceId}` : null;
+
 function OpenAlert({ a, canAck, onAck }: { a: AlertT; canAck: boolean; onAck: () => void }) {
   const s = SEV[a.severity];
-  const link = a.project && a.instanceId ? `/instances/${a.instanceId}/apps/${a.project}` : a.instanceId ? `/instances/${a.instanceId}` : null;
+  const link = alertLink(a);
   return (
     <li className="card relative overflow-hidden p-0">
       <span className={`absolute inset-y-0 left-0 w-1 ${s.bar}`} />
@@ -27,7 +31,6 @@ function OpenAlert({ a, canAck, onAck }: { a: AlertT; canAck: boolean; onAck: ()
           <div className="flex flex-wrap items-center gap-2">
             <span className={s.pill}>{s.label}</span>
             <span className="text-2xs uppercase tracking-wider text-slate-500">{RULES[a.rule] ?? a.rule}</span>
-            {a.ackedBy && <span className="pill-mute">acknowledged by {a.ackedBy}</span>}
           </div>
           <h3 className="mt-1.5 font-medium text-slate-100">{link ? <Link to={link} className="hover:text-indigo-300">{a.title}</Link> : a.title}</h3>
           <p className="mt-1 text-sm text-slate-400">{a.detail}</p>
@@ -36,7 +39,7 @@ function OpenAlert({ a, canAck, onAck }: { a: AlertT; canAck: boolean; onAck: ()
             {a.notifyCount ? ` · notified ${a.notifyCount}×` : ''}
           </p>
         </div>
-        {canAck && !a.ackedBy && <button className="btn-secondary shrink-0 px-3 py-1.5 text-xs" onClick={onAck}>Acknowledge</button>}
+        {canAck && <button className="btn-secondary shrink-0 px-3 py-1.5 text-xs" title="Acknowledge and move to the history" onClick={onAck}>Dismiss</button>}
       </div>
     </li>
   );
@@ -47,8 +50,8 @@ export function Alerts() {
   const { data, error, reload } = usePoll(() => api.alerts('all'), 30_000);
   const [actionError, setActionError] = useState<string | null>(null);
   const canAck = !!user && (user.role === 'admin' || user.role === 'deployer') && !user.isDemo;
-  const open = data?.alerts.filter((a) => !a.resolvedAt) ?? [];
-  const history = data?.alerts.filter((a) => a.resolvedAt) ?? [];
+  const open = data?.alerts.filter((a) => !a.resolvedAt && !a.ackedAt) ?? [];
+  const history = data?.alerts.filter((a) => a.resolvedAt || a.ackedAt) ?? [];
 
   return (
     <div>
@@ -80,19 +83,19 @@ export function Alerts() {
 
           <section className="card overflow-hidden p-0">
             <h2 className="px-5 py-4 font-medium text-slate-100">History</h2>
-            {history.length === 0 ? <p className="px-5 pb-5 text-sm text-slate-500">No resolved alerts yet.</p> : (
+            {history.length === 0 ? <p className="px-5 pb-5 text-sm text-slate-500">No resolved or dismissed alerts yet.</p> : (
               <table className="tbl">
                 <thead><tr>
                   <th className="w-[24%] md:w-[14%]">Opened</th><th className="hidden w-[11%] md:table-cell">Severity</th><th>Alert</th>
-                  <th className="w-[18%] text-right md:w-[11%]">Lasted</th><th className="hidden w-[14%] lg:table-cell">Acknowledged</th>
+                  <th className="w-[18%] text-right md:w-[11%]">Lasted</th><th className="w-[16%]">Status</th>
                 </tr></thead>
                 <tbody>{history.map((a) => (
                   <tr key={a.id}>
                     <td title={a.openedAt}>{ago(a.openedAt)}</td>
                     <td className="hidden md:table-cell"><span className={SEV[a.severity].pill}>{SEV[a.severity].label}</span></td>
-                    <td title={`${a.title}: ${a.detail}`}>{a.title}</td>
+                    <td title={`${a.title}: ${a.detail}`}>{alertLink(a) ? <Link to={alertLink(a)!} className="hover:text-indigo-300">{a.title}</Link> : a.title}</td>
                     <td className="num text-right">{lasted(a)}</td>
-                    <td className="hidden lg:table-cell">{a.ackedBy ?? '—'}</td>
+                    <td className="text-slate-400">{a.resolvedAt ? 'Resolved' : `Dismissed by ${a.ackedBy}`}</td>
                   </tr>
                 ))}</tbody>
               </table>

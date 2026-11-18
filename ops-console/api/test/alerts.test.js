@@ -205,7 +205,7 @@ test('instance rules: disk, backup, failed deploy, then recovery', async () => {
     for (const r of ['backup', 'deploy_failed', 'disk_high']) assert.ok(!left.includes(r), `${r} resolved`);
 });
 
-test('alerts API: viewers read, deployers acknowledge (not the demo); ack stops reminders', async () => {
+test('alerts API: viewers read, deployers acknowledge (not the demo); ack stops reminders and moves it to the history', async () => {
     const v = await signedIn('viewer');
     const list = (await v.get('/api/alerts?state=open')).json;
     assert.ok(list.counts.open >= 1);
@@ -217,8 +217,12 @@ test('alerts API: viewers read, deployers acknowledge (not the demo); ack stops 
     assert.equal(r.status, 200);
     assert.equal(r.json.alert.ackedBy, 'deployer');
     assert.equal((await d.post(`/api/alerts/${id}/ack`)).status, 404, 'only once');
-    const overview = (await v.get('/api/instances/overview')).json;
-    assert.ok(overview.alerts.open >= 1);
+    // a dismissed (acknowledged) alert leaves the active list and the counts, and shows in the history
+    const after = (await v.get('/api/alerts?state=open')).json;
+    assert.equal(after.counts.open, list.counts.open - 1);
+    assert.ok(!after.alerts.some((x) => x.id === id));
+    assert.equal((await v.get('/api/instances/overview')).json.alerts.open, list.counts.open - 1);
+    assert.ok((await v.get('/api/alerts')).json.alerts.some((x) => x.id === id && x.ackedBy === 'deployer' && !x.resolvedAt));
 });
 
 test('test notification reports per-channel failures (e.g. SES sandbox) and is audited', async () => {

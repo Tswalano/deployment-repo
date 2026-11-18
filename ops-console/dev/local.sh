@@ -59,7 +59,8 @@ for _ in $(seq 1 90); do grep -q READY "$STATE/bootstrap.log" 2>/dev/null && bre
 grep -v READY "$STATE/bootstrap.log" | sed 's/^/  /' || true   # nothing else to show (e.g. a second --saas start) is fine
 
 if [[ $SAAS == 1 ]]; then
-  export DATABASE_URL="postgresql://opsconsole_app:local@127.0.0.1:${OPS_LOCAL_PG_PORT}/opsconsole_saas" OPS_MULTI_TENANT=1 PRODUCT_NAME="${PRODUCT_NAME:-Ops Console}"
+  export DATABASE_URL="postgresql://opsconsole_app:local@127.0.0.1:${OPS_LOCAL_PG_PORT}/opsconsole_saas" OPS_MULTI_TENANT=1 PRODUCT_NAME="${PRODUCT_NAME:-Ops Console}" \
+         GITHUB_PARAM_PREFIX="${GITHUB_PARAM_PREFIX:-/ops-console/local-saas/github}"   # local workspaces never touch production's GitHub credentials
   # billing: Paystack TEST key only (never a live key on a laptop); default: LiftParcel's test key from SSM
   if [[ -z "${PAYSTACK_SECRET_KEY:-}" ]]; then
     k="$(aws ssm get-parameter --region "${AWS_REGION:-af-south-1}" --name /apps/liftparcel/PAYSTACK_SECRET_KEY --with-decryption --query Parameter.Value --output text 2>/dev/null || true)"

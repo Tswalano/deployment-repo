@@ -19,7 +19,7 @@ import { NewApp } from './pages/NewApp';
 import { Access } from './pages/Access';
 // the terminal (xterm.js) loads only when opened
 const Terminal = lazy(() => import('./pages/Terminal').then((m) => ({ default: m.Terminal })));
-import { GithubCallback, GithubInstalled } from './components/GithubConnect';
+import { GithubCallback } from './components/GithubConnect';
 import { Users } from './pages/Users';
 import { AcceptInvite, ForgotPassword, ResetPassword, Signup, VerifyEmail } from './pages/Public';
 import { Landing } from './pages/Landing';
@@ -72,7 +72,6 @@ function App() {
         <Route path="costs" element={<Costs />} />
         <Route path="account" element={<Account />} />
         <Route path="github/callback" element={<Protected role="admin"><GithubCallback /></Protected>} />
-        <Route path="github/installed" element={<Protected role="admin"><GithubInstalled /></Protected>} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />
         <Route path="team" element={<Team />} />

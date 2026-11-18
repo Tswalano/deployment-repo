@@ -5,7 +5,7 @@ import { useAuth } from '../auth';
 import { ActivityList } from '../components/ActivityList';
 import { ago, Alert, bytes, Dot, dur, Eyebrow, Kpi, PageHeader, pct, seriesOf, Skeleton, Sparkline } from '../components/ui';
 import { Facts } from './app/shared';
-import { PowerControls, stateTone } from '../components/PowerControls';
+import { PowerControls, StateDot } from '../components/PowerControls';
 import { PrepareServer } from '../components/PrepareServer';
 import { ScheduleCard } from '../components/ScheduleCard';
 import { appTone } from '../health';
@@ -161,6 +161,11 @@ export function InstanceDetail() {
 
   const mem = seriesOf(data!.samples, (x) => x.memPct);
   const load = seriesOf(data!.samples, (x) => x.load1);
+  // stopped, or not answering: the figures below are a snapshot, so they're greyed out and uptime becomes downtime
+  const stopped = !!i.ec2State && i.ec2State !== 'running';
+  const down = stopped || !!i.lastError;
+  const downSince = stopped ? (i.ec2StateAt ?? i.lastOkAt) : i.lastOkAt;
+  const stale = down ? 'opacity-50 grayscale' : '';
   return (
     <div>
       <div className="mb-2 text-xs text-slate-500"><Link to="/instances" className="hover:text-slate-300">Instances</Link> / <span className="text-slate-400">{i.name}</span></div>
@@ -169,7 +174,7 @@ export function InstanceDetail() {
         subtitle={<span title={`${i.awsInstanceId} · ${i.region}`}>{i.awsInstanceId} · {s?.host.instanceType ?? 'EC2'} · {s?.host.az ?? i.region} · <span className="capitalize">{i.environment}</span> · snapshot {ago(i.lastOkAt)}</span>}
         actions={canRefresh && (
           <>
-          <span className={`${stateTone(i.ec2State ?? (s ? 'running' : null))} hidden sm:inline-flex`}>{i.ec2State ?? (s ? 'running' : 'unknown')}</span>
+          <StateDot state={i.ec2State ?? (s ? 'running' : null)} className="mr-1 hidden sm:inline-flex" />
           <PowerControls instance={i} isConsoleHost={!!i.isConsoleHost} dryRun={!!data?.powerDryRun} onDone={(m) => { setPowerMsg(m); void refresh(); }} />
           <Link to={`/instances/${i.id}/access`} className="btn-secondary" title="SSH access, keys, logins, OS updates">Access</Link>
           {user?.role === 'admin' && !user.isDemo && i.ec2State !== 'stopped' && <Link to={`/instances/${i.id}/terminal`} className="btn-secondary hidden md:inline-flex">Terminal</Link>}
@@ -184,25 +189,32 @@ export function InstanceDetail() {
       {canRefresh && <CreatingBanner instanceId={i.id} />}
       {site.multiTenant && (!s || s.source !== 'agent') && i.ec2State !== 'stopped' && <PrepareServer instanceId={i.id} onDone={() => void refresh()} />}
       {powerMsg && <div className="mb-4"><Alert tone="ok">{powerMsg}</Alert></div>}
-      {i.lastError && i.ec2State && i.ec2State !== 'running' ? (
-        <div className="mb-4"><Alert tone="warn">This instance is {i.ec2State}{i.ec2StateAt ? ` (since ${ago(i.ec2StateAt)})` : ''}. Showing the last snapshot from {ago(i.lastOkAt)}.</Alert></div>
-      ) : i.lastError && <div className="mb-4"><Alert tone="warn">Last fetch failed ({i.lastError}). Showing the snapshot from {ago(i.lastOkAt)}.</Alert></div>}
+      {down && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-ink-700 px-4 py-3 text-sm">
+          <span className="flex items-center gap-2 text-slate-200" title={i.lastError ?? undefined}>
+            <span className="h-2 w-2 rounded-full bg-rose-400" />{stopped ? `Server ${i.ec2State}` : 'Server not responding'}{downSince ? ` for ${dur((Date.now() - new Date(downSince).getTime()) / 1000)}` : ''}
+          </span>
+          <span className="text-slate-500">Greyed-out figures are from the last snapshot{i.lastOkAt ? `, ${ago(i.lastOkAt)}` : ''}.</span>
+        </div>
+      )}
       {!s ? <div className="card text-sm text-slate-500">No snapshot yet.</div> : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            <Kpi label="Memory" tone="info" value={`${pct(s.host.memory.used, s.host.memory.total).toFixed(0)}%`} unit={`of ${bytes(s.host.memory.total)}`} />
-            <Kpi label="Disk" tone={pct(s.host.disk.used, s.host.disk.total) > 85 ? 'warn' : 'ok'} value={`${pct(s.host.disk.used, s.host.disk.total).toFixed(0)}%`} unit={`${bytes(s.host.disk.free)} free`} />
-            <Kpi label="Load" tone="ok" value={(s.host.load[0] ?? 0).toFixed(2)} unit={`${s.host.cpus} vCPU`} className="col-span-2 md:col-span-1" />
-            <Kpi label="Swap" tone={pct(s.host.swap.used, s.host.swap.total) > 50 ? 'warn' : 'ok'} value={bytes(s.host.swap.used)} unit={`of ${bytes(s.host.swap.total)}`} className="hidden md:block" />
-            <Kpi label="Uptime" tone="info" value={dur(s.host.uptimeSeconds)} unit={s.source === 'agent' ? 'agent' : 'basic'} className="hidden md:block" />
+            <Kpi label="Memory" tone={down ? undefined : 'info'} value={`${pct(s.host.memory.used, s.host.memory.total).toFixed(0)}%`} unit={`of ${bytes(s.host.memory.total)}`} className={stale} />
+            <Kpi label="Disk" tone={down ? undefined : pct(s.host.disk.used, s.host.disk.total) > 85 ? 'warn' : 'ok'} value={`${pct(s.host.disk.used, s.host.disk.total).toFixed(0)}%`} unit={`${bytes(s.host.disk.free)} free`} className={stale} />
+            <Kpi label="Load" tone={down ? undefined : 'ok'} value={(s.host.load[0] ?? 0).toFixed(2)} unit={`${s.host.cpus} vCPU`} className={`col-span-2 md:col-span-1 ${stale}`} />
+            <Kpi label="Swap" tone={down ? undefined : pct(s.host.swap.used, s.host.swap.total) > 50 ? 'warn' : 'ok'} value={bytes(s.host.swap.used)} unit={`of ${bytes(s.host.swap.total)}`} className={`hidden md:block ${stale}`} />
+            {down
+              ? <Kpi label="Downtime" tone="bad" value={downSince ? dur((Date.now() - new Date(downSince).getTime()) / 1000) : '—'} unit={stopped ? i.ec2State! : 'not responding'} className="hidden md:block" />
+              : <Kpi label="Uptime" tone="info" value={dur(s.host.uptimeSeconds)} unit={s.source === 'agent' ? 'agent' : 'basic'} className="hidden md:block" />}
           </div>
 
-          <div className="mt-5 hidden gap-5 sm:grid sm:grid-cols-2">
+          <div className={`mt-5 hidden gap-5 sm:grid sm:grid-cols-2 ${stale}`}>
             <div className="card p-0"><div className="px-5 pt-4 text-sm text-slate-400">Memory · 24h</div><div className="pt-2"><Sparkline {...mem} tone="info" format={(v) => `${v.toFixed(1)}%`} label="memory used" /></div></div>
             <div className="card p-0"><div className="px-5 pt-4 text-sm text-slate-400">Load average · 24h</div><div className="pt-2"><Sparkline {...load} tone="warn" max={Math.max(2, ...load.values)} format={(v) => v.toFixed(2)} label="load (1 min)" /></div></div>
           </div>
 
-          <section className="card mt-5 overflow-hidden p-0">
+          <section className={`card mt-5 overflow-hidden p-0 ${stale}`}>
             <div className="flex items-center justify-between px-5 py-4"><h2 className="font-medium text-slate-100">Applications</h2><span className="text-xs text-slate-500">{s.apps.filter((a) => a.healthy).length}/{s.apps.length} healthy</span></div>
             {s.apps.length === 0 ? <p className="px-5 pb-5 text-sm text-slate-500">{s.source === 'basic' ? 'This instance has no ops agent, so only host metrics are available.' : 'No apps configured.'}</p> : (
               <table className="tbl">
@@ -218,7 +230,7 @@ export function InstanceDetail() {
           </section>
 
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
-            <div className="hidden min-w-0 space-y-5 md:block">
+            <div className={`hidden min-w-0 space-y-5 md:block ${stale}`}>
               <DbServer s={s} series={data!.dbSeries} />
               <section className="card">
                 <h2 className="font-medium text-slate-100">Services, certificates & backups</h2>

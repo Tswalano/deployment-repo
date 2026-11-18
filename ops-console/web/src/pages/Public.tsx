@@ -33,7 +33,7 @@ function FormShell({ title, sub, children }: { title: string; sub?: ReactNode; c
 }
 
 export function Signup() {
-  const { refresh, site } = useAuth();
+  const { refresh } = useAuth();
   const navigate = useNavigate();
   const [f, setF] = useState({ name: '', email: '', password: '', workspace: '', username: '' });
   const [busy, setBusy] = useState(false);
@@ -60,7 +60,7 @@ export function Signup() {
   }
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   return (
-    <FormShell title="Create an account" sub={`${site.trialDays}-day free trial · no card needed`}>
+    <FormShell title="Create an account">
       <form onSubmit={submit} className="card space-y-4" noValidate>
         {error && <Alert>{error}</Alert>}
         <div><label className="label" htmlFor="su-name">Full name</label><input id="su-name" className="input" autoComplete="name" value={f.name} onChange={set('name')} required /></div>

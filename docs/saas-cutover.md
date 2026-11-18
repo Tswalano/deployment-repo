@@ -125,16 +125,11 @@ curl -s https://ops.glenify.studio/api/account/config     # → "multiTenant":tr
 - [ ] Sign up a test company in a private window: the welcome screen appears and it sees nothing of workspace 1.
 - [ ] Paystack: set the webhook URL to `https://ops.glenify.studio/api/billing/paystack` in the Paystack dashboard.
 
-## 10. GitHub for customers (once)
+## 10. GitHub for customers
 
-For customers to install the app themselves, update the existing GitHub App on github.com
-(Settings → Developer settings → GitHub Apps → the app):
-
-- **Callback URL:** `https://ops.glenify.studio/github/installed`.
-- **Request user authorization (OAuth) during installation:** ticked.
-- **Generate a client secret.** Then, in the console (Settings → GitHub, as a platform admin), paste the Client ID
-  and secret.
-- **Make the app public**, so other GitHub accounts can install it.
+Nothing to set up. Each workspace selects **Settings → GitHub → Connect GitHub**, which creates a private GitHub App
+in its own GitHub account (credentials in SSM under `/ops-console/github/ws/<workspace>/app`). Webhook deliveries are
+routed to the right workspace by the app's id and checked with that app's secret. Workspace 1 keeps its original app.
 
 ## Rollback
 

@@ -343,18 +343,29 @@ test('prepare a fresh server: only through the customer role; agent password in 
     assert.equal((await b.post(`/api/instances/${id}/prepare`, {})).status, 404, "another workspace's server doesn't exist for you");
 });
 
-test('GitHub per workspace: verified installation linking, repos only from your installations, webhook to linked workspaces; apps domain in your Route 53', async () => {
+test('GitHub per workspace: each workspace creates its own private app, sees only its repositories, and webhooks reach only that workspace; apps domain in your Route 53', async () => {
     const crypto = require('crypto');
-    const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
-    const cfg = { appId: '42', slug: 'ops-console-test', privateKey: privateKey.export({ type: 'pkcs1', format: 'pem' }), webhookSecret: 'whsec', htmlUrl: 'https://github.com/apps/ops-console-test', owner: 'platform', clientId: 'Iv1.abc', clientSecret: 'shh' };
-    // the platform's app lives in the HOST account
-    dist('aws').setAwsProvider(new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => (prop === 'getConsoleSecret' && args[1] === '/ops-console/github/app' ? JSON.stringify(cfg) : null)) }));
+    const keys = { 42: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey, 43: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey };
+    // app credentials live in the HOST account's SSM: an in-memory stand-in
+    const store = new Map();
+    dist('aws').setAwsProvider(new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => {
+        if (prop === 'getConsoleSecret') return store.get(args[1]) ?? null;
+        if (prop === 'putConsoleSecret') { store.set(args[1], args[2]); return; }
+        if (prop === 'deleteConsoleSecret') { store.delete(args[1]); return; }
+        return null;
+    }) }));
     const realFetch = global.fetch;
     const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+    const appOf = (init) => JSON.parse(Buffer.from(String(init.headers.authorization).split(' ')[1].split('.')[1], 'base64url').toString()).iss;
     global.fetch = async (url, init) => {
         const u = String(url);
-        if (u === 'https://github.com/login/oauth/access_token') return json(JSON.parse(init.body).code === 'good-code-123' ? { access_token: 'user-token' } : { error_description: 'bad_verification_code' });
-        if (u.includes('/user/installations')) return json({ total_count: 1, installations: [{ id: 555, account: { login: 'acme-org', type: 'Organization' } }] });
+        const conv = /\/app-manifests\/(code-0*(\d+))\/conversions/.exec(u);
+        if (conv) {
+            const id = Number(conv[2]);
+            return json({ id, slug: `ops-console-${id}`, pem: keys[id].export({ type: 'pkcs1', format: 'pem' }), webhook_secret: `whsec-${id}`, html_url: `https://github.com/apps/ops-console-${id}`,
+                owner: { login: id === 42 ? 'acme-org' : 'globex' }, client_id: `Iv1.${id}`, client_secret: 'x' }, 201);
+        }
+        if (u.endsWith('/app/installations')) return json(appOf(init) === '42' ? [{ id: 555, account: { login: 'acme-org' }, repository_selection: 'all' }] : [{ id: 777, account: { login: 'globex' }, repository_selection: 'all' }]);
         const m = /\/app\/installations\/(\d+)\/access_tokens/.exec(u);
         if (m) return json({ token: `inst-${m[1]}` });
         if (u.includes('/installation/repositories')) {
@@ -370,36 +381,52 @@ test('GitHub per workspace: verified installation linking, repos only from your 
         assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
         const b = client();
         assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+        const wsA = (await a.get('/api/auth/me')).json.user.workspaceId, wsB = (await b.get('/api/auth/me')).json.user.workspaceId;
+        assert.notEqual(wsA, wsB);
+        assert.equal((await a.get('/api/github')).json.connected, false);
 
-        const st = (await a.get('/api/github')).json;
-        assert.deepEqual([st.connected, st.canManageApp, st.installations, st.linkable], [true, false, [], true]);
-        assert.equal((await a.post('/api/github/manifest', {})).status, 403, 'only platform admins create the shared app');
-
-        const link = (await a.post('/api/github/install')).json.url;
-        const state = new URL(link).searchParams.get('state');
-        assert.match(link, /^https:\/\/github\.com\/apps\/ops-console-test\/installations\/new\?state=/);
-        assert.equal((await a.post('/api/github/installations', { code: 'good-code-123', installationId: 555, state: 'wrong' })).status, 400);
-        assert.equal((await b.post('/api/github/installations', { code: 'good-code-123', installationId: 555, state })).status, 400, "Alice's state is not Bob's");
-        const other = await a.post('/api/github/installations', { code: 'good-code-123', installationId: 666, state });
-        assert.equal(other.status, 400);
-        assert.match(other.json.error, /don't have access/, 'an installation id alone is not enough');
-        const ok = await a.post('/api/github/installations', { code: 'good-code-123', installationId: 555, state: (new URL((await a.post('/api/github/install')).json.url)).searchParams.get('state') });
-        assert.equal(ok.status, 200, JSON.stringify(ok.json));
-        assert.equal(ok.json.account, 'acme-org');
-
-        assert.deepEqual((await a.get('/api/github/repos')).json.repos.map((r) => r.fullName), ['acme-org/shop']);
-        assert.deepEqual((await b.get('/api/github/repos')).json.repos, [], "Bob sees no one else's repositories");
-        assert.deepEqual((await b.get('/api/github')).json.installations, []);
-
-        // webhook: only workspaces that linked installation 555
-        const send = async (installationId) => {
-            const body = JSON.stringify({ ref: 'refs/heads/main', after: 'a'.repeat(40), repository: { full_name: 'acme-org/shop' }, installation: { id: installationId } });
-            const sig = 'sha256=' + crypto.createHmac('sha256', 'whsec').update(body).digest('hex');
-            const r = await app.request('/api/github/webhook', { method: 'POST', headers: { 'content-type': 'application/json', 'x-github-event': 'push', 'x-github-delivery': `d-${installationId}-${Date.now()}`, 'x-hub-signature-256': sig }, body });
-            return r.json();
+        // one click: a private app in the workspace's own GitHub account (no OAuth or platform set-up needed)
+        const start = async (cl) => {
+            const r = (await cl.post('/api/github/manifest', {})).json;
+            assert.equal(r.manifest.public, false);
+            assert.equal(r.manifest.setup_url, `${ORIGIN}/github/callback?installed=1`);
+            assert.equal(r.manifest.request_oauth_on_install, undefined);
+            return new URL(r.action).searchParams.get('state');
         };
-        assert.equal((await send(555)).workspaces, 1);
-        assert.equal((await send(999)).workspaces, 0, 'an installation nobody linked reaches no workspace');
+        const stA = await start(a), stB = await start(b);
+        assert.equal((await a.post('/api/github/exchange', { code: 'code-0042', state: 'wrong' })).status, 400);
+        assert.equal((await b.post('/api/github/exchange', { code: 'code-0042', state: stA })).status, 400, "Alice's state is not Bob's");
+        assert.equal((await a.post('/api/github/exchange', { code: 'code-0042', state: stA })).status, 200);
+        assert.equal((await b.post('/api/github/exchange', { code: 'code-0043', state: stB })).status, 200);
+        assert.ok(store.has(`/ops-console/github/ws/${wsA}/app`) && store.has(`/ops-console/github/ws/${wsB}/app`), 'credentials stored per workspace');
+        assert.equal((await a.post('/api/github/manifest', {})).status, 409, 'already connected');
+
+        const stat = (await a.get('/api/github')).json;
+        assert.deepEqual([stat.connected, stat.app.slug, stat.installations.map((i) => i.account)], [true, 'ops-console-42', ['acme-org']]);
+        assert.deepEqual((await a.get('/api/github/repos')).json.repos.map((r) => r.fullName), ['acme-org/shop']);
+        assert.deepEqual((await b.get('/api/github/repos')).json.repos.map((r) => r.fullName), ['globex/secret'], "Bob sees only his own repositories");
+
+        // webhook: routed by the app id GitHub sends, checked with THAT workspace's secret
+        const send = async (appId, secret) => {
+            const body = JSON.stringify({ ref: 'refs/heads/main', after: 'a'.repeat(40), repository: { full_name: 'acme-org/shop' } });
+            const sig = 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex');
+            return app.request('/api/github/webhook', { method: 'POST', body, headers: { 'content-type': 'application/json', 'x-github-event': 'push',
+                'x-github-delivery': `d-${appId}-${Math.random()}`, 'x-hub-signature-256': sig, 'x-github-hook-installation-target-id': String(appId) } });
+        };
+        const ok = await send(42, 'whsec-42');
+        assert.equal(ok.status, 200);
+        const { db, withWorkspace } = dist('db');
+        assert.equal((await withWorkspace(wsA, () => db().query("SELECT count(*)::int AS n FROM github_deliveries WHERE repo = 'acme-org/shop'"))).rows[0].n, 1);
+        assert.equal((await withWorkspace(wsB, () => db().query("SELECT count(*)::int AS n FROM github_deliveries WHERE repo = 'acme-org/shop'"))).rows[0].n, 0);
+        assert.equal((await send(42, 'whsec-43')).status, 401, "another workspace's secret is refused");
+        assert.equal((await send(99, 'whsec-42')).status, 401, 'unknown app');
+
+        // disconnect: credentials and the routing entry go
+        assert.equal((await b.del('/api/github')).status, 200);
+        assert.equal(store.has(`/ops-console/github/ws/${wsB}/app`), false);
+        assert.equal((await send(43, 'whsec-43')).status, 401);
+        assert.equal((await b.get('/api/github')).json.connected, false);
+        assert.equal((await a.get('/api/github')).json.connected, true);
 
         // apps domain: must be a hosted zone in the workspace's own account
         const conn = dist('connections');
@@ -503,7 +530,6 @@ test('billing (Paystack): trial, limits, checkout verified server-side, signed w
     assert.equal((await d.post('/api/auth/email', { email: 'alice@example.com', currentPassword: 'correct-horse-4' })).status, 409, 'taken');
     assert.equal((await d.post('/api/auth/email', { email: 'dee2@example.com', currentPassword: 'correct-horse-4' })).status, 200);
     assert.equal((await d.get('/api/auth/me')).json.user.emailVerified, false, 'the new email must be confirmed');
-    assert.equal((await app.request('/api/github/oauth', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: a.cookieHeader() }, body: JSON.stringify({ clientId: 'Iv1.0123456789abcdef', clientSecret: 'a'.repeat(40) }) })).status, 403, 'only platform admins');
 });
 
 test('invoices: one per payment (confirm + renewals via webhook, never twice), PDF per invoice, last 6 months as PDF/CSV, workspace-only', async () => {
@@ -553,10 +579,15 @@ test('invoices: one per payment (confirm + renewals via webhook, never twice), P
     assert.deepEqual((await b.get('/api/billing/invoices')).json.invoices, []);
 });
 
-test('cutover: workspace 1 connected through the role before the switch, existing GitHub installations linked, apps domain set; internal admins are platform admins', async () => {
+test('cutover: workspace 1 connected through the role before the switch, existing GitHub installations linked, apps domain set', async () => {
     const conn = dist('connections');
     const cut = dist('cutover');
     const { db, withWorkspace } = dist('db');
+    // workspace 1's original GitHub App, in the host account
+    const { privateKey } = require('crypto').generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const legacy = JSON.stringify({ appId: '7', slug: 'ops-console', privateKey: privateKey.export({ type: 'pkcs1', format: 'pem' }), webhookSecret: 'w', htmlUrl: 'https://github.com/apps/ops-console', owner: 'platform-org' });
+    dist('aws').setAwsProvider(new Proxy({}, { get: (_t, prop) => (prop === 'then' ? undefined : async (...args) => (prop === 'getConsoleSecret' && args[1] === '/ops-console/github/app' ? legacy : null)) }));
+    dist('github').forgetGithubConfigs();
     conn.setAssumer(async (roleArn, externalId) => {
         const want = (await withWorkspace(1, () => db().query('SELECT external_id FROM aws_connections'))).rows[0]?.external_id;
         if (externalId !== want) throw new Error('AWS refused');
@@ -585,14 +616,4 @@ test('cutover: workspace 1 connected through the role before the switch, existin
     // owner tool: set-email (taken emails refused)
     await assert.rejects(cut.setEmail('dee', 'alice@example.com'), /already uses/);
     await cut.setEmail('dee', 'dee3@example.com');
-
-    // admins of the internal workspace manage the platform's GitHub App (no PLATFORM_ADMINS needed)
-    const { rows: [alice] } = await db().query("SELECT id FROM users WHERE username = 'alice'");
-    await db().query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (1, $1, 'admin') ON CONFLICT DO NOTHING", [alice.id]);
-    const a = client();
-    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
-    const before = (await a.get('/api/github')).json.canManageApp;
-    assert.equal((await a.post('/api/workspaces/switch', { id: 1 })).status, 200);
-    assert.equal((await a.get('/api/github')).json.canManageApp, true);
-    assert.equal(before, false, 'in a customer workspace the same person is not a platform admin');
 });

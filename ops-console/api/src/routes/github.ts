@@ -5,7 +5,7 @@ import { asSystem, db, withWorkspace } from '../db';
 import { config } from '../config';
 import { DeployError, requestDeployment } from '../deploys';
 import {
-    allRepos, branches, BRANCH_RE, exchangeManifestCode, githubConfig, installations, linkInstallation, manifest, newState, recordDelivery, REPO_RE, workspaceInstallations,
+    allRepos, branches, BRANCH_RE, exchangeManifestCode, githubConfig, installations, manifest, newState, recordDelivery, REPO_RE,
     saveGithubConfig, verifySignature, WEBHOOK_URL,
 } from '../github';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
@@ -13,40 +13,18 @@ import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
 const github = new Hono<Env>();
 const fail = (c: Context<Env>, err: unknown) => c.json({ error: (err as Error).message.slice(0, 300) }, err instanceof DeployError ? err.status : 502);
 
-/** Multi-customer: only the people running the platform set up (or remove) the shared GitHub App. */
-async function platformAdmin(c: Context<Env>): Promise<boolean> {
-    const u = c.get('user');
-    if (!config.multiTenant) return true;
-    if (!u) return false;
-    if (config.platformAdmins.includes((u.email ?? '').toLowerCase())) return true;
-    // the admins of the platform's own workspace (plan 'internal': the original single-team console) run the platform
-    if (u.role !== 'admin' || u.workspaceId == null) return false;
-    const { rows } = await db().query("SELECT 1 FROM workspaces WHERE id = $1 AND plan = 'internal'", [u.workspaceId]);
-    return rows.length > 0;
-}
-const appManager = async (c: Context<Env>, next: () => Promise<void>) => ((await platformAdmin(c)) ? next() : c.json({ error: "Only the platform's administrators set up the GitHub App." }, 403));
-
-/** Connection status (no secrets). */
+/** Connection status (no secrets). Each workspace sees only its own app and that app's installations. */
 github.get('/', requireRole('deployer'), denyDemo, async (c) => {
     const cfg = await githubConfig();
-    if (config.multiTenant) {
-        // a workspace sees the platform app (if set up) and ONLY its own linked installations
-        const mine = cfg ? await workspaceInstallations(cfg) : [];
-        return c.json({ multiTenant: true, connected: !!cfg, canManageApp: await platformAdmin(c), app: cfg ? { slug: cfg.slug, htmlUrl: cfg.htmlUrl } : null,
-            installations: mine, linkable: !!cfg?.clientId });
-    }
     if (!cfg) return c.json({ connected: false, webhookUrl: WEBHOOK_URL });
-    try {
-        return c.json({ connected: true, app: { slug: cfg.slug, owner: cfg.owner, htmlUrl: cfg.htmlUrl }, installations: await installations(cfg), webhookUrl: WEBHOOK_URL,
-            installUrl: `https://github.com/apps/${cfg.slug}/installations/new` });
-    } catch (err) {
-        return c.json({ connected: true, app: { slug: cfg.slug, owner: cfg.owner, htmlUrl: cfg.htmlUrl }, installations: [], error: (err as Error).message, webhookUrl: WEBHOOK_URL,
-            installUrl: `https://github.com/apps/${cfg.slug}/installations/new` });
-    }
+    const base = { connected: true, app: { slug: cfg.slug, owner: cfg.owner, htmlUrl: cfg.htmlUrl }, webhookUrl: WEBHOOK_URL,
+        installUrl: `https://github.com/apps/${cfg.slug}/installations/new` };
+    try { return c.json({ ...base, installations: await installations(cfg) }); }
+    catch (err) { return c.json({ ...base, installations: [], error: (err as Error).message }); }
 });
 
 /** Step 1: the browser posts this manifest to GitHub, which creates a private app and redirects back with a code. */
-github.post('/manifest', requireRole('admin'), denyDemo, appManager, async (c) => {
+github.post('/manifest', requireRole('admin'), denyDemo, async (c) => {
     if (await githubConfig()) return c.json({ error: 'GitHub is already connected. Disconnect it first.' }, 409);
     const b = await c.req.json().catch(() => ({}));
     const org = typeof b.org === 'string' && /^[A-Za-z0-9-]{1,39}$/.test(b.org) ? b.org : null;
@@ -62,88 +40,30 @@ github.post('/manifest', requireRole('admin'), denyDemo, appManager, async (c) =
 });
 
 /** Step 2: GitHub redirected back with ?code&state; swap the code for the app's credentials (stored in SSM). */
-github.post('/exchange', requireRole('admin'), denyDemo, appManager, async (c) => {
+github.post('/exchange', requireRole('admin'), denyDemo, async (c) => {
     const b = await c.req.json().catch(() => ({}));
     const { rows } = await db().query("SELECT value FROM settings WHERE key = 'github_state'");
     const st = rows[0]?.value as { state: string; at: number } | undefined;
     if (!st || st.state !== b.state || Date.now() - st.at > 3_600_000) return c.json({ error: 'This setup link has expired or was not started here. Start again.' }, 400);
     try {
-        const cfg = await exchangeManifestCode(String(b.code ?? ''));
-        await saveGithubConfig(cfg);
-        await db().query("DELETE FROM settings WHERE key = 'github_state'");
+        if (await githubConfig()) return c.json({ error: 'GitHub is already connected.' }, 409);
         const user = c.get('user')!;
+        const cfg = await exchangeManifestCode(String(b.code ?? ''));
+        await saveGithubConfig(cfg, user.username);
+        await db().query("DELETE FROM settings WHERE key = 'github_state'");
+        repoCache.delete(user.workspaceId ?? 0);
         await audit({ id: user.id, username: user.username }, 'github.connect', `${cfg.slug} (${cfg.owner})`, {}, c.get('ip'));
         return c.json({ connected: true, installUrl: `https://github.com/apps/${cfg.slug}/installations/new` });
     } catch (err) { return fail(c, err); }
 });
 
-github.delete('/', requireRole('admin'), denyDemo, appManager, async (c) => {
+github.delete('/', requireRole('admin'), denyDemo, async (c) => {
     const cfg = await githubConfig();
-    await saveGithubConfig(null);
     const user = c.get('user')!;
+    await saveGithubConfig(null, user.username);
+    repoCache.delete(user.workspaceId ?? 0);
     await audit({ id: user.id, username: user.username }, 'github.disconnect', cfg?.slug ?? 'github', {}, c.get('ip'));
     return c.json({ ok: true, deleteAppUrl: cfg ? `${cfg.htmlUrl.replace(/\/apps\//, '/settings/apps/')}/advanced` : null });
-});
-
-// ------------------------------------------------------------------ installing the app on a customer's GitHub (multi-customer)
-/** Link existing installations by signing in with GitHub (e.g. after moving the single-team console to multi-customer). */
-github.post('/authorize', requireRole('admin'), denyDemo, async (c) => {
-    const cfg = await githubConfig();
-    if (!cfg?.clientId) return c.json({ error: 'The GitHub App has no OAuth client set up yet (platform admin: Settings → GitHub).' }, 409);
-    const state = newState();
-    await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('github_install_state', $1, $2)
-                      ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
-        [JSON.stringify({ state, at: Date.now() }), c.get('user')!.username]);
-    const q = new URLSearchParams({ client_id: cfg.clientId, state, redirect_uri: `${config.publicUrl}/github/installed` });
-    return c.json({ url: `https://github.com/login/oauth/authorize?${q}` });
-});
-
-/** Platform admin: give an existing GitHub App (created before installation linking) its OAuth client. */
-github.put('/oauth', requireRole('admin'), denyDemo, appManager, async (c) => {
-    const b = await c.req.json().catch(() => ({}));
-    const clientId = String(b.clientId ?? '').trim(), clientSecret = String(b.clientSecret ?? '').trim();
-    if (!/^(Iv[0-9.]+[A-Za-z0-9]{8,30}|[A-Za-z0-9]{16,40})$/.test(clientId) || !/^[A-Za-z0-9]{30,80}$/.test(clientSecret)) return c.json({ error: 'Paste the Client ID and a Client secret from the app\'s settings page on GitHub.' }, 400);
-    const cfg = await githubConfig();
-    if (!cfg) return c.json({ error: 'GitHub is not connected.' }, 409);
-    await saveGithubConfig({ ...cfg, clientId, clientSecret });
-    const user = c.get('user')!;
-    await audit({ id: user.id, username: user.username }, 'github.oauth', cfg.slug, { clientId }, c.get('ip'));
-    return c.json({ ok: true, callbackUrl: `${config.publicUrl}/github/installed` });
-});
-
-/** A one-time install link: GitHub sends the person back to /github/installed with ?code&installation_id&state. */
-github.post('/install', requireRole('admin'), denyDemo, async (c) => {
-    const cfg = await githubConfig();
-    if (!cfg) return c.json({ error: 'GitHub is not available yet.' }, 409);
-    const state = newState();
-    await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('github_install_state', $1, $2)
-                      ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
-        [JSON.stringify({ state, at: Date.now() }), c.get('user')!.username]);
-    return c.json({ url: `https://github.com/apps/${cfg.slug}/installations/new?state=${state}` });
-});
-
-github.post('/installations', requireRole('admin'), denyDemo, rateLimit(10, 10 * 60_000, (c) => `ghlink:${c.get('user')!.id}`), async (c) => {
-    const b = await c.req.json().catch(() => ({}));
-    const { rows } = await db().query("SELECT value FROM settings WHERE key = 'github_install_state'");
-    const st = rows[0]?.value as { state: string; at: number } | undefined;
-    if (!st || st.state !== b.state || Date.now() - st.at > 3_600_000) return c.json({ error: 'This install link has expired or was not started here. Start again from Settings → GitHub.' }, 400);
-    const user = c.get('user')!;
-    try {
-        const r = await linkInstallation(String(b.code ?? ''), b.installationId ? Number(b.installationId) : null, user.username);
-        await db().query("DELETE FROM settings WHERE key = 'github_install_state'");
-        repoCache.delete(user.workspaceId ?? 0);
-        await audit({ id: user.id, username: user.username }, 'github.install', r.account, { installationId: Number(b.installationId) }, c.get('ip'));
-        return c.json({ ok: true, account: r.account });
-    } catch (err) { return c.json({ error: (err as Error).message.slice(0, 300) }, 400); }
-});
-
-github.delete('/installations/:id', requireRole('admin'), denyDemo, async (c) => {
-    const user = c.get('user')!;
-    const { rows: [r] } = await db().query('DELETE FROM github_installations WHERE installation_id = $1 RETURNING account_login', [Number(c.req.param('id'))]);
-    if (!r) return c.json({ error: 'Not linked to this workspace.' }, 404);
-    repoCache.delete(user.workspaceId ?? 0);
-    await audit({ id: user.id, username: user.username }, 'github.uninstall', r.account_login, {}, c.get('ip'));
-    return c.json({ ok: true, note: 'Unlinked here. To remove the app from that GitHub account, uninstall it in GitHub → Settings → Applications.' });
 });
 
 /** Repositories this workspace may use (per workspace: never another workspace's installations). */
@@ -167,31 +87,32 @@ github.get('/branches', requireRole('deployer'), denyDemo, async (c) => {
 
 /** GitHub → console. Public, authenticated by the HMAC signature; each delivery is handled once. */
 github.post('/webhook', rateLimit(120, 60_000, () => 'github-webhook'), async (c) => {
-    const cfg = await githubConfig();
     const body = await c.req.text();
+    // multi-customer: the delivery names the app it's for; find that app's workspace, then check the signature with ITS secret
+    let workspaceId: number | null = null;
+    if (config.multiTenant) {
+        const appId = Number(c.req.header('x-github-hook-installation-target-id') ?? 0);
+        const { rows } = await asSystem(() => db().query<{ workspace_id: number }>('SELECT workspace_id FROM github_apps WHERE app_id = $1', [appId]));
+        workspaceId = rows[0]?.workspace_id ?? ((await githubConfig(1))?.appId === String(appId) ? 1 : null);
+        if (workspaceId == null) return c.json({ error: 'unknown app' }, 401);
+    }
+    const cfg = await githubConfig(config.multiTenant ? workspaceId : undefined);
     if (!cfg || !verifySignature(cfg.webhookSecret, body, c.req.header('x-hub-signature-256'))) return c.json({ error: 'bad signature' }, 401);
     const event = c.req.header('x-github-event') ?? 'unknown';
     const delivery = c.req.header('x-github-delivery') ?? `${Date.now()}`;
-    let p: { ref?: string; after?: string; deleted?: boolean; repository?: { full_name?: string }; installation?: { id?: number } };
+    let p: { ref?: string; after?: string; deleted?: boolean; repository?: { full_name?: string } };
     try { p = JSON.parse(body); } catch { return c.json({ error: 'bad json' }, 400); }
     const repo = p.repository?.full_name ?? null;
     const branch = p.ref?.startsWith('refs/heads/') ? p.ref.slice(11) : null;
     const sha = p.after && /^[0-9a-f]{40}$/.test(p.after) && !p.deleted ? p.after : null;
-    if (!config.multiTenant) {
+    const run = async () => {
         if (event !== 'push') {
             await recordDelivery(delivery, event, repo, null, null, 'ignored');
-            return c.json({ ok: true, ignored: event });
+            return { ok: true, ignored: event };
         }
-        const r = await handlePush(delivery, event, repo, branch, sha, p.ref ?? null);
-        return c.json(r);
-    }
-    // multi-customer: only the workspaces that linked this installation, each in its own context
-    if (event !== 'push') return c.json({ ok: true, ignored: event });
-    const installationId = Number(p.installation?.id ?? 0);
-    const { rows: wss } = await asSystem(() => db().query<{ workspace_id: number }>('SELECT DISTINCT workspace_id FROM github_installations WHERE installation_id = $1', [installationId]));
-    const out: unknown[] = [];
-    for (const w of wss) out.push(await withWorkspace(w.workspace_id, () => handlePush(delivery, event, repo, branch, sha, p.ref ?? null)));
-    return c.json({ ok: true, workspaces: wss.length, results: out });
+        return handlePush(delivery, event, repo, branch, sha, p.ref ?? null);
+    };
+    return c.json(config.multiTenant ? await withWorkspace(workspaceId, run) : await run());
 });
 
 async function handlePush(delivery: string, event: string, repo: string | null, branch: string | null, sha: string | null, ref: string | null) {

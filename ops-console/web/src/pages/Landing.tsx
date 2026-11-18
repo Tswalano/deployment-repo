@@ -1,3 +1,4 @@
+import { ThemeToggle } from '../components/ThemeToggle';
 import { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth';
@@ -99,6 +100,7 @@ export function Landing() {
           </Link>
           <nav className="hidden gap-6 text-sm text-slate-400 md:flex">{nav.map(([h, l]) => <a key={h} href={h} className="hover:text-slate-100">{l}</a>)}</nav>
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
             <Link to="/login" className="px-3 py-2 text-sm text-slate-300 hover:text-slate-100">Sign in</Link>
             <Link to="/signup" className="btn-primary">Start free trial</Link>
           </div>
@@ -251,7 +253,7 @@ export function Landing() {
           </div>
         </div>
         <div className="border-t border-ink-700">
-          <p className="mx-auto max-w-6xl px-4 py-5 text-xs text-slate-500 sm:px-6">© {new Date().getFullYear()} {site.legalEntity ?? site.productName}. Prices in ZAR; AWS usage is billed by AWS.</p>
+          <p className="mx-auto max-w-6xl px-4 py-5 text-xs text-slate-500 sm:px-6">© {new Date().getFullYear()} {site.legalEntity ?? site.productName}. All rights reserved.</p>
         </div>
       </footer>
     </div>

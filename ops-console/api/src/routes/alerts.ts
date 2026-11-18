@@ -12,17 +12,21 @@ alerts.use('*', requireRole('viewer'));
 alerts.get('/', async (c) => {
     const state = c.req.query('state') === 'open' ? 'open' : 'all';
     const limit = Math.min(200, Math.max(1, Number(c.req.query('limit') || 50)));
-    const { rows } = await db().query<AlertRow & { instance_name: string | null }>(
-        `SELECT a.*, i.name AS instance_name FROM alerts a LEFT JOIN instances i ON i.id = a.instance_id
-          ${state === 'open' ? 'WHERE a.resolved_at IS NULL' : ''}
-          ORDER BY (a.resolved_at IS NULL) DESC, CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.opened_at DESC
+    // active = open and not acknowledged; an acknowledged alert moves to the history even while its condition lasts
+    const { rows } = await db().query<AlertRow & { instance_name: string | null; app_exists: boolean | null }>(
+        `SELECT a.*, i.name AS instance_name,
+                EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(i.last_status->'apps', '[]'::jsonb)) x WHERE x->>'project' = a.project) AS app_exists
+           FROM alerts a LEFT JOIN instances i ON i.id = a.instance_id
+          ${state === 'open' ? 'WHERE a.resolved_at IS NULL AND a.acked_at IS NULL' : ''}
+          ORDER BY (a.resolved_at IS NULL AND a.acked_at IS NULL) DESC, CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+                   COALESCE(a.resolved_at, a.acked_at, a.opened_at) DESC
           LIMIT $1`, [limit]);
     const { rows: [counts] } = await db().query(
-        `SELECT count(*) FILTER (WHERE resolved_at IS NULL)::int AS open,
-                count(*) FILTER (WHERE resolved_at IS NULL AND severity = 'critical')::int AS critical,
+        `SELECT count(*) FILTER (WHERE resolved_at IS NULL AND acked_at IS NULL)::int AS open,
+                count(*) FILTER (WHERE resolved_at IS NULL AND acked_at IS NULL AND severity = 'critical')::int AS critical,
                 count(*) FILTER (WHERE opened_at > now() - interval '7 days')::int AS week
            FROM alerts`);
-    return c.json({ alerts: rows.map(alertView), counts });
+    return c.json({ alerts: rows.map((r) => ({ ...alertView(r), appExists: !!r.app_exists })), counts });
 });
 
 alerts.post('/:id/ack', requireRole('deployer'), denyDemo, async (c) => {

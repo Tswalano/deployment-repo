@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../auth';
 
 /** Console footer: brand, live status of the console, documentation, legal and support links. */
@@ -30,7 +29,7 @@ export function Footer({ setup = false }: { setup?: boolean }) {
           </span>
         </div>
         <nav aria-label="Footer" className="flex flex-wrap gap-x-5 gap-y-2 md:ml-auto">
-          {links.map(([to, label]) => <Link key={to} to={to} className="hover:text-slate-300">{label}</Link>)}
+          {links.map(([to, label]) => <a key={to} href={to} target="_blank" rel="noopener noreferrer" className="hover:text-slate-300">{label}</a>)}
           {site.supportEmail && <a href={`mailto:${site.supportEmail}`} className="hover:text-slate-300">Contact support</a>}
         </nav>
       </div>

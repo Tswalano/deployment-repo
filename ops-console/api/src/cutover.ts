@@ -26,7 +26,7 @@ export async function cutoverCheck(): Promise<void> {
         const c = await connection();
         line(c?.status === 'connected', c?.status === 'connected' ? `AWS connected: account ${c.account_id}, ${c.role_arn}` : `AWS not connected yet (run cutover-prepare, create the stack, then cutover-connect)`);
         const gh = await db().query('SELECT installation_id, account_login FROM github_installations');
-        line(gh.rows.length > 0 || !(await githubConfig()), gh.rows.length ? `GitHub installations linked: ${gh.rows.map((r) => r.account_login).join(', ')}` : (await githubConfig()) ? 'GitHub installations not linked yet (cutover-connect does it)' : 'GitHub not connected (nothing to link)');
+        line(gh.rows.length > 0 || !(await githubConfig(1)), gh.rows.length ? `GitHub installations linked: ${gh.rows.map((r) => r.account_login).join(', ')}` : (await githubConfig(1)) ? 'GitHub installations not linked yet (cutover-connect does it)' : 'GitHub not connected (nothing to link)');
         const { rows: [d] } = await db().query("SELECT value FROM settings WHERE key = 'apps_domain'");
         line(!!d, d ? `apps domain: ${d.value.domain}` : `apps domain not set yet (cutover-connect sets ${APPS_DOMAIN})`);
     });
@@ -57,7 +57,7 @@ export async function cutoverConnect(roleArn: string): Promise<void> {
     await withWorkspace(WS, async () => {
         const c = await verifyConnection(roleArn, 'cutover');
         line(true, `AWS connected: account ${c.account_id} through ${c.role_arn}`);
-        const cfg = await githubConfig();
+        const cfg = await githubConfig(1);
         if (cfg) {
             // the app's installations all belong to the original console's owner: link them to workspace 1
             for (const i of await installations(cfg)) {

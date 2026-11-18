@@ -1,3 +1,4 @@
+import { ThemeToggle } from '../components/ThemeToggle';
 import { ReactNode, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth';
@@ -20,7 +21,7 @@ function Shell({ title, children }: { title: string; children: ReactNode }) {
             </span>
             <span className="font-semibold text-slate-100">{site.productName}</span>
           </Link>
-          <div className="ml-auto">{user ? <Link to="/" className="btn-secondary">Open the console</Link> : <Link to="/login" className="btn-ghost">Sign in</Link>}</div>
+          <div className="ml-auto flex items-center gap-2"><ThemeToggle />{user ? <Link to="/" className="btn-secondary">Open the console</Link> : <Link to="/login" className="btn-ghost">Sign in</Link>}</div>
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-12 sm:px-6">

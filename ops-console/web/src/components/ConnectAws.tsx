@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, AwsConnectionView, AwsServer } from '../api';
 import { useAuth } from '../auth';
 import { Alert } from './ui';
+import { StateDot } from './PowerControls';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 
@@ -126,7 +127,7 @@ export function AddServersPanel({ onAdded }: { onAdded: (id: number) => void }) 
                   <div className="truncate text-sm font-medium text-slate-100">{s.name || s.id}</div>
                   <div className="num truncate text-xs text-slate-500">{s.id} · {s.type} · {s.az}{s.publicIp ? ` · ${s.publicIp}` : ''}</div>
                 </div>
-                <span className={s.state === 'running' ? 'pill-ok' : 'pill-mute'}>{s.state}</span>
+                <StateDot state={s.state} className="inline-flex" />
                 <span className={s.ssmOnline ? 'pill-ok' : 'pill-warn'} title={s.ssmOnline ? 'Reachable through Session Manager' : 'Not reachable through Session Manager yet: adding it attaches our instance profile; the agent connects within a few minutes'}>
                   {s.ssmOnline ? 'reachable' : 'not reachable yet'}
                 </span>

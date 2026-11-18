@@ -76,7 +76,7 @@ export function Login() {
         </form>
 
         {site.multiTenant ? (
-          <p className="mt-6 text-center text-sm text-slate-400">New here? <Link to="/signup" className="text-indigo-300 hover:underline">Create an account</Link> · <Link to="/" className="hover:underline">About</Link></p>
+          <p className="mt-6 text-center text-sm text-slate-400">New here? <Link to="/signup" className="text-indigo-300 hover:underline">Create an account</Link></p>
         ) : (
         <div className="mt-6 rounded-xl border border-dashed border-ink-600 p-4 text-center">
           <p className="text-sm text-slate-400">Just looking around?</p>
