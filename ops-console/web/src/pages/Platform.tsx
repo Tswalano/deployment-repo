@@ -3,6 +3,7 @@ import { Link, Navigate, NavLink, useParams } from 'react-router-dom';
 import { api, ApiError, PlatformDetail, PlatformHealth, PlatformOverview, PlatformWorkspace } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, Kpi, PageHeader, Skeleton } from '../components/ui';
+import { useDialog } from '../components/Dialog';
 
 /** Platform owner portal: every customer workspace, cross-customer health and the platform's audit trail. */
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
@@ -109,6 +110,7 @@ export function Platform() {
 // ------------------------------------------------------------------ one workspace
 export function PlatformWorkspacePage() {
   const id = Number(useParams().id);
+  const dialog = useDialog();
   const [d, setD] = useState<PlatformDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
@@ -169,7 +171,7 @@ export function PlatformWorkspacePage() {
                     <p className="text-xs text-slate-500">Read-only for the customer (shown with the reason). Servers and apps keep running.</p>
                     <input className="input" placeholder="Reason shown to the customer" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} />
                     <button className="btn-danger" disabled={!!busy || reason.trim().length < 5}
-                            onClick={() => { if (window.confirm(`Suspend ${w.name}?`)) void run('suspend', async () => { await api.platformSuspend(w.id, reason.trim()); setReason(''); return `${w.name} is suspended.`; }); }}>Suspend workspace</button>
+                            onClick={async () => { if (await dialog.confirm({ title: `Suspend ${w.name}?`, body: `The workspace becomes read-only and its members see: "${reason.trim()}". Servers and apps keep running.`, confirmLabel: 'Suspend', danger: true })) void run('suspend', async () => { await api.platformSuspend(w.id, reason.trim()); setReason(''); return `${w.name} is suspended.`; }); }}>Suspend workspace</button>
                   </>)}
                 </div>
                 {w.plan === 'trial' && (
@@ -187,7 +189,7 @@ export function PlatformWorkspacePage() {
                   <div className="text-sm font-medium text-slate-200">Complimentary plan</div>
                   {w.complimentary ? (
                     <button className="btn-secondary" disabled={!!busy}
-                            onClick={() => { if (window.confirm('End the complimentary plan? The workspace becomes read-only until a plan is chosen.')) void run('comp-end', async () => { await api.platformComplimentary(w.id, null); return 'Complimentary plan ended.'; }); }}>End complimentary plan</button>
+                            onClick={async () => { if (await dialog.confirm({ title: 'End the complimentary plan?', body: 'The workspace becomes read-only until a plan is chosen.', confirmLabel: 'End plan', danger: true })) void run('comp-end', async () => { await api.platformComplimentary(w.id, null); return 'Complimentary plan ended.'; }); }}>End complimentary plan</button>
                   ) : (<>
                     <p className="text-xs text-slate-500">A plan without payment; no end date means until it&rsquo;s ended here.</p>
                     <div className="flex flex-wrap gap-2">

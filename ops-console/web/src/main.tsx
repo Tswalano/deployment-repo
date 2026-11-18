@@ -31,6 +31,7 @@ import { useLocation } from 'react-router-dom';
 import type { Role } from './api';
 import './index.css';
 import { Platform, PlatformAuditPage, PlatformHealthPage, PlatformWorkspacePage } from './pages/Platform';
+import { DialogProvider } from './components/Dialog';
 
 function Protected({ children, role }: { children: JSX.Element; role?: Role }) {
   const { user, loading, site } = useAuth();
@@ -93,7 +94,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <App />
+        <DialogProvider>
+          <App />
+        </DialogProvider>
       </AuthProvider>
     </BrowserRouter>
   </StrictMode>,

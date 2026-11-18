@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError, GithubStatus } from '../api';
 import { Alert } from './ui';
+import { useDialog } from './Dialog';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const Mark = () => (
@@ -15,6 +16,7 @@ const Mark = () => (
  */
 export function GithubConnect() {
   const [s, setS] = useState<GithubStatus | null>(null);
+  const dialog = useDialog();
   const [org, setOrg] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
@@ -74,7 +76,7 @@ export function GithubConnect() {
             </a>
             <button className="btn-ghost" onClick={() => void load()}>Refresh</button>
             <button className="btn-danger ml-auto" onClick={async () => {
-              if (!window.confirm('Disconnect GitHub? Auto-deploys stop. The app can then be deleted on GitHub.')) return;
+              if (!(await dialog.confirm({ title: 'Disconnect GitHub?', body: 'Automatic deploys stop. The GitHub App can then be deleted on GitHub.', confirmLabel: 'Disconnect', danger: true }))) return;
               try { const r = await api.githubDisconnect(); setMsg({ tone: 'ok', text: r.deleteAppUrl ? 'Disconnected. To remove the app from GitHub too, open its settings → Advanced → Delete.' : 'Disconnected.' }); await load(); }
               catch (e) { setMsg({ tone: 'bad', text: err(e) }); }
             }}>Disconnect</button>

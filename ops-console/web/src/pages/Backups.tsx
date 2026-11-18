@@ -4,6 +4,7 @@ import { api, ApiError, BackupVerification, InstanceBackups, SnapshotState } fro
 import { useAuth } from '../auth';
 import { ago, Alert, bytes, Kpi, PageHeader, Skeleton } from '../components/ui';
 import { usePoll } from '../usePoll';
+import { useDialog } from '../components/Dialog';
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 /** "Mon 2026-11-16 15:34:13 UTC" (systemd) → Date */
@@ -26,6 +27,7 @@ const STORAGE: Record<string, string> = { STANDARD: 'Standard', STANDARD_IA: 'In
 
 function InstanceSection({ b, canOperate, isAdmin, downloads, offsite, reload }:
   { b: InstanceBackups; canOperate: boolean; isAdmin: boolean; downloads: boolean; offsite: Offsite; reload: () => Promise<void> }) {
+  const dialog = useDialog();
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
@@ -80,8 +82,8 @@ function InstanceSection({ b, canOperate, isAdmin, downloads, offsite, reload }:
         </span>
         {isAdmin && offsite && offsite.bucketExists !== false && (
           <button className={off ? 'btn-ghost px-3 py-1.5 text-xs' : 'btn-secondary px-3 py-1.5 text-xs'} disabled={busy !== null}
-                  onClick={() => {
-                    if (off && !window.confirm('Stop copying backups to S3? Copies already there stay until the bucket ages them out; backups on this server are kept 14 days again.')) return;
+                  onClick={async () => {
+                    if (off && !(await dialog.confirm({ title: 'Stop copying backups to S3?', body: 'Copies already there stay until the bucket ages them out; backups on this server are kept 14 days again.', confirmLabel: 'Stop copying', danger: true }))) return;
                     void run('offsite', async () => {
                       const r = await api.setOffsite(b.instanceId, !off);
                       return off ? 'Off-site copies switched off.' : `Copying to S3: ${r.offsite?.copied ?? 0} backups copied now${r.offsite?.pending ? `, ${r.offsite.pending} waiting (${r.offsite.error ?? 'retried tonight'})` : ''}.`;
@@ -125,8 +127,8 @@ function InstanceSection({ b, canOperate, isAdmin, downloads, offsite, reload }:
                                     })}>{busy === `v:${f.file}` ? 'Testing…' : <><span className="sm:hidden">Test</span><span className="hidden sm:inline">Test restore</span></>}</button>
                             {isAdmin && downloads && (
                               <button className="btn-ghost hidden px-2 py-1 text-xs md:inline-flex" disabled={busy !== null}
-                                      onClick={() => {
-                                        if (!window.confirm(`Download ${f.file}? It contains every row of the ${db} database, including personal data. The download is logged.`)) return;
+                                      onClick={async () => {
+                                        if (!(await dialog.confirm({ title: `Download ${f.file}?`, body: `It contains every row of the ${db} database, including personal data. The download is logged.`, confirmLabel: 'Download' }))) return;
                                         void run(`d:${f.file}`, async () => {
                                           const r = await api.downloadBackup(b.instanceId, db, f.file);
                                           window.location.assign(r.url);
@@ -175,8 +177,8 @@ function InstanceSection({ b, canOperate, isAdmin, downloads, offsite, reload }:
                       )}
                       {isAdmin && (
                         <button className="btn-ghost hidden px-2 py-1 text-xs md:inline-flex" disabled={busy !== null}
-                                onClick={() => {
-                                  if (!window.confirm(`Download ${cp.file}? It contains every row of the ${cp.db} database, including personal data. The download is logged.`)) return;
+                                onClick={async () => {
+                                  if (!(await dialog.confirm({ title: `Download ${cp.file}?`, body: `It contains every row of the ${cp.db} database, including personal data. The download is logged.`, confirmLabel: 'Download' }))) return;
                                   void run(`cd:${cp.key}`, async () => { const r = await api.downloadCopy(b.instanceId, cp.key); window.location.assign(r.url); return `Downloading ${cp.file}; the link expires in 5 minutes.`; });
                                 }}>{busy === `cd:${cp.key}` ? 'Preparing…' : 'Download'}</button>
                       )}
@@ -246,6 +248,7 @@ function Unreachable({ list }: { list: InstanceBackups[] }) {
 
 /** Optional nightly snapshots of every managed server's disks (AWS Data Lifecycle Manager, in the customer's account). */
 function Snapshots({ isAdmin }: { isAdmin: boolean }) {
+  const dialog = useDialog();
   const [s, setS] = useState<SnapshotState | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -262,7 +265,7 @@ function Snapshots({ isAdmin }: { isAdmin: boolean }) {
         <button role="switch" aria-checked={s.enabled} disabled={busy} title={s.enabled ? 'Switch off' : 'Switch on'}
                 className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors ${s.enabled ? 'border-emerald-400/60 bg-emerald-500/30' : 'border-ink-600 bg-ink-800'}`}
                 onClick={async () => {
-                  if (s.enabled && !window.confirm('Switch nightly server snapshots off? Existing snapshots stay until they expire.')) return;
+                  if (s.enabled && !(await dialog.confirm({ title: 'Switch server snapshots off?', body: 'Existing snapshots stay until they expire.', confirmLabel: 'Switch off', danger: true }))) return;
                   setBusy(true); setErr(null);
                   try { setS(await api.setSnapshots(!s.enabled)); } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
                 }}>

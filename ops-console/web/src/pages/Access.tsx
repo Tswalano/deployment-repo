@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api, ApiError, Instance, MyKey, SecurityView, SshAccessView, SshGrant } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, Kpi, PageHeader, Skeleton } from '../components/ui';
+import { useDialog } from '../components/Dialog';
 
 const err = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const when = (unix: number) => new Date(unix * 1000).toISOString();
@@ -217,6 +218,7 @@ function SshAccessCard({ instanceId, ssh, error, canWrite, reload, onMessage }:
 }
 
 function KeysCard({ instanceId, sec, canWrite, onChanged }: { instanceId: number; sec: SecurityView; canWrite: boolean; onChanged: (m: string) => Promise<void> }) {
+  const dialog = useDialog();
   const snap = sec.snapshot!;
   const users = snap.users.filter((u) => u.keys.length || u.manageable);
   const manageable = snap.users.filter((u) => u.manageable).map((u) => u.user);
@@ -242,7 +244,7 @@ function KeysCard({ instanceId, sec, canWrite, onChanged }: { instanceId: number
     finally { setBusy(null); }
   }
   async function remove(user: string, fingerprint: string, label: string) {
-    if (!confirm(`Remove ${label} from ${user}? Anyone using this key loses SSH access to this server.`)) return;
+    if (!(await dialog.confirm({ title: `Remove ${label} from ${user}?`, body: 'Anyone using this key loses SSH access to this server.', confirmLabel: 'Remove key', danger: true }))) return;
     setBusy(fingerprint); setFail(null);
     try {
       const r = await api.sshKey(instanceId, { action: 'remove', user, fingerprint });
@@ -448,6 +450,7 @@ function Copyable({ text, label }: { text: string; label?: string }) {
 
 /** SSH from your own laptop with your own key: time-limited, locked to your IP or to the Session Manager tunnel. */
 function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: SshAccessView | null; reload: () => Promise<void>; onMessage: (m: string) => void }) {
+  const dialog = useDialog();
   const [keys, setKeys] = useState<MyKey[] | null>(null);
   const [keyId, setKeyId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
@@ -600,7 +603,7 @@ function LaptopCard({ inst, ssh, reload, onMessage }: { inst: Instance; ssh: Ssh
             <p className="text-xs text-slate-500">
               Saved keys: {keys.map((k) => (
                 <span key={k.id} className="mr-3">{k.name} <span className="num">{k.fingerprint.slice(0, 15)}…</span>{' '}
-                  <button className="text-rose-300 underline-offset-2 hover:underline" onClick={async () => { if (confirm(`Forget ${k.name}? (Access already granted ends on its own.)`)) { await api.deleteMyKey(k.id); await loadKeys(); } }}>forget</button>
+                  <button className="text-rose-300 underline-offset-2 hover:underline" onClick={async () => { if (await dialog.confirm({ title: `Forget ${k.name}?`, body: 'Access already granted with it ends on its own.', confirmLabel: 'Forget key', danger: true })) { await api.deleteMyKey(k.id); await loadKeys(); } }}>forget</button>
                 </span>
               ))}
             </p>

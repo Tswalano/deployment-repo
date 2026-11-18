@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError, FailedCreation, FailedDeploy } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert } from './ui';
+import { useDialog } from './Dialog';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const sha = (s: string) => (s ? s.slice(0, 8) : '');
@@ -14,6 +15,7 @@ export function FailedDeployments() {
   const [data, setData] = useState<{ deploys: FailedDeploy[]; creations: FailedCreation[] } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
+  const dialog = useDialog();
   const load = useCallback(() => api.failures().then(setData).catch(() => undefined), []);
   useEffect(() => { void load(); const t = setInterval(() => void load(), 60_000); return () => clearInterval(t); }, [load]);
 
@@ -25,13 +27,15 @@ export function FailedDeployments() {
     const r = await api.startDeployment(d.instanceId, d.project, 'deploy', d.toSha);
     return r.status === 'pending_approval' ? `Retry of ${d.project} is waiting for approval.` : `Retrying ${d.project} (${sha(d.toSha)}). Follow it on the app's Deploy tab.`;
   });
-  const dismissDeploy = (d: FailedDeploy) => {
-    const note = prompt(`Dismiss the failed deploy of ${d.project}? Its alert is cleared and it leaves this list.\n\nOptional note (why):`);
+  const dismissDeploy = async (d: FailedDeploy) => {
+    const note = await dialog.prompt({ title: `Dismiss the failed deploy of ${d.project}?`, body: 'Its alert is cleared and it leaves this list.',
+      label: 'Note (optional)', placeholder: 'Why it can be ignored', required: false, confirmLabel: 'Dismiss' });
     if (note === null) return;
     void run(`d${d.instanceId}${d.project}`, async () => { await api.dismissFailure({ kind: 'deploy', instanceId: d.instanceId, project: d.project, at: d.at, note }); return `Dismissed the failed deploy of ${d.project}.`; });
   };
-  const dismissCreation = (c: FailedCreation) => {
-    const note = prompt(`Dismiss the failed creation of ${c.project}? (Everything that run created was already removed.)\n\nOptional note (why):`);
+  const dismissCreation = async (c: FailedCreation) => {
+    const note = await dialog.prompt({ title: `Dismiss the failed creation of ${c.project}?`, body: 'Everything that run created was already removed.',
+      label: 'Note (optional)', placeholder: 'Why it can be ignored', required: false, confirmLabel: 'Dismiss' });
     if (note === null) return;
     void run(`c${c.id}`, async () => { await api.dismissFailure({ kind: 'create', creationId: c.id, note }); return `Dismissed the failed creation of ${c.project}.`; });
   };

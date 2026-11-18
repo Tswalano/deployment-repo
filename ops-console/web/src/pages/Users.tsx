@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { ago, api, ApiError, Role, ROLE_INFO, User } from '../api';
 import { useAuth } from '../auth';
+import { useDialog } from '../components/Dialog';
 
 const ROLES: Role[] = ['admin', 'deployer', 'viewer'];
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
@@ -58,6 +59,7 @@ function CreateUser({ onCreated }: { onCreated: () => void }) {
 
 export function Users() {
   const { user: me } = useAuth();
+  const dialog = useDialog();
   const [users, setUsers] = useState<User[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -139,8 +141,9 @@ export function Users() {
                   <td className="whitespace-normal text-right">
                     <div className="flex flex-wrap justify-end gap-1.5 sm:gap-2">
                       {!u.isDemo && !self && (
-                        <button className="btn-secondary px-2.5 py-1 text-xs" onClick={() => {
-                          const pw = window.prompt(`New password for ${u.username} (min 8 characters). They'll be signed out everywhere.`);
+                        <button className="btn-secondary px-2.5 py-1 text-xs" onClick={async () => {
+                          const pw = await dialog.prompt({ title: `Reset the password of ${u.username}`, body: 'They are signed out everywhere and use the new password from their next sign-in.',
+                            label: 'New password', type: 'password', minLength: 8, hint: 'At least 8 characters.', confirmLabel: 'Reset password' });
                           if (pw) void act(() => api.resetPassword(u.id, pw), `Password reset for ${u.username}.`);
                         }}><span className="sm:hidden">Reset</span><span className="hidden sm:inline">Reset password</span></button>
                       )}
@@ -151,8 +154,8 @@ export function Users() {
                         </button>
                       )}
                       {!self && !u.isDemo && (
-                        <button className="btn-danger px-2.5 py-1 text-xs" onClick={() => {
-                          if (window.confirm(`Delete ${u.username}? This can't be undone.`)) void act(() => api.deleteUser(u.id), `${u.username} deleted.`);
+                        <button className="btn-danger px-2.5 py-1 text-xs" onClick={async () => {
+                          if (await dialog.confirm({ title: `Delete ${u.username}?`, body: "This can't be undone.", confirmLabel: 'Delete user', danger: true })) void act(() => api.deleteUser(u.id), `${u.username} deleted.`);
                         }}>Delete</button>
                       )}
                     </div>
