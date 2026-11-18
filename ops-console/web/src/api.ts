@@ -147,7 +147,8 @@ export interface ConsoleHealth {
   host: { cpus: number; load: number[]; mem: { total: number; available: number }; disk: { total: number; free: number } | null; uptimeSeconds: number };
   process: { node: string; uptimeSeconds: number; rss: number; heapUsed: number; eventLoopP99Ms: number };
   requests: { last15m: ReqStats; last60m: ReqStats; perMinute: { minute: number; n: number; errors: number }[] };
-  database: { size: number; connections: number; longestQuerySeconds: number | null; emailFailures24h: number; lastEmailError: string | null } | { error: string };
+  database: { size: number; connections: number; longestQuerySeconds: number | null; emailsSent24h: number; emailFailures24h: number; lastEmailError: string | null; webhookFailures24h: number } | { error: string };
+  emails: { at: string; kind: string; recipients: string; subject: string; ok: boolean; error: string | null }[];
   jobs: { name: string; lastRun: string; everySeconds: number; late: boolean; ok: boolean; error: string | null }[];
   backups: { at: string; ok: boolean; consoleDb: { ok: boolean; bytes?: number } | null; offsite: { configured: boolean; ok: boolean; at: string; error: string | null } | null } | null;
   certificateDaysLeft: number | null; concerns: { level: 'warn' | 'bad'; text: string }[];
@@ -348,7 +349,7 @@ export const api = {
   switchWorkspace: (id: number) => call<{ ok: true }>('POST', '/api/workspaces/switch', { id }),
   renameWorkspace: (name: string) => call<{ ok: true; name: string }>('PATCH', '/api/workspaces/current', { name }),
   team: () => call<{ members: TeamMember[]; invites: TeamInvite[] }>('GET', '/api/team'),
-  invite: (email: string, role: Role) => call<{ ok: true }>('POST', '/api/team/invites', { email, role }),
+  invite: (email: string, role: Role) => call<{ ok: true; emailSent: boolean; emailError: string | null }>('POST', '/api/team/invites', { email, role }),
   cancelInvite: (id: number) => call<{ ok: true }>('DELETE', `/api/team/invites/${id}`),
   setMemberRole: (userId: number, role: Role) => call<{ ok: true }>('PATCH', `/api/team/members/${userId}`, { role }),
   removeMember: (userId: number) => call<{ ok: true }>('DELETE', `/api/team/members/${userId}`),

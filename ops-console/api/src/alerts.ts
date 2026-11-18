@@ -1,7 +1,7 @@
 import { InstanceRow } from './collector';
 import { deployKey, dismissedDeploys } from './failures';
 import { db } from './db';
-import { notifier } from './notify';
+import { notifier, sendEmail } from './notify';
 import { alertSettings, AlertSettings } from './settings';
 
 export type Severity = 'critical' | 'warning' | 'info';
@@ -178,8 +178,8 @@ function message(a: AlertRow & { instance_name?: string | null }, kind: 'opened'
 async function send(alertId: number | null, kind: string, subject: string, text: string, cfg: AlertSettings): Promise<{ channel: string; ok: boolean; error?: string }[]> {
     const results: { channel: string; ok: boolean; error?: string }[] = [];
     if (cfg.recipients.length) {
-        try { await notifier().email(cfg.recipients, subject, text); results.push({ channel: 'email', ok: true }); }
-        catch (err) { results.push({ channel: 'email', ok: false, error: (err as Error).message.slice(0, 300) }); }
+        const r = await sendEmail(kind === 'test' ? 'test' : 'alert', cfg.recipients, subject, text);
+        results.push(r.ok ? { channel: 'email', ok: true } : { channel: 'email', ok: false, error: r.error ?? 'failed' });
     }
     if (cfg.webhookUrl) {
         try { await notifier().webhook(cfg.webhookUrl, `*${subject}*\n${text}`); results.push({ channel: 'webhook', ok: true }); }

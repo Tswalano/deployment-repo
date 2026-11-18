@@ -26,6 +26,18 @@ export function Team() {
     setBusy(true); setMsg(null);
     try { await fn(); setMsg({ tone: 'ok', text: ok }); await load(); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); } finally { setBusy(false); }
   };
+  /** Invite (or send a pending invitation again), saying plainly when the email itself couldn't be sent. */
+  const sendInvite = async (to: string, r: Role, again = false) => {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await api.invite(to, r);
+      setMsg(res.emailSent === false
+        ? { tone: 'bad', text: `The invitation for ${to} was saved, but the email couldn't be sent (${res.emailError ?? 'unknown error'}). Try Resend in a few minutes.` }
+        : { tone: 'ok', text: again ? `Invitation sent to ${to} again.` : `Invitation sent to ${to}.` });
+      await load();
+      return res.emailSent !== false;
+    } catch (e) { setMsg({ tone: 'bad', text: err(e) }); return false; } finally { setBusy(false); }
+  };
 
   if (!data) return msg ? <Alert>{msg.text}</Alert> : <Skeleton className="h-64" />;
   return (
@@ -38,7 +50,7 @@ export function Team() {
           <h2 className="font-medium text-slate-100">Invite someone</h2>
           <p className="mt-1 text-sm text-slate-400">They get an email with a link that works for 7 days.</p>
           <form className="mt-4 grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_auto] md:items-end"
-                onSubmit={(e) => { e.preventDefault(); void act(() => api.invite(email.trim(), role), `Invitation sent to ${email.trim()}.`).then(() => setEmail('')); }}>
+                onSubmit={(e) => { e.preventDefault(); void sendInvite(email.trim(), role).then((ok) => { if (ok) setEmail(''); }); }}>
             <div><label className="label" htmlFor="inv-email">Email</label><input id="inv-email" type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
             <div><label className="label" htmlFor="inv-role">Role</label>
               <select id="inv-role" className="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
@@ -86,11 +98,14 @@ export function Team() {
         <section className="card mt-6 overflow-hidden p-0">
           <h2 className="px-5 py-4 font-medium text-slate-100">Pending invitations</h2>
           <table className="tbl">
-            <thead><tr><th>Email</th><th className="w-[16%]">Role</th><th className="w-[18%]">Sent</th><th className="w-[14%] text-right"></th></tr></thead>
+            <thead><tr><th>Email</th><th className="w-[16%]">Role</th><th className="w-[18%]">Sent</th><th className="w-[22%] text-right"></th></tr></thead>
             <tbody>{data.invites.map((i) => (
               <tr key={i.id}>
                 <td>{i.email}</td><td className="capitalize">{i.role}</td><td>{ago(i.createdAt)}</td>
-                <td className="text-right">{isAdmin && <button className="btn-ghost px-2.5 py-1 text-xs" disabled={busy} onClick={() => void act(() => api.cancelInvite(i.id), 'Invitation cancelled.')}>Cancel</button>}</td>
+                <td className="whitespace-nowrap text-right">{isAdmin && <>
+                  <button className="btn-ghost px-2.5 py-1 text-xs" disabled={busy} title="A new link is emailed; the previous one stops working" onClick={() => void sendInvite(i.email, i.role, true)}>Resend</button>
+                  <button className="btn-ghost px-2.5 py-1 text-xs" disabled={busy} onClick={() => void act(() => api.cancelInvite(i.id), 'Invitation cancelled.')}>Cancel</button>
+                </>}</td>
               </tr>
             ))}</tbody>
           </table>

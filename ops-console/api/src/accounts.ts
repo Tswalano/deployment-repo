@@ -7,7 +7,7 @@ import { createHash, randomBytes } from 'crypto';
 import { config } from './config';
 import { db } from './db';
 import { DeployError } from './deploys';
-import { notifier } from './notify';
+import { sendEmail } from './notify';
 import { hashPassword, passwordProblem } from './password';
 import { Role } from './sessions';
 
@@ -65,8 +65,8 @@ async function uniqueSlug(name: string): Promise<string> {
     throw new DeployError('Could not pick a workspace address; try another name.');
 }
 
-async function sendMail(to: string, subject: string, text: string) {
-    await notifier().email([to], subject, text).catch((err) => console.error('account email failed:', (err as Error).message));
+async function sendMail(kind: string, to: string, subject: string, text: string) {
+    return sendEmail(kind, [to], subject, text);
 }
 
 async function issueToken(userId: number, purpose: 'verify_email' | 'reset_password', hours: number): Promise<string> {
@@ -87,9 +87,9 @@ async function useToken(token: string, purpose: string): Promise<number> {
     return r.user_id;
 }
 
-export async function sendVerification(userId: number, email: string): Promise<void> {
+export async function sendVerification(userId: number, email: string): Promise<{ ok: boolean; error: string | null }> {
     const t = await issueToken(userId, 'verify_email', 48);
-    await sendMail(email, `Confirm your email for ${config.productName}`,
+    return sendMail('verify_email', email, `Confirm your email for ${config.productName}`,
         `Welcome to ${config.productName}.\n\nConfirm your email address (the link works for 48 hours):\n${config.publicUrl}/verify?token=${t}\n\nIf you didn't sign up, ignore this email.`);
 }
 
@@ -134,7 +134,7 @@ export async function forgotPassword(emailInput: unknown): Promise<void> {
     const { rows: [u] } = await db().query<{ id: number }>('SELECT id FROM users WHERE lower(email) = $1 AND NOT disabled AND NOT is_demo', [email]);
     if (!u) return;
     const t = await issueToken(u.id, 'reset_password', 1);
-    await sendMail(email, `Reset your ${config.productName} password`,
+    await sendMail('reset_password', email, `Reset your ${config.productName} password`,
         `Someone (hopefully you) asked to reset the password for ${email}.\n\nChoose a new one (the link works for 1 hour, once):\n${config.publicUrl}/reset-password?token=${t}\n\nIf it wasn't you, ignore this email: your password stays as it is.`);
 }
 
@@ -187,9 +187,9 @@ export async function invite(workspaceId: number, by: { id: number; name: string
     await db().query(`INSERT INTO workspace_invites (workspace_id, email, role, token_hash, invited_by, expires_at) VALUES ($1, $2, $3, $4, $5, now() + interval '7 days')`,
         [workspaceId, email, role, sha256(t), by.id]);
     const { rows: [w] } = await db().query<{ name: string }>('SELECT name FROM workspaces WHERE id = $1', [workspaceId]);
-    await sendMail(email, `${by.name} invited you to ${w.name} on ${config.productName}`,
+    const sent = await sendMail('invite', email, `${by.name} invited you to ${w.name} on ${config.productName}`,
         `${by.name} invited you to join the workspace "${w.name}" on ${config.productName} as ${role}.\n\nAccept (the link works for 7 days):\n${config.publicUrl}/invite?token=${t}\n\nIf you weren't expecting this, ignore it.`);
-    return { email, role };
+    return { email, role, emailSent: sent.ok, emailError: sent.error };
 }
 
 export async function inviteInfo(token: string) {
