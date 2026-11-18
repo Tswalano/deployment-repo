@@ -30,7 +30,7 @@ import { Billing, BillingReturn } from './pages/Billing';
 import { useLocation } from 'react-router-dom';
 import type { Role } from './api';
 import './index.css';
-import { Platform, PlatformAuditPage, PlatformHealthPage, PlatformWorkspacePage } from './pages/Platform';
+import { Platform, PlatformAuditPage, PlatformConsolePage, PlatformWorkspacePage } from './pages/Platform';
 import { DialogProvider } from './components/Dialog';
 
 function Protected({ children, role }: { children: JSX.Element; role?: Role }) {
@@ -81,7 +81,7 @@ function App() {
         <Route path="billing/return" element={<Protected role="admin"><BillingReturn /></Protected>} />
         <Route path="audit" element={<Protected role="admin"><Audit /></Protected>} />
         <Route path="platform" element={<Platform />} />
-        <Route path="platform/health" element={<PlatformHealthPage />} />
+        <Route path="platform/console" element={<PlatformConsolePage />} />
         <Route path="platform/audit" element={<PlatformAuditPage />} />
         <Route path="platform/workspaces/:id" element={<PlatformWorkspacePage />} />
       </Route>

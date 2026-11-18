@@ -27,6 +27,17 @@ export interface WorkspaceBilling {
     paystack_customer: string | null; subscription_code: string | null; subscription_token: string | null;
     current_period_end: string | null; grace_until: string | null; billing_email: string | null;
     suspended_at?: string | null; suspended_reason?: string | null; complimentary?: boolean; comp_until?: string | null;
+    limit_overrides?: LimitOverrides | null; paystack_authorization?: string | null; card_label?: string | null;
+    last_charge_at?: string | null; last_charge_error?: string | null; next_retry_at?: string | null; charge_reference?: string | null;
+}
+/** Limits above the plan, set by the platform (each only raises; until = when they lapse). */
+export interface LimitOverrides { servers?: number; apps?: number; members?: number; approvals?: boolean; until?: string | null }
+/** The plan's limits, raised by the platform's overrides while they last. */
+export function effectiveLimits(w: Pick<WorkspaceBilling, 'plan' | 'limit_overrides'>, now = Date.now()): Limits {
+    const base = w.plan === 'internal' ? UNLIMITED : w.plan === 'trial' ? PLANS.pro.limits : PLANS[w.plan].limits;
+    const o = w.limit_overrides;
+    if (!o || (o.until && Date.parse(o.until) <= now)) return base;
+    return { servers: Math.max(base.servers, o.servers ?? 0), apps: Math.max(base.apps, o.apps ?? 0), members: Math.max(base.members, o.members ?? 0), approvals: base.approvals || !!o.approvals };
 }
 
 export const billingEnabled = () => config.multiTenant && !!config.paystackSecret;
@@ -41,15 +52,15 @@ async function ws(id: number): Promise<WorkspaceBilling> {
 export function standing(w: WorkspaceBilling, now = Date.now()): { active: boolean; reason: string | null; limits: Limits } {
     if (!config.multiTenant || w.plan === 'internal') return { active: true, reason: null, limits: UNLIMITED };
     const t = (iso: string | null) => (iso ? Date.parse(iso) : 0);
-    const planLimits = w.plan === 'trial' ? PLANS.pro.limits : PLANS[w.plan].limits;
+    const planLimits = effectiveLimits(w, now);
     if (w.suspended_at) return { active: false, reason: `This workspace is suspended${w.suspended_reason ? ` (${w.suspended_reason})` : ''}. Contact support.`, limits: planLimits };
     // a plan given by the platform: no payment needed while it lasts
     if (w.complimentary && w.plan !== 'trial' && (!w.comp_until || t(w.comp_until) > now)) return { active: true, reason: null, limits: planLimits };
     if (w.plan === 'trial') {
-        return t(w.trial_ends_at) > now ? { active: true, reason: null, limits: PLANS.pro.limits }
-            : { active: false, reason: 'Your free trial has ended. Choose a plan to keep making changes.', limits: PLANS.pro.limits };
+        return t(w.trial_ends_at) > now ? { active: true, reason: null, limits: planLimits }
+            : { active: false, reason: 'Your free trial has ended. Choose a plan to keep making changes.', limits: planLimits };
     }
-    const limits = PLANS[w.plan].limits;
+    const limits = planLimits;
     switch (w.billing_status) {
         case 'active': return { active: true, reason: null, limits };
         case 'past_due': return t(w.grace_until) > now ? { active: true, reason: null, limits }
@@ -106,71 +117,204 @@ async function paystack<T>(path: string, init: { method?: string; body?: unknown
     return j.data as T;
 }
 
-const planName = (id: PlanId) => `${config.productName} ${PLANS[id].name} (monthly)`;
-/** The Paystack plan codes, created on first use (and found again by name later). */
-export async function ensurePlans(): Promise<Record<PlanId, string>> {
-    const { rows } = await asSystem(() => db().query<{ value: Record<PlanId, string> }>("SELECT value FROM platform_settings WHERE key = 'paystack_plans'"));
-    if (rows[0]?.value?.starter && rows[0].value.pro) return rows[0].value;
-    const existing = await paystack<{ name: string; plan_code: string; amount: number; interval: string; currency: string }[]>('/plan?perPage=100');
-    const codes = {} as Record<PlanId, string>;
-    for (const id of ['starter', 'pro'] as PlanId[]) {
-        const found = existing.find((p) => p.name === planName(id) && p.amount === PLANS[id].amount && p.interval === 'monthly' && p.currency === 'ZAR');
-        codes[id] = found ? found.plan_code
-            : (await paystack<{ plan_code: string }>('/plan', { method: 'POST', body: { name: planName(id), interval: 'monthly', amount: PLANS[id].amount, currency: 'ZAR' } })).plan_code;
-    }
-    await asSystem(() => db().query(`INSERT INTO platform_settings (key, value) VALUES ('paystack_plans', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [JSON.stringify(codes)]));
-    return codes;
+// ---------------------------------------------------------------------------------------------- credits
+/** Credit balance in cents (granted by the platform, unused time from a plan switch, card checks; minus what renewals used). */
+export async function creditBalance(workspaceId: number): Promise<number> {
+    const { rows: [r] } = await asSystem(() => db().query<{ n: string }>('SELECT coalesce(sum(amount), 0)::text AS n FROM billing_credits WHERE workspace_id = $1', [workspaceId]));
+    return Number(r.n);
+}
+/** Add (or use, when negative) credit. A reference is counted once. */
+export async function addCredit(workspaceId: number, amount: number, kind: 'grant' | 'renewal' | 'proration' | 'card_check' | 'adjust', note: string, by: string, reference: string | null = null): Promise<boolean> {
+    if (!Number.isInteger(amount) || amount === 0) return false;
+    const { rowCount } = await asSystem(() => db().query(
+        `INSERT INTO billing_credits (workspace_id, amount, kind, note, reference, created_by) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (reference) DO NOTHING`,
+        [workspaceId, amount, kind, note.slice(0, 200), reference, by]));
+    return (rowCount ?? 0) > 0;
 }
 
-/** Start a checkout on Paystack's hosted page. */
+// ---------------------------------------------------------------------------------------------- subscriptions run by the console
+/*
+ * Paystack keeps the customer's card (a reusable "authorization"); the console starts each period itself:
+ * credit first, then the rest is charged to the saved card (POST /transaction/charge_authorization). That makes credits,
+ * free extensions and fair plan switches possible (Paystack subscriptions can't change their amount or date).
+ * Workspaces still on a Paystack subscription from before keep it until it ends (subscription_code set).
+ */
+const price = (p: PlanId) => PLANS[p].amount;
+const addMonth = (d: Date) => { const x = new Date(d); x.setMonth(x.getMonth() + 1); return x; };
+type Meta = { workspace_id?: number | string; plan?: PlanId; kind?: 'subscribe' | 'renewal' | 'switch' | 'card'; credit?: number; period_start?: string; proration?: number };
+interface PaystackAuth { authorization_code?: string; reusable?: boolean; brand?: string; last4?: string; card_type?: string; exp_month?: string; exp_year?: string }
+const cardLabel = (a?: PaystackAuth) => (a?.last4 ? `${(a.brand ?? a.card_type ?? 'Card').trim().replace(/^./, (x) => x.toUpperCase())} •••• ${a.last4}` : null);
+
+async function saveCard(workspaceId: number, a: PaystackAuth | undefined, email: string | null) {
+    if (!a?.authorization_code || !a.reusable) return;
+    await asSystem(() => db().query(`UPDATE workspaces SET paystack_authorization = $2, card_label = $3, billing_email = coalesce($4, billing_email) WHERE id = $1`,
+        [workspaceId, a.authorization_code, cardLabel(a), email]));
+}
+
+/**
+ * Start a paid period (idempotent on the reference: the invoice is written once). `paid` was charged, `credit` came from
+ * the balance; together they are the plan's price.
+ */
+async function startPeriod(workspaceId: number, plan: PlanId, from: Date, reference: string, paid: number, credit: number, t: PaystackTx | null, extraCredit?: { amount: number; note: string }) {
+    const end = addMonth(from);
+    const fresh = await writeInvoice(workspaceId, plan, reference, paid, credit, from, end, t);
+    if (!fresh) return false;
+    if (extraCredit?.amount) await addCredit(workspaceId, extraCredit.amount, 'proration', extraCredit.note, 'system', `proration:${reference}`);
+    if (credit > 0) await addCredit(workspaceId, -credit, 'renewal', `Used for ${PLANS[plan].name}, ${from.toISOString().slice(0, 10)}`, 'system', `use:${reference}`);
+    await asSystem(() => db().query(
+        `UPDATE workspaces SET plan = $2, billing_status = 'active', grace_until = NULL, current_period_end = $3, complimentary = false, comp_until = NULL,
+                last_charge_at = now(), last_charge_error = NULL, next_retry_at = NULL, charge_reference = NULL WHERE id = $1`, [workspaceId, plan, end.toISOString()]));
+    return true;
+}
+
+/** Choose (or switch to) a plan. Returns where the browser goes next: Paystack's checkout, or straight back when nothing needs paying there. */
 export async function checkout(workspaceId: number, plan: PlanId, email: string): Promise<{ url: string; reference: string }> {
     if (!PLANS[plan]) throw new DeployError('Choose a plan.');
     const w = await ws(workspaceId);
     if (w.plan === 'internal') throw new DeployError('This workspace is not billed.', 409);
-    if (w.billing_status === 'active' && w.plan === plan) throw new DeployError(`You are already on ${PLANS[plan].name}.`, 409);
-    const codes = await ensurePlans();
+    const paying = (w.plan === 'starter' || w.plan === 'pro') && ['active', 'past_due', 'cancelling'].includes(w.billing_status) && !w.complimentary;
+    if (paying && w.plan === plan && w.billing_status === 'active') throw new DeployError(`You are already on ${PLANS[plan].name}.`, 409);
+    const back = (reference: string) => ({ url: `${config.publicUrl}/billing/return?reference=${encodeURIComponent(reference)}`, reference });
+    const balance = await creditBalance(workspaceId);
+
+    // switching with a saved card: unused time of the current plan becomes credit, the new plan starts today, no redirect
+    if (paying && w.paystack_authorization && !w.subscription_code && w.plan !== plan) {
+        const end = w.current_period_end ? Date.parse(w.current_period_end) : 0;
+        const start = end ? (() => { const x = new Date(end); x.setMonth(x.getMonth() - 1); return x.getTime(); })() : 0;   // the current period's start
+        const left = Math.max(0, end - Date.now()), length = Math.max(1, end - start);
+        const proration = w.billing_status === 'active' ? Math.floor(price(w.plan as PlanId) * Math.min(1, left / length)) : 0;
+        const credit = Math.min(balance + proration, price(plan));
+        const reference = `oc-${workspaceId}-sw-${Date.now()}`;
+        const due = price(plan) - credit;
+        let t: PaystackTx | null = null;
+        if (due > 0) {
+            t = await chargeCard(w, due, reference, { workspace_id: workspaceId, plan, kind: 'switch', credit, proration, period_start: new Date().toISOString() });
+            if (t.status !== 'success') throw new DeployError(`The card ${w.card_label ?? 'on file'} was declined${t.gateway_response ? ` (${t.gateway_response})` : ''}. Update the card and try again.`, 409);
+        }
+        await startPeriod(workspaceId, plan, new Date(), reference, due, credit, t, { amount: proration, note: `Unused ${PLANS[w.plan as PlanId].name} time` });
+        return back(reference);
+    }
+    // credit covers the first month: nothing to pay now (a card is asked for at the next renewal)
+    const credit = Math.min(balance, price(plan));
+    if (credit === price(plan)) {
+        const reference = `oc-${workspaceId}-credit-${Date.now()}`;
+        await startPeriod(workspaceId, plan, new Date(), reference, 0, credit, null);
+        return back(reference);
+    }
     const d = await paystack<{ authorization_url: string; reference: string }>('/transaction/initialize', {
         method: 'POST',
-        body: { email, amount: PLANS[plan].amount, currency: 'ZAR', plan: codes[plan], callback_url: `${config.publicUrl}/billing/return`,
-            metadata: { workspace_id: workspaceId, plan, cancel_action: `${config.publicUrl}/billing` } },
+        body: { email, amount: price(plan) - credit, currency: 'ZAR', channels: ['card'], callback_url: `${config.publicUrl}/billing/return`,
+            metadata: { workspace_id: workspaceId, plan, kind: 'subscribe', credit, cancel_action: `${config.publicUrl}/billing` } },
     });
     return { url: d.authorization_url, reference: d.reference };
 }
 
-interface PaystackTx { status: string; reference: string; amount: number; currency: string; metadata?: { workspace_id?: number | string; plan?: PlanId } | string;
-    customer?: { id?: number; customer_code?: string; email?: string }; paid_at?: string | null; created_at?: string;
-    authorization?: { brand?: string; last4?: string; card_type?: string }; plan?: string | null; plan_object?: { plan_code?: string } }
-const metaOf = (t: PaystackTx) => (typeof t.metadata === 'object' && t.metadata ? t.metadata : {});
+interface PaystackTx { status: string; reference: string; amount: number; currency: string; metadata?: Meta | string;
+    customer?: { id?: number; customer_code?: string; email?: string }; paid_at?: string | null; created_at?: string; gateway_response?: string;
+    authorization?: PaystackAuth; plan?: string | null; plan_object?: { plan_code?: string } }
+const metaOf = (t: PaystackTx): Meta => (typeof t.metadata === 'object' && t.metadata ? t.metadata : {});
 
-/** After checkout: confirm the payment with Paystack itself (never trust the redirect) and switch the plan. */
+/** Charge the saved card (never twice for one reference: Paystack rejects a reused reference). */
+async function chargeCard(w: WorkspaceBilling, amount: number, reference: string, metadata: Meta): Promise<PaystackTx> {
+    if (!w.paystack_authorization) throw new DeployError('There is no card on file.', 409);
+    try {
+        return await paystack<PaystackTx>('/transaction/charge_authorization', { method: 'POST', body: {
+            authorization_code: w.paystack_authorization, email: w.billing_email, amount, currency: 'ZAR', reference, metadata } });
+    } catch (err) {
+        return { status: 'failed', reference, amount, currency: 'ZAR', gateway_response: (err as Error).message.slice(0, 160) };
+    }
+}
+
+/** After Paystack's checkout (or a direct charge): confirm with Paystack itself (never trust the redirect), then apply it once. */
 export async function confirmCheckout(workspaceId: number, reference: string): Promise<WorkspaceBilling> {
     if (!/^[A-Za-z0-9_.=-]{6,100}$/.test(reference)) throw new DeployError('Invalid payment reference.');
+    const done = await asSystem(() => db().query('SELECT workspace_id FROM invoices WHERE reference = $1', [reference]));
+    if (done.rows.length) {
+        if (done.rows[0].workspace_id !== workspaceId) throw new DeployError('That payment belongs to another workspace.', 403);
+        return ws(workspaceId);   // already applied (credit-only start, plan switch, or a second visit)
+    }
     const t = await paystack<PaystackTx>(`/transaction/verify/${encodeURIComponent(reference)}`);
     const meta = metaOf(t);
     if (Number(meta.workspace_id) !== workspaceId) throw new DeployError('That payment belongs to another workspace.', 403);
     if (t.status !== 'success') throw new DeployError(`The payment was not completed (${t.status}).`, 409);
-    if (!meta.plan || !PLANS[meta.plan] || t.amount !== PLANS[meta.plan].amount || t.currency !== 'ZAR') throw new DeployError('The payment does not match a plan.', 409);
-    const before = await ws(workspaceId);   // a plan switch: the previous subscription stops renewing once the new one exists
-    await activate(workspaceId, meta.plan, t.customer?.customer_code ?? null, t.customer?.email ?? null);
-    await recordInvoice(workspaceId, t);
-    // link the subscription now (Cancel / Update card need it) instead of waiting for the subscription.create webhook
-    if (t.customer?.id) {
-        const codes = await ensurePlans();
-        const subs = await paystack<{ subscription_code: string; email_token: string; status: string; next_payment_date: string | null; plan?: { plan_code?: string } }[]>(
-            `/subscription?customer=${t.customer.id}&perPage=50`).catch(() => []);
-        const sub = subs.find((x) => x.plan?.plan_code === codes[meta.plan!] && ['active', 'non-renewing', 'attention'].includes(x.status));
-        if (sub) {
-            await asSystem(() => db().query(`UPDATE workspaces SET subscription_code = $2, subscription_token = $3, current_period_end = coalesce($4::timestamptz, current_period_end) WHERE id = $1`,
-                [workspaceId, sub.subscription_code, sub.email_token, sub.next_payment_date]));
-            if (before.subscription_code && before.subscription_token && before.subscription_code !== sub.subscription_code) {
-                await paystack('/subscription/disable', { method: 'POST', body: { code: before.subscription_code, token: before.subscription_token } })
-                    .catch((err) => console.error('could not stop the previous subscription:', (err as Error).message));
-            }
-        }
-    }
+    await applyPayment(workspaceId, t);
     return ws(workspaceId);
 }
 
+/** Apply a successful Paystack transaction of ours (checkout, card check, renewal, switch). Idempotent. */
+async function applyPayment(workspaceId: number, t: PaystackTx): Promise<void> {
+    const meta = metaOf(t);
+    if (t.currency !== 'ZAR') throw new DeployError('The payment is not in Rand.', 409);
+    const before = await ws(workspaceId);
+    if (meta.kind === 'card') {
+        await saveCard(workspaceId, t.authorization, t.customer?.email ?? null);
+        await addCredit(workspaceId, t.amount, 'card_check', 'Card check, kept as credit', 'system', `card:${t.reference}`);
+        if (before.billing_status === 'past_due') await renew(await ws(workspaceId)).catch((err) => console.error('renewal after card update failed:', (err as Error).message));
+        return;
+    }
+    const plan = meta.plan;
+    const credit = Math.max(0, Math.floor(Number(meta.credit ?? 0)));
+    if (!plan || !PLANS[plan] || t.amount + credit !== price(plan)) throw new DeployError('The payment does not match a plan.', 409);
+    if (credit > (await creditBalance(workspaceId)) + Math.max(0, Number(meta.proration ?? 0))) throw new DeployError('The credit used for this payment is no longer available.', 409);
+    await saveCard(workspaceId, t.authorization, t.customer?.email ?? null);
+    if (t.customer?.customer_code) await asSystem(() => db().query('UPDATE workspaces SET paystack_customer = coalesce(paystack_customer, $2) WHERE id = $1', [workspaceId, t.customer!.customer_code]));
+    const from = meta.period_start && meta.kind === 'renewal' ? new Date(meta.period_start) : new Date(t.paid_at ?? Date.now());
+    await startPeriod(workspaceId, plan, from, t.reference, t.amount, credit, t,
+        meta.kind === 'switch' && meta.proration ? { amount: Number(meta.proration), note: `Unused ${PLANS[before.plan as PlanId]?.name ?? ''} time` } : undefined);
+    // moving off a Paystack subscription from before: it must not renew as well
+    if (before.subscription_code && before.subscription_token) {
+        await paystack('/subscription/disable', { method: 'POST', body: { code: before.subscription_code, token: before.subscription_token } })
+            .catch((err) => console.error('could not stop the previous subscription:', (err as Error).message));
+        await asSystem(() => db().query('UPDATE workspaces SET subscription_code = NULL, subscription_token = NULL WHERE id = $1', [workspaceId]));
+    }
+}
+
+/** Renew one workspace whose period has ended: credit first, then the saved card. Failures start (or continue) the grace period. */
+export async function renew(w: WorkspaceBilling): Promise<'renewed' | 'failed' | 'pending' | 'skipped'> {
+    if ((w.plan !== 'starter' && w.plan !== 'pro') || w.complimentary || w.suspended_at || w.subscription_code) return 'skipped';
+    const plan = w.plan as PlanId;
+    const from = w.current_period_end ? new Date(w.current_period_end) : new Date();
+    // a charge still in progress from the last run: ask Paystack how it ended before trying again
+    if (w.charge_reference) {
+        const prev = await paystack<PaystackTx>(`/transaction/verify/${encodeURIComponent(w.charge_reference)}`).catch(() => null);
+        if (prev?.status === 'success') { await applyPayment(w.id, prev); return 'renewed'; }
+        if (prev && !['failed', 'abandoned', 'reversed'].includes(prev.status)) return 'pending';
+    }
+    const credit = Math.min(await creditBalance(w.id), price(plan));
+    const reference = `oc-${w.id}-${from.toISOString().slice(0, 10).replace(/-/g, '')}-${Date.now().toString(36)}`;
+    if (credit === price(plan)) { await startPeriod(w.id, plan, from, reference, 0, credit, null); return 'renewed'; }
+    const fail = async (why: string) => {
+        await asSystem(() => db().query(
+            `UPDATE workspaces SET billing_status = 'past_due', grace_until = coalesce(grace_until, now() + make_interval(days => $2)),
+                    last_charge_at = now(), last_charge_error = $3, next_retry_at = now() + interval '1 day', charge_reference = NULL WHERE id = $1`, [w.id, GRACE_DAYS, why.slice(0, 200)]));
+        return 'failed' as const;
+    };
+    if (!w.paystack_authorization) return fail('No card on file.');
+    const t = await chargeCard(w, price(plan) - credit, reference, { workspace_id: w.id, plan, kind: 'renewal', credit, period_start: from.toISOString() });
+    if (t.status === 'success') { await applyPayment(w.id, t); return 'renewed'; }
+    if (t.status === 'failed' || t.status === 'abandoned' || t.status === 'reversed') return fail(t.gateway_response || 'The card was declined.');
+    await asSystem(() => db().query(`UPDATE workspaces SET charge_reference = $2, next_retry_at = now() + interval '1 hour', last_charge_at = now() WHERE id = $1`, [w.id, reference]));
+    return 'pending';
+}
+
+/** Background job: renew every period that ended; close cancelled ones; stop retrying long-lapsed ones. */
+export async function renewDue(): Promise<{ renewed: number; failed: number }> {
+    await asSystem(() => db().query(`UPDATE workspaces SET billing_status = 'cancelled' WHERE billing_status = 'cancelling' AND subscription_code IS NULL AND current_period_end <= now()`));
+    await asSystem(() => db().query(`UPDATE workspaces SET billing_status = 'expired', next_retry_at = NULL
+        WHERE billing_status = 'past_due' AND subscription_code IS NULL AND current_period_end < now() - interval '30 days'`));
+    const { rows } = await asSystem(() => db().query<WorkspaceBilling>(
+        `SELECT * FROM workspaces WHERE plan IN ('starter', 'pro') AND NOT complimentary AND suspended_at IS NULL AND subscription_code IS NULL
+            AND billing_status IN ('active', 'past_due') AND current_period_end <= now() AND (next_retry_at IS NULL OR next_retry_at <= now())
+          ORDER BY current_period_end LIMIT 50`));
+    let renewed = 0, failed = 0;
+    for (const w of rows) {
+        const r = await renew(w).catch((err) => { console.error(`renewal of workspace ${w.id} failed:`, (err as Error).message); return 'failed' as const; });
+        if (r === 'renewed') renewed++; else if (r === 'failed') failed++;
+    }
+    return { renewed, failed };
+}
+
+/** A payment of a Paystack subscription from before: keep the plan active for another month. */
 async function activate(workspaceId: number, plan: PlanId, customer: string | null, email: string | null) {
     await asSystem(() => db().query(
         `UPDATE workspaces SET plan = $2, billing_status = 'active', grace_until = NULL, paystack_customer = coalesce($3, paystack_customer),
@@ -178,15 +322,33 @@ async function activate(workspaceId: number, plan: PlanId, customer: string | nu
           WHERE id = $1`, [workspaceId, plan, customer, email]));
 }
 
-/** Cancel at the end of the paid period (Paystack stops renewing). */
+/** Cancel at the end of the paid period. */
 export async function cancel(workspaceId: number): Promise<void> {
     const w = await ws(workspaceId);
-    if (!w.subscription_code || !w.subscription_token) throw new DeployError('There is no subscription to cancel.', 409);
-    await paystack('/subscription/disable', { method: 'POST', body: { code: w.subscription_code, token: w.subscription_token } });
-    await db().query(`UPDATE workspaces SET billing_status = 'cancelling' WHERE id = $1`, [workspaceId]);
+    if (w.subscription_code && w.subscription_token) {   // a Paystack subscription from before
+        await paystack('/subscription/disable', { method: 'POST', body: { code: w.subscription_code, token: w.subscription_token } });
+    } else if (!['active', 'past_due'].includes(w.billing_status) || w.complimentary) throw new DeployError('There is no subscription to cancel.', 409);
+    await db().query(`UPDATE workspaces SET billing_status = 'cancelling', next_retry_at = NULL WHERE id = $1`, [workspaceId]);
+}
+/** Undo a cancellation before the period ends. */
+export async function resume(workspaceId: number): Promise<void> {
+    const w = await ws(workspaceId);
+    if (w.billing_status !== 'cancelling' || w.subscription_code || !w.current_period_end || Date.parse(w.current_period_end) <= Date.now()) throw new DeployError('There is no cancellation to undo.', 409);
+    await db().query(`UPDATE workspaces SET billing_status = 'active' WHERE id = $1`, [workspaceId]);
 }
 
-/** Paystack's own page to change the card. */
+export const CARD_CHECK = 500;   // R5, kept as credit
+/** Change the card: a R5 card check on Paystack's page (kept as credit). A failed renewal is retried right after. */
+export async function cardLink(workspaceId: number, email: string): Promise<string> {
+    const w = await ws(workspaceId);
+    if (w.subscription_code) return manageLink(workspaceId);
+    const d = await paystack<{ authorization_url: string }>('/transaction/initialize', { method: 'POST', body: {
+        email, amount: CARD_CHECK, currency: 'ZAR', channels: ['card'], callback_url: `${config.publicUrl}/billing/return`,
+        metadata: { workspace_id: workspaceId, kind: 'card', cancel_action: `${config.publicUrl}/billing` } } });
+    return d.authorization_url;
+}
+
+/** Paystack's own page to change the card of a Paystack subscription from before. */
 export async function manageLink(workspaceId: number): Promise<string> {
     const w = await ws(workspaceId);
     if (!w.subscription_code) throw new DeployError('There is no subscription yet.', 409);
@@ -218,7 +380,10 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<boolean> {
         const plan = (Object.keys(PLANS) as PlanId[]).find((p) => d.plan?.amount === PLANS[p].amount || d.amount === PLANS[p].amount);
         switch (e.event) {
             case 'charge.success':
-                if (d.status === 'success' && plan && d.currency === 'ZAR') {
+                if (d.status !== 'success' || d.currency !== 'ZAR') break;
+                if (metaOf(d as PaystackTx).kind) {   // started by the console (checkout, renewal, plan switch, card check)
+                    await applyPayment(wsId, d as PaystackTx).catch((err) => console.error('payment from webhook not applied:', (err as Error).message));
+                } else if (plan) {                      // a renewal of a Paystack subscription from before
                     await activate(wsId, plan, customer, d.customer?.email ?? null);
                     await recordInvoice(wsId, d as PaystackTx);
                 }
@@ -247,14 +412,30 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<boolean> {
 export interface InvoiceRow {
     id: number; workspace_id: number; number: string; reference: string; issued_at: string; plan: string; description: string;
     amount: number; currency: string; period_start: string | null; period_end: string | null; billed_to: string; billed_email: string | null;
-    card: string | null; status: string;
+    card: string | null; status: string; credit_applied: number;
 }
 export const invoiceView = (i: InvoiceRow) => ({
     id: i.id, number: i.number, reference: i.reference, issuedAt: i.issued_at, plan: i.plan, description: i.description, amount: i.amount / 100,
     currency: i.currency, periodStart: i.period_start, periodEnd: i.period_end, billedTo: i.billed_to, billedEmail: i.billed_email, card: i.card, status: i.status,
+    creditApplied: (i.credit_applied ?? 0) / 100,
 });
 
-/** One invoice per successful payment (idempotent on the Paystack reference). */
+/** One invoice per period started (idempotent on the reference). Returns false when it already existed. */
+async function writeInvoice(workspaceId: number, plan: PlanId, reference: string, paid: number, credit: number, from: Date, end: Date, t: PaystackTx | null): Promise<boolean> {
+    return asSystem(async () => {
+        const { rows: [w] } = await db().query<{ name: string; billing_email: string | null; card_label: string | null }>('SELECT name, billing_email, card_label FROM workspaces WHERE id = $1', [workspaceId]);
+        const card = cardLabel(t?.authorization) ?? (paid > 0 ? w?.card_label ?? null : null);
+        const { rowCount } = await db().query(
+            `INSERT INTO invoices (workspace_id, number, reference, issued_at, plan, description, amount, currency, period_start, period_end, billed_to, billed_email, card, credit_applied)
+             VALUES ($1, 'INV-' || to_char(now(), 'YYYY') || '-' || lpad(nextval('invoice_number_seq')::text, 5, '0'), $2, now(), $3, $4, $5, 'ZAR', $6, $7, $8, $9, $10, $11)
+             ON CONFLICT (reference) DO NOTHING`,
+            [workspaceId, reference, plan, `${config.productName} ${PLANS[plan].name} plan, monthly`, paid, from.toISOString().slice(0, 10), end.toISOString().slice(0, 10),
+                w?.name ?? 'Workspace', t?.customer?.email ?? w?.billing_email ?? null, card, credit]);
+        return (rowCount ?? 0) > 0;
+    });
+}
+
+/** One invoice per successful payment of a Paystack subscription from before (idempotent on the Paystack reference). */
 export async function recordInvoice(workspaceId: number, t: PaystackTx): Promise<void> {
     if (t.status !== 'success' || !t.reference) return;
     const plan = (Object.keys(PLANS) as PlanId[]).find((p) => PLANS[p].amount === t.amount) ?? (metaOf(t).plan as PlanId | undefined);
@@ -316,11 +497,14 @@ function invoicePage(i: InvoiceRow): PdfOp[] {
     ops.push({ t: 'line', x1: 50, y1: 588, x2: 545, y2: 588, gray: 0.9 });
     T(50, 570, i.description, { size: 10 });
     T(330, 570, `${d(i.period_start)} \u2013 ${d(i.period_end)}`, { size: 9, gray: 0.3 });
-    T(545, 570, money(i.amount), { size: 10, align: 'right' });
-    ops.push({ t: 'line', x1: 50, y1: 556, x2: 545, y2: 556, gray: 0.9 });
-    T(400, 534, 'Total', { size: 10, bold: true }); T(545, 534, `${money(i.amount)} ${i.currency}`, { size: 12, bold: true, align: 'right' });
-    T(400, 518, 'Paid', { size: 9, gray: 0.35 }); T(545, 518, money(i.amount), { size: 9, gray: 0.35, align: 'right' });
-    T(50, 470, `Paid${i.card ? ` with ${i.card}` : ''} through Paystack. Payment reference: ${i.reference}.`, { size: 9, gray: 0.35 });
+    const credit = i.credit_applied ?? 0;
+    T(545, 570, money(i.amount + credit), { size: 10, align: 'right' });
+    let y = 556;
+    if (credit > 0) { T(330, 548, 'Account credit applied', { size: 9, gray: 0.3 }); T(545, 548, `-${money(credit)}`, { size: 10, align: 'right' }); y = 534; }
+    ops.push({ t: 'line', x1: 50, y1: y, x2: 545, y2: y, gray: 0.9 });
+    T(400, y - 22, 'Total', { size: 10, bold: true }); T(545, y - 22, `${money(i.amount)} ${i.currency}`, { size: 12, bold: true, align: 'right' });
+    T(400, y - 38, 'Paid', { size: 9, gray: 0.35 }); T(545, y - 38, money(i.amount), { size: 9, gray: 0.35, align: 'right' });
+    T(50, 470, i.amount > 0 ? `Paid${i.card ? ` with ${i.card}` : ''} through Paystack. Payment reference: ${i.reference}.` : `Covered by account credit. Reference: ${i.reference}.`, { size: 9, gray: 0.35 });
     T(50, 456, 'Amounts in South African Rand. Thank you for your business.', { size: 9, gray: 0.35 });
     return ops;
 }
@@ -331,8 +515,8 @@ export function invoicesPdf(invoices: InvoiceRow[]): Buffer {
 
 export function invoicesCsv(invoices: InvoiceRow[]): string {
     const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const head = ['Invoice', 'Date', 'Description', 'Period start', 'Period end', 'Amount', 'Currency', 'Status', 'Billed to', 'Email', 'Card', 'Reference'];
+    const head = ['Invoice', 'Date', 'Description', 'Period start', 'Period end', 'Amount', 'Credit applied', 'Currency', 'Status', 'Billed to', 'Email', 'Card', 'Reference'];
     const rows = invoices.map((i) => [i.number, new Date(i.issued_at).toISOString().slice(0, 10), i.description, i.period_start, i.period_end,
-        (i.amount / 100).toFixed(2), i.currency, i.status, i.billed_to, i.billed_email, i.card, i.reference]);
+        (i.amount / 100).toFixed(2), ((i.credit_applied ?? 0) / 100).toFixed(2), i.currency, i.status, i.billed_to, i.billed_email, i.card, i.reference]);
     return [head, ...rows].map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
 }
