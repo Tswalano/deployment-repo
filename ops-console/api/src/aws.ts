@@ -2,7 +2,8 @@ import type { AwsCredentialIdentityProvider } from '@smithy/types';
 import { AssociateIamInstanceProfileCommand, AuthorizeSecurityGroupIngressCommand, CreateTagsCommand, DescribeInstancesCommand, DescribeSecurityGroupsCommand, EC2Client, RevokeSecurityGroupIngressCommand, RebootInstancesCommand, StartInstancesCommand, StopInstancesCommand, TerminateInstancesCommand } from '@aws-sdk/client-ec2';
 import { CostExplorerClient, GetCostAndUsageCommand, GetCostForecastCommand } from '@aws-sdk/client-cost-explorer';
 import { ChangeResourceRecordSetsCommand, GetChangeCommand, ListHostedZonesByNameCommand, ListResourceRecordSetsCommand, Route53Client } from '@aws-sdk/client-route-53';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import { CreateLifecyclePolicyCommand, DLMClient, GetLifecyclePoliciesCommand, GetLifecyclePolicyCommand, UpdateLifecyclePolicyCommand } from '@aws-sdk/client-dlm';
 import { GetScheduleCommand, ListSchedulesCommand, SchedulerClient, UpdateScheduleCommand } from '@aws-sdk/client-scheduler';
 import type { RawCostRow } from './costs';
 import type { RawSchedule } from './schedule';
@@ -69,7 +70,16 @@ export interface AwsProvider {
     attachInstanceProfile?(region: string, id: string, profileName: string): Promise<void>;
     /** Short-lived GET link for an object the instance uploaded to the transfer bucket. */
     presignGet(region: string, bucket: string, key: string, seconds: number, filename: string): Promise<string>;
+    /** Off-site backup copies under a prefix (newest first); null when the bucket doesn't exist. */
+    listBackupCopies?(region: string, bucket: string, prefix: string): Promise<BackupCopy[] | null>;
+    /** The console's nightly snapshot policy (Data Lifecycle Manager) in a region, if any. */
+    snapshotPolicy?(region: string): Promise<SnapshotPolicy | null>;
+    /** Switch the nightly snapshots of tagged servers on or off in a region (created on first use). */
+    setSnapshotPolicy?(region: string, enabled: boolean, roleArn: string, retain: number): Promise<void>;
 }
+export interface BackupCopy { key: string; bytes: number; at: string; storageClass: string }
+export interface SnapshotPolicy { id: string; enabled: boolean; retain: number }
+export const SNAPSHOT_POLICY_DESCRIPTION = 'Ops Console nightly server snapshots';
 
 export interface ParamMeta { name: string; type: string; version: number; lastModified: string | null; lastModifiedBy: string | null }
 export type PowerAction = 'start' | 'stop' | 'reboot' | 'terminate';
@@ -159,6 +169,8 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
     const r53c = () => (r53 ??= new Route53Client({ region: 'us-east-1', credentials }));   // Route 53 is global
     const s3: Record<string, S3Client> = {};
     const s3c = (r: string) => (s3[r] ??= new S3Client({ region: r, credentials }));
+    const dlm: Record<string, DLMClient> = {};
+    const dlmc = (r: string) => (dlm[r] ??= new DLMClient({ region: r, credentials }));
     let selfId: string | null | undefined;
     const real: AwsProvider = {
         async describeInstance(region, id) {
@@ -455,6 +467,47 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
                 Bucket: bucket, Key: key, ResponseContentDisposition: `attachment; filename="${filename.replace(/[^A-Za-z0-9_.-]/g, '')}"`,
             }), { expiresIn: seconds });
         },
+        async listBackupCopies(region, bucket, prefix) {
+            const out: BackupCopy[] = [];
+            let token: string | undefined;
+            for (let page = 0; page < 5; page++) {
+                const r = await s3c(region).send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token })).catch((err) => {
+                    if ((err as { name?: string }).name === 'NoSuchBucket') return null;
+                    throw new Error(awsErrorMessage(err, region));
+                });
+                if (!r) return null;
+                for (const o of r.Contents ?? []) {
+                    if (o.Key && o.Size != null) out.push({ key: o.Key, bytes: o.Size, at: (o.LastModified ?? new Date(0)).toISOString(), storageClass: o.StorageClass ?? 'STANDARD' });
+                }
+                if (!r.IsTruncated) break;
+                token = r.NextContinuationToken;
+            }
+            return out.sort((a, b) => b.at.localeCompare(a.at));
+        },
+        async snapshotPolicy(region) {
+            const list = await dlmc(region).send(new GetLifecyclePoliciesCommand({ ResourceTypes: ['INSTANCE'] }))
+                .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+            const mine = (list.Policies ?? []).find((p) => p.Description === SNAPSHOT_POLICY_DESCRIPTION);
+            if (!mine?.PolicyId) return null;
+            const d = await dlmc(region).send(new GetLifecyclePolicyCommand({ PolicyId: mine.PolicyId })).catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+            return { id: mine.PolicyId, enabled: d.Policy?.State === 'ENABLED', retain: d.Policy?.PolicyDetails?.Schedules?.[0]?.RetainRule?.Count ?? 7 };
+        },
+        async setSnapshotPolicy(region, enabled, roleArn, retain) {
+            const details = {
+                PolicyType: 'EBS_SNAPSHOT_MANAGEMENT' as const, ResourceTypes: ['INSTANCE' as const],
+                TargetTags: [{ Key: 'ops-console', Value: 'managed' }],
+                Schedules: [{ Name: 'Nightly', CopyTags: true, TagsToAdd: [{ Key: 'created-by', Value: 'ops-console' }],
+                    CreateRule: { Interval: 24, IntervalUnit: 'HOURS' as const, Times: ['15:00'] }, RetainRule: { Count: retain } }],
+            };
+            const existing = await this.snapshotPolicy!(region);
+            if (existing) {
+                await dlmc(region).send(new UpdateLifecyclePolicyCommand({ PolicyId: existing.id, State: enabled ? 'ENABLED' : 'DISABLED', ExecutionRoleArn: roleArn, PolicyDetails: details }))
+                    .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+            } else if (enabled) {
+                await dlmc(region).send(new CreateLifecyclePolicyCommand({ Description: SNAPSHOT_POLICY_DESCRIPTION, State: 'ENABLED', ExecutionRoleArn: roleArn, PolicyDetails: details }))
+                    .catch((err) => { throw new Error(awsErrorMessage(err, region)); });
+            }
+        },
         async runDocument(region, id, document, parameters, timeoutMs = 45_000) {
             const commandId = await this.sendDocument(region, id, document, parameters ?? {});
             const deadline = Date.now() + timeoutMs;
@@ -506,6 +559,7 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
         async upsertARecord() { return null; /* local test mode: never change DNS */ },
         async waitDnsChange() { return true; },
         async deleteARecord() { /* local test mode */ },
+        async setSnapshotPolicy() { /* local test mode: never change snapshot policies */ },
             async tagManaged() { /* local test mode: never tag */ },
             async attachInstanceProfile() { /* local test mode */ },
             async openWebPorts() { return []; /* local test mode */ },

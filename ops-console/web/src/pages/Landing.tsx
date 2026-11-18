@@ -72,7 +72,7 @@ function ConsolePreview() {
 const FEATURES: [string, string, string][] = [
   [ICON.github, 'Deploy from GitHub', 'Pick a repository and a subdomain. It builds, gets HTTPS, and every push to the branch deploys automatically, rolling back if the new version is unhealthy.'],
   [ICON.pulse, 'Problems found before customers notice', 'Health checks every minute, uptime history and alerts for downtime, disk, memory, certificates and failed deploys, by email, Slack or Discord.'],
-  [ICON.db, 'Verified backups', 'Nightly database backups, kept on the server for two weeks and restore-tested automatically.'],
+  [ICON.db, 'Verified backups', 'Nightly database backups, restore-tested automatically, with off-site copies in a private bucket in the same AWS account.'],
   [ICON.terminal, 'Safe server access', 'A browser terminal with no open SSH port, and time-limited SSH from a laptop that closes automatically.'],
   [ICON.coins, 'Costs under control', "This month's AWS bill and forecast in Rand or dollars, budget alerts, and control of the schedules that start and stop servers."],
   [ICON.users, 'Built for teams', 'Roles, deploy approvals for production, freeze windows and a full audit log of who did what.'],

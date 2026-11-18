@@ -1,7 +1,7 @@
 #!/bin/bash
 # OpsConsole-Backups: read-only inventory of the nightly database dumps on this instance.
 # No parameters. Lists files under /var/backups/app-db (names, sizes, times only, never contents),
-# the last run's status, the timer schedule, restore-test results and free disk space.
+# the last run's status, the off-site copy status, the timer schedule, restore-test results and free disk space.
 # Output: base64(gzip(JSON)).
 set -u
 export LC_ALL=C
@@ -23,12 +23,13 @@ if os.path.isdir(root):
         for name in os.listdir(d):
             if not (name.endswith(".dump") or name.endswith(".sql")): continue
             st = os.stat(os.path.join(d, name))
-            files.append({"db": db, "file": name, "bytes": st.st_size, "mtime": int(st.st_mtime)})
+            files.append({"db": db, "file": name, "bytes": st.st_size, "mtime": int(st.st_mtime), "offsite": os.path.exists(os.path.join(d, name) + ".offsite")})
 files.sort(key=lambda x: (x["db"], -x["mtime"]))
 vfs = os.statvfs("/")
 out = {
     "status": load("/opt/deploy-state/backups.json"),
     "verifications": (load("/opt/deploy-state/backup-verify.json") or [])[-100:],
+    "offsite": load("/opt/deploy-state/offsite.json"),
     "files": files,
     "timer": {"next": os.environ.get("NEXT") or None, "last": os.environ.get("LAST") or None, "running": os.environ.get("ACTIVE") == "activating"},
     "disk_free": vfs.f_bavail * vfs.f_frsize,

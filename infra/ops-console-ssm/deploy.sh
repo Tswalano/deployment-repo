@@ -63,14 +63,15 @@ upsert OpsConsole-CollectStatus collect-status.sh "Ops Console: read-only status
 upsert OpsConsole-Deploy deploy-app.sh "Ops Console: deploy or roll back one project via server/pipeline.sh" 1800 "$DEPLOY_PARAMS"
 upsert OpsConsole-AppLogs app-logs.sh "Ops Console: filtered log entries of one project (secrets masked)" 60 "$LOGS_PARAMS"
 BACKUP_PARAMS='{
-  "action": {"type": "String", "allowedValues": ["run", "verify", "export"]},
+  "action": {"type": "String", "allowedValues": ["run", "verify", "export", "offsite", "fetch"]},
   "db":     {"type": "String", "default": "", "allowedPattern": "^$|^[a-z0-9_]{1,40}$"},
   "file":   {"type": "String", "default": "", "allowedPattern": "^$|^[A-Za-z0-9_.-]{1,120}[.]dump$"},
-  "bucket": {"type": "String", "default": "", "allowedPattern": "^$|^ops-console-transfer-[0-9]{12}-[a-z0-9-]{1,30}$"},
-  "key":    {"type": "String", "default": "", "allowedPattern": "^$|^downloads/[0-9a-f]{32}/[A-Za-z0-9_.-]{1,120}$"}
+  "bucket": {"type": "String", "default": "", "allowedPattern": "^$|^ops-console-(transfer|backups)-[0-9]{12}-[a-z0-9-]{1,30}$"},
+  "key":    {"type": "String", "default": "", "allowedPattern": "^$|^downloads/[0-9a-f]{32}/[A-Za-z0-9_.-]{1,120}$|^i-[0-9a-f]{8,17}/[a-z0-9_]{1,40}/[A-Za-z0-9_.-]{1,120}[.]dump$"},
+  "region": {"type": "String", "default": "", "allowedPattern": "^$|^[a-z]{2}-[a-z]{1,12}-[0-9]$"}
 }'
 upsert OpsConsole-Backups backups-list.sh "Ops Console: read-only inventory of database backups (no parameters)" 60
-upsert OpsConsole-BackupAction backup-action.sh "Ops Console: run a backup, restore-test a dump into a throwaway DB, or export one for download" 600 "$BACKUP_PARAMS"
+upsert OpsConsole-BackupAction backup-action.sh "Ops Console: run a backup, restore-test a dump into a throwaway DB, export one for download, or manage off-site copies" 600 "$BACKUP_PARAMS"
 ROTATE_PARAMS='{
   "kind":   {"type": "String", "allowedValues": ["db-password", "jwt", "reload"]},
   "target": {"type": "String", "allowedPattern": "^[a-z_][a-z0-9_-]{0,30}$"}
