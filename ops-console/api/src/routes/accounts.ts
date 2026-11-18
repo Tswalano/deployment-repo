@@ -34,7 +34,7 @@ account.get('/username-suggestion', rateLimit(60, 60_000, (c) => `usugg:${ip(c)}
 });
 
 account.get('/config', (c) => c.json({ multiTenant: config.multiTenant, productName: config.productName, trialDays: config.trialDays,
-    legalEntity: config.legalEntity || config.productName, supportEmail: config.supportEmail || null }));
+    legalEntity: config.legalEntity || config.productName, supportEmail: config.supportEmail || null, demo: config.demoEnabled }));
 
 account.post('/signup', multiOnly, rateLimit(5, 60 * 60_000, (c) => `signup:${ip(c)}`), async (c) => {
     const b = await c.req.json().catch(() => ({}));

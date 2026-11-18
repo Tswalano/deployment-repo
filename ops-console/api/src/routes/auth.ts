@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { audit } from '../audit';
 import { config } from '../config';
-import { db } from '../db';
+import { asSystem, db, withWorkspace } from '../db';
 import { denyDemo, Env, rateLimit } from '../middleware';
 import { dummyPasswordHash, hashPassword, passwordProblem, verifyPassword } from '../password';
 import { cleanEmail, cleanUsername, sendVerification } from '../accounts';
@@ -63,13 +63,22 @@ auth.post('/login', loginLimiter, async (c) => {
 
 /** "Try the demo": a read-only viewer session without a password. */
 auth.post('/demo', loginLimiter, async (c) => {
-    if (!config.demoEnabled || config.multiTenant) return c.json({ error: 'Demo is disabled' }, 404);
-    const { rows } = await db().query('SELECT id, username FROM users WHERE is_demo AND NOT disabled AND role = \'viewer\'');
+    if (!config.demoEnabled) return c.json({ error: 'Demo is disabled' }, 404);
+    const { rows } = await db().query('SELECT id, username FROM users WHERE is_demo AND NOT disabled AND role = \'viewer\' ORDER BY id LIMIT 1');
     if (!rows.length) return c.json({ error: 'Demo is not available' }, 404);
+    // multi-company: the demo account looks at the one workspace it is a (viewer) member of, read-only
+    let workspaceId: number | null = null;
+    if (config.multiTenant) {
+        const { rows: m } = await asSystem(() => db().query<{ workspace_id: number }>("SELECT workspace_id FROM workspace_members WHERE user_id = $1 AND role = 'viewer' ORDER BY workspace_id LIMIT 1", [rows[0].id]));
+        if (!m.length) return c.json({ error: 'Demo is not available' }, 404);
+        workspaceId = m[0].workspace_id;
+    }
     const ip = c.get('ip');
-    const token = await createSession(rows[0].id, config.demoSessionMinutes, ip, c.req.header('user-agent') ?? null);
+    const open = () => createSession(rows[0].id, config.demoSessionMinutes, ip, c.req.header('user-agent') ?? null, workspaceId);
+    const token = workspaceId === null ? await open() : await withWorkspace(workspaceId, open);
     startSession(c, token, config.demoSessionMinutes);
-    await audit({ id: rows[0].id, username: rows[0].username }, 'auth.demo', null, {}, ip);
+    const record = () => audit({ id: rows[0].id, username: rows[0].username }, 'auth.demo', null, {}, ip);
+    if (workspaceId === null) await record(); else await withWorkspace(workspaceId, record);
     return c.json({ ok: true });
 });
 

@@ -75,9 +75,10 @@ export function Login() {
           </button>
         </form>
 
-        {site.multiTenant ? (
+        {site.multiTenant && (
           <p className="mt-6 text-center text-sm text-slate-400">New here? <Link to="/signup" className="text-indigo-300 hover:underline">Create an account</Link></p>
-        ) : (
+        )}
+        {site.demo !== false && (
         <div className="mt-6 rounded-xl border border-dashed border-ink-600 p-4 text-center">
           <p className="text-sm text-slate-400">Just looking around?</p>
           <button className="btn-secondary mt-3 w-full" disabled={busy !== null} onClick={() => void run('demo', api.demo)}>

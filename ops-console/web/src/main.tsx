@@ -32,6 +32,7 @@ import type { Role } from './api';
 import './index.css';
 import { Platform, PlatformAuditPage, PlatformConsolePage, PlatformWorkspacePage } from './pages/Platform';
 import { DialogProvider } from './components/Dialog';
+import { Demo } from './pages/Demo';
 
 function Protected({ children, role }: { children: JSX.Element; role?: Role }) {
   const { user, loading, site } = useAuth();
@@ -50,6 +51,7 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/demo" element={<Demo />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/docs" element={<Docs />} />
       <Route path="/terms" element={<Terms />} />
