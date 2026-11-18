@@ -6,6 +6,7 @@ import { Footer } from './Footer';
 import { useTheme } from '../theme';
 import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
+import { useDialog } from './Dialog';
 
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
 const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/callback', '/billing', '/billing/return'];
@@ -42,6 +43,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
   }, []);
   const [theme, setTheme] = useTheme();
+  const dialog = useDialog();
   if (!user) return null;
   const initials = (user.displayName || user.username).split(/[\s._-]+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
   return (
@@ -69,10 +71,12 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
                 </button>
               ))}
               <button role="menuitem" className="block w-full px-4 py-2 text-left text-sm text-slate-400 hover:bg-ink-800" onClick={async () => {
-                const name = prompt('Name of the new workspace');
-                if (!name || name.trim().length < 2) return;
                 setOpen(false);
-                try { await api.createWorkspace(name.trim()); await onSwitched?.(); } catch (e) { alert(e instanceof Error ? e.message : 'Could not create it.'); }
+                const name = await dialog.prompt({ title: 'New workspace', body: 'A separate workspace with its own servers, team and billing (it starts on a free trial).',
+                  label: 'Workspace name', placeholder: 'e.g. Acme Ltd', minLength: 2, maxLength: 80, confirmLabel: 'Create workspace' });
+                if (!name) return;
+                try { await api.createWorkspace(name); await onSwitched?.(); }
+                catch (e) { await dialog.alert({ title: "The workspace wasn't created", body: e instanceof Error ? e.message : 'Something went wrong.' }); }
               }}>+ New workspace</button>
             </div>
           )}

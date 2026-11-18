@@ -10,6 +10,7 @@ import { WorkspaceForm } from '../components/WorkspaceForm';
 import { AwsAccountCard } from '../components/ConnectAws';
 import { AppsDomainCard } from '../components/AppsDomainCard';
 import { usePoll } from '../usePoll';
+import { useDialog } from '../components/Dialog';
 
 const REGIONS = ['af-south-1', 'eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'ap-southeast-1'];
 const ENVS = ['production', 'staging', 'development'];
@@ -79,6 +80,7 @@ function AddInstance({ onAdded }: { onAdded: (i: Instance) => void }) {
 
 export function Settings() {
   const { site } = useAuth();
+  const dialog = useDialog();
   const { data, error, reload } = usePoll(api.instances, 60_000);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -133,12 +135,13 @@ export function Settings() {
                   <td title={i.lastError ?? i.lastOkAt ?? ''} className={i.lastError ? 'text-rose-300' : ''}>{i.lastError ? 'failing' : ago(i.lastOkAt)}</td>
                   <td className="text-right">
                     <div className="flex justify-end gap-2">
-                      <button className="btn-secondary px-2.5 py-1 text-xs" onClick={() => {
-                        const name = window.prompt('New display name', i.name)?.trim();
+                      <button className="btn-secondary px-2.5 py-1 text-xs" onClick={async () => {
+                        const name = await dialog.prompt({ title: `Rename ${i.name}`, body: 'Only the name shown in the console changes; the EC2 instance is not touched.',
+                          label: 'Display name', defaultValue: i.name, minLength: 1, maxLength: 60, confirmLabel: 'Rename' });
                         if (name && name !== i.name) void act(() => api.updateInstance(i.id, { name }), `Renamed to ${name}.`);
                       }}>Rename</button>
-                      <button className="btn-danger px-2.5 py-1 text-xs" onClick={() => {
-                        if (window.confirm(`Stop monitoring ${i.name}? The EC2 instance itself is not touched; only its history in the console is removed.`)) {
+                      <button className="btn-danger px-2.5 py-1 text-xs" onClick={async () => {
+                        if (await dialog.confirm({ title: `Stop monitoring ${i.name}?`, body: 'The EC2 instance itself is not touched; only its history in the console is removed.', confirmLabel: 'Remove from the console', danger: true })) {
                           void act(() => api.removeInstance(i.id), `${i.name} removed from the console.`);
                         }
                       }}>Remove</button>

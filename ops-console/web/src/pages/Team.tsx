@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, ApiError, Role, TeamInvite, TeamMember } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, PageHeader, Skeleton } from '../components/ui';
+import { useDialog } from '../components/Dialog';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const ROLES: [Role, string][] = [['admin', 'Admin: everything, including team and settings'], ['deployer', 'Deployer: deploy, restart, back up'], ['viewer', 'Viewer: look only']];
@@ -10,6 +11,7 @@ const ROLES: [Role, string][] = [['admin', 'Admin: everything, including team an
 /** Members and invitations of the current workspace (multi-customer mode). */
 export function Team() {
   const { user, refresh } = useAuth();
+  const dialog = useDialog();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
   const [data, setData] = useState<{ members: TeamMember[]; invites: TeamInvite[] } | null>(null);
@@ -65,12 +67,12 @@ export function Team() {
                 <td className="text-right">
                   {m.id === user?.id ? (
                     <button className="btn-ghost px-2.5 py-1 text-xs" disabled={busy} onClick={async () => {
-                      if (!confirm('Leave this workspace? Access ends until a new invitation is accepted.')) return;
+                      if (!(await dialog.confirm({ title: 'Leave this workspace?', body: 'Access ends until a new invitation is accepted.', confirmLabel: 'Leave workspace', danger: true }))) return;
                       await act(() => api.removeMember(m.id), 'Left the workspace.'); await refresh(); navigate('/');
                     }}>Leave</button>
                   ) : isAdmin && (
-                    <button className="btn-danger px-2.5 py-1 text-xs" disabled={busy} onClick={() => {
-                      if (confirm(`Remove ${m.email} from this workspace? They lose access at once.`)) void act(() => api.removeMember(m.id), `${m.email} was removed.`);
+                    <button className="btn-danger px-2.5 py-1 text-xs" disabled={busy} onClick={async () => {
+                      if (await dialog.confirm({ title: `Remove ${m.email}?`, body: 'They lose access to this workspace at once.', confirmLabel: 'Remove member', danger: true })) void act(() => api.removeMember(m.id), `${m.email} was removed.`);
                     }}>Remove</button>
                   )}
                 </td>

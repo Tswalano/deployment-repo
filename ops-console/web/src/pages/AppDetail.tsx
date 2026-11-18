@@ -12,11 +12,13 @@ import { LogsTab } from './app/LogsTab';
 import { EnvTab } from './app/EnvTab';
 import { RepoCard } from './app/RepoCard';
 import { ActionDialog, errMsg, Facts, RunningBanner, Section } from './app/shared';
+import { useDialog } from '../components/Dialog';
 
 type Tab = 'overview' | 'deploy' | 'environment' | 'database' | 'logs';
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 function PendingCard({ d, me, onDone }: { d: Deployment; me: { username: string; canDecide: boolean }; onDone: (msg: string, ok: boolean) => Promise<void> }) {
+  const dialog = useDialog();
   const [busy, setBusy] = useState(false);
   const mine = d.requestedBy === me.username;
   const act = async (fn: () => Promise<Deployment>, msg: (x: Deployment) => string) => {
@@ -38,8 +40,8 @@ function PendingCard({ d, me, onDone }: { d: Deployment; me: { username: string;
             <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy} onClick={() => void act(() => api.rejectDeployment(d.id, ''), () => 'Request cancelled.')}>Cancel request</button>
           ) : (
             <>
-              <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy} onClick={() => {
-                const reason = window.prompt('Reason for rejecting (shown to the requester):', '') ?? null;
+              <button className="btn-secondary px-3 py-1.5 text-xs" disabled={busy} onClick={async () => {
+                const reason = await dialog.prompt({ title: `Reject this ${d.action}?`, label: 'Reason (shown to the requester)', required: false, confirmLabel: 'Reject request', danger: true });
                 if (reason !== null) void act(() => api.rejectDeployment(d.id, reason), () => 'Request rejected.');
               }}>Reject</button>
               <button className="btn-primary px-3 py-1.5 text-xs" disabled={busy} onClick={() => void act(() => api.approveDeployment(d.id), (x) => `Approved: ${x.action} of ${x.project} started.`)}>Approve & start</button>

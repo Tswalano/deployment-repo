@@ -3,6 +3,7 @@ import { api, ApiError, AwsConnectionView, AwsServer } from '../api';
 import { useAuth } from '../auth';
 import { Alert } from './ui';
 import { StateDot } from './PowerControls';
+import { useDialog } from './Dialog';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 
@@ -151,6 +152,7 @@ export function AddServersPanel({ onAdded }: { onAdded: (id: number) => void }) 
 /** Settings → AWS account (multi-customer mode). */
 export function AwsAccountCard() {
   const { user } = useAuth();
+  const dialog = useDialog();
   const isAdmin = user?.role === 'admin' && !user.isDemo;
   const [view, setView] = useState<AwsConnectionView | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'warn'; text: string } | null>(null);
@@ -176,7 +178,7 @@ export function AwsAccountCard() {
           {isAdmin && (
             <div className="flex flex-wrap items-center gap-3">
               <button className="btn-danger" onClick={async () => {
-                if (!confirm('Disconnect this AWS account? The console stops managing its servers at once. Servers and apps keep running.')) return;
+                if (!(await dialog.confirm({ title: 'Disconnect this AWS account?', body: 'The console stops managing its servers at once. Servers and apps keep running.', confirmLabel: 'Disconnect', danger: true }))) return;
                 try { const r = await api.awsDisconnect(); setMsg({ tone: 'warn', text: `Disconnected. ${r.note}` }); await load(); } catch (e) { setMsg({ tone: 'bad', text: err(e) }); }
               }}>Disconnect</button>
               <span className="text-xs text-slate-500">To remove our access completely, also delete the <code>OpsConsoleAccess</code> stack in CloudFormation.</span>

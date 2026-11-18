@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError, BillingView, Invoice } from '../api';
 import { useAuth } from '../auth';
 import { Alert, PageHeader, Skeleton } from '../components/ui';
+import { useDialog } from '../components/Dialog';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '—');
@@ -19,6 +20,7 @@ function Usage({ label, used, max }: { label: string; used: number; max: number 
 /** Plan, usage, upgrade (Paystack checkout), card and cancellation. */
 export function Billing() {
   const { user } = useAuth();
+  const dialog = useDialog();
   const isAdmin = user?.role === 'admin' && !user.isDemo;
   const [b, setB] = useState<BillingView | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -71,13 +73,13 @@ export function Billing() {
           {isAdmin && subscribed && !b.complimentary && (
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-ink-700 pt-5">
               {other && b.status === 'active' && (
-                <button className="btn-primary" disabled={!!busy} onClick={() => {
-                  if (confirm(`Switch to ${planName(other.id)} (R${other.price} per month)? The new plan starts today through Paystack checkout, and the current subscription stops renewing.`)) void go(other.id, async () => { window.location.assign((await api.billingCheckout(other.id)).url); });
+                <button className="btn-primary" disabled={!!busy} onClick={async () => {
+                  if (await dialog.confirm({ title: `Switch to ${planName(other.id)}?`, body: `R${other.price} per month. The new plan starts today through Paystack checkout, and the current subscription stops renewing.`, confirmLabel: `Switch to ${planName(other.id)}` })) void go(other.id, async () => { window.location.assign((await api.billingCheckout(other.id)).url); });
                 }}>{busy === other.id ? 'Opening Paystack…' : `Switch to ${planName(other.id)}`}</button>
               )}
               {b.hasSubscription && <button className="btn-secondary" disabled={!!busy} onClick={() => go('card', async () => { window.location.assign((await api.billingManage()).url); })}>Update card</button>}
-              {b.hasSubscription && b.status === 'active' && <button className="btn-ghost ml-auto" disabled={!!busy} onClick={() => {
-                if (confirm('Cancel the subscription? Everything keeps working until the end of the paid period.')) void go('cancel', async () => { await api.billingCancel(); await load(); setBusy(null); setMsg({ tone: 'ok', text: 'The subscription ends at the end of the current period.' }); });
+              {b.hasSubscription && b.status === 'active' && <button className="btn-ghost ml-auto" disabled={!!busy} onClick={async () => {
+                if (await dialog.confirm({ title: 'Cancel the subscription?', body: 'Everything keeps working until the end of the paid period.', confirmLabel: 'Cancel subscription', cancelLabel: 'Keep it', danger: true })) void go('cancel', async () => { await api.billingCancel(); await load(); setBusy(null); setMsg({ tone: 'ok', text: 'The subscription ends at the end of the current period.' }); });
               }}>Cancel subscription</button>}
             </div>
           )}

@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api, EnvVar } from '../../api';
 import { ago, Alert, Skeleton } from '../../components/ui';
 import { errMsg } from './shared';
+import { useDialog } from '../../components/Dialog';
 
 const KIND: Record<EnvVar['kind'], [string, string]> = {
   db: ['pill-info', 'database'], jwt: ['pill-info', 'signing key'], provider: ['pill-warn', 'API key'], secret: ['pill-warn', 'secret'], config: ['pill-mute', 'setting'],
@@ -9,6 +10,7 @@ const KIND: Record<EnvVar['kind'], [string, string]> = {
 
 /** An app's environment variables: add, change, reveal, remove (saved to SSM; the app restarts; undone if it fails). */
 export function EnvTab({ instanceId, project, isAdmin }: { instanceId: number; project: string; isAdmin: boolean }) {
+  const dialog = useDialog();
   const [data, setData] = useState<Awaited<ReturnType<typeof api.env>> | null>(null);
   const [shown, setShown] = useState<Record<string, string>>({});
   const [edit, setEdit] = useState<string | null>(null);
@@ -70,18 +72,19 @@ export function EnvTab({ instanceId, project, isAdmin }: { instanceId: number; p
                       ? <button className="btn-ghost px-2 py-1 text-xs" onClick={async () => { try { const val = await api.revealEnv(instanceId, project, v.key); setShown({ ...shown, [v.key]: val }); } catch (e) { setMsg({ tone: 'bad', text: errMsg(e) }); } }}>Reveal</button>
                       : <button className="btn-ghost px-2 py-1 text-xs" onClick={() => { const n = { ...shown }; delete n[v.key]; setShown(n); }}>Hide</button>}
                     {v.generated ? (
-                      <button className="btn-ghost px-2 py-1 text-xs" disabled={busy !== null || (v.kind === 'db' && !data.dbRole)} onClick={() => {
+                      <button className="btn-ghost px-2 py-1 text-xs" disabled={busy !== null || (v.kind === 'db' && !data.dbRole)} onClick={async () => {
                         const target = v.kind === 'db' ? data.dbRole! : data.service;
-                        const ok = window.prompt(v.kind === 'jwt'
-                          ? `Rotate the JWT secret? Everyone signed in to ${project} is signed out. Type ${target} to confirm.`
-                          : `Rotate the database password of ${target}? Every app using it restarts. Type ${target} to confirm.`);
+                        const ok = await dialog.prompt({
+                          title: v.kind === 'jwt' ? 'Rotate the JWT secret?' : `Rotate the database password of ${target}?`,
+                          body: v.kind === 'jwt' ? `Everyone signed in to ${project} is signed out.` : 'Every app using it restarts with the new password.',
+                          label: `Type ${target} to confirm`, placeholder: target, confirmLabel: 'Rotate', danger: true });
                         if (ok === target) void run(v.key, () => api.rotateSecret(instanceId, v.kind === 'jwt' ? 'jwt' : 'db-password', target, ok) as Promise<{ dryRun?: boolean }>, 'Rotated; the apps restarted and are healthy.');
                       }}>Rotate</button>
                     ) : (
                       <>
                         <button className="btn-ghost px-2 py-1 text-xs" onClick={async () => { try { setEditVal(await api.revealEnv(instanceId, project, v.key)); setEdit(v.key); } catch (e) { setMsg({ tone: 'bad', text: errMsg(e) }); } }}>Edit</button>
-                        <button className="btn-ghost px-2 py-1 text-xs text-rose-300" disabled={busy !== null} onClick={() => {
-                          if (window.confirm(`Remove ${v.key} from ${project}? The app restarts without it.`)) void run(v.key, () => api.removeEnv(instanceId, project, v.key), `${v.key} removed; ${project} restarted.`);
+                        <button className="btn-ghost px-2 py-1 text-xs text-rose-300" disabled={busy !== null} onClick={async () => {
+                          if (await dialog.confirm({ title: `Remove ${v.key}?`, body: `${project} restarts without it.`, confirmLabel: 'Remove', danger: true })) void run(v.key, () => api.removeEnv(instanceId, project, v.key), `${v.key} removed; ${project} restarted.`);
                         }}>Remove</button>
                       </>
                     )}
