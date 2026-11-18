@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError, Deployment, Detection, GithubRepo, Instance, NewAppCheck, NewAppCreation } from '../api';
 import { ago, Alert, DesktopOnly, PageHeader, Skeleton } from '../components/ui';
+import { GithubGap, GithubNeeded } from '../components/GithubNeeded';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const code = (e: unknown) => (e instanceof ApiError ? e.code : undefined);
@@ -40,6 +41,8 @@ export function NewApp() {
   const [inst, setInst] = useState<Instance | null>(null);
   const [repos, setRepos] = useState<GithubRepo[] | null>(null);
   const [ghError, setGhError] = useState<string | null>(null);
+  const [ghGap, setGhGap] = useState<{ gap: GithubGap; installUrl: string | null } | null>(null);
+  const [ghChecking, setGhChecking] = useState(false);
   const [step, setStep] = useState(0);
   // step 1
   // "Try again" from a failed creation opens the wizard pre-filled (?repo=&branch=&project=&subdomain=)
@@ -83,11 +86,22 @@ export function NewApp() {
 
   useEffect(() => {
     api.instance(instanceId).then((r) => setInst(r.instance)).catch((e) => setError(err(e)));
-    api.github().then((s) => {
-      if (!s.connected) { setGhError('GitHub is not connected yet.'); return; }
-      api.githubRepos().then(setRepos).catch((e) => setGhError(err(e)));
-    }).catch((e) => setGhError(err(e)));
-  }, [instanceId]);
+    void checkGithub();
+  }, [instanceId]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Is GitHub ready to pick a repository? If not, which step is missing (shown as its own screen). */
+  async function checkGithub(fresh = false) {
+    setGhChecking(true); setGhError(null);
+    try {
+      const s = await api.github();
+      if (!s.connected) { setGhGap({ gap: 'not_connected', installUrl: null }); return; }
+      if (s.error) { setGhGap(null); setGhError(s.error); return; }
+      if (!s.installations?.length) { setGhGap({ gap: 'not_installed', installUrl: s.installUrl ?? null }); return; }
+      const list = await api.githubRepos(fresh);
+      setRepos(list);
+      setGhGap(list.length ? null : { gap: 'no_repos', installUrl: s.installUrl ?? null });
+    } catch (e) { setGhError(err(e)); } finally { setGhChecking(false); }
+  }
 
   useEffect(() => {
     if (!repo) return;
@@ -158,8 +172,11 @@ export function NewApp() {
       <PageHeader title="New app from GitHub" subtitle={`On ${inst.name} (${inst.region}) · Node.js apps`} />
       <DesktopOnly title="Creating apps" />
       <div className="hidden md:block">
+        {step === 0 && ghGap ? (
+          <GithubNeeded gap={ghGap.gap} installUrl={ghGap.installUrl} backTo={`/instances/${inst.id}`} refreshing={ghChecking} onRefresh={() => void checkGithub(true)} />
+        ) : <>
         <Stepper step={step} />
-        {ghError && <div className="mb-4"><Alert tone="warn">{ghError} <Link to="/settings#github" className="underline">Connect GitHub in Settings</Link> first.</Alert></div>}
+        {ghError && <div className="mb-4"><Alert tone="warn">GitHub couldn&rsquo;t be read: {ghError}</Alert></div>}
 
         {step === 0 && (
           <section className="card space-y-5">
@@ -341,6 +358,7 @@ export function NewApp() {
             </table>
           </section>
         )}
+        </>}
       </div>
     </div>
   );
