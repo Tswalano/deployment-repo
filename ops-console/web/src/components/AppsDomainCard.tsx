@@ -14,15 +14,19 @@ export function AppsDomainCard() {
   const isAdmin = user?.role === 'admin' && !user.isDemo;
   const [s, setS] = useState<AppAddresses | null>(null);
   const [mode, setMode] = useState<AddressMode>('route53');
-  const [domain, setDomain] = useState('');
+  // one field per option: a domain saved for Route 53 never pre-fills the other DNS provider option (and vice versa)
+  const [domains, setDomains] = useState<Record<'route53' | 'external', string>>({ route53: '', external: '' });
+  const domain = mode === 'platform' ? '' : domains[mode];
+  const setDomain = (v: string) => { if (mode !== 'platform') setDomains((d) => ({ ...d, [mode]: v })); };
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
   useEffect(() => {
     api.appAddresses().then((r) => {
       setS(r);
       const saved = r.appsDomain;
-      setMode(saved?.mode ?? (saved ? 'route53' : r.platform ? 'platform' : 'route53'));
-      setDomain(saved?.domain ?? '');
+      const m: AddressMode = saved?.mode ?? (saved ? 'route53' : r.platform ? 'platform' : 'route53');
+      setMode(m);
+      if (saved?.domain && m !== 'platform') setDomains((d) => ({ ...d, [m]: saved.domain! }));
     }).catch(() => undefined);
   }, []);
   if (!s) return null;
@@ -30,7 +34,7 @@ export function AppsDomainCard() {
   const savedMode: AddressMode | null = s.appsDomain ? (s.appsDomain.mode ?? 'route53') : s.current?.kind === 'platform' ? 'platform' : null;
   const unchanged = mode === savedMode && (mode === 'platform' || domain === (s.appsDomain?.domain ?? ''));
   const options: { id: AddressMode; title: string; body: string }[] = [
-    ...(s.platform ? [{ id: 'platform' as const, title: 'Provided addresses', body: `No domain needed: apps get addresses like shop.${s.platform.base}, with HTTPS.` }] : []),
+    ...(s.platform ? [{ id: 'platform' as const, title: 'Provided addresses', body: `No domain needed: apps get addresses like <app-name>.${s.platform.base}, with HTTPS.` }] : []),
     { id: 'route53', title: 'Domain in Route 53', body: 'A domain whose DNS is a hosted zone in the connected AWS account. Records are created and removed automatically.' },
     { id: 'external', title: 'Domain at another DNS provider', body: 'Any domain. After creating an app, add one A record at the DNS provider; HTTPS is then enabled from the app’s page.' },
   ];
@@ -40,7 +44,7 @@ export function AppsDomainCard() {
       <div>
         <h2 className="font-medium text-slate-100">App addresses</h2>
         <p className="mt-1 text-sm text-slate-400">
-          How new apps get their web address.{s.current ? <> Currently: <code className="num text-slate-200">shop.{s.current.base}</code></> : ' Not chosen yet.'}
+          How new apps get their web address.{s.current ? <> Currently: <code className="num text-slate-200">&lt;app-name&gt;.{s.current.base}</code></> : ' Not chosen yet.'}
         </p>
       </div>
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
@@ -49,7 +53,7 @@ export function AppsDomainCard() {
         try {
           const r = await api.setAppAddresses({ mode, domain: mode === 'platform' ? undefined : domain.trim() });
           setS((prev) => ({ ...r, platform: prev?.platform }));
-          setMsg({ tone: 'ok', text: r.current ? `New apps get addresses like shop.${r.current.base}.` : 'Saved.' });
+          setMsg({ tone: 'ok', text: r.current ? `New apps get addresses like <app-name>.${r.current.base}.` : 'Saved.' });
         } catch (e2) { setMsg({ tone: 'bad', text: e2 instanceof ApiError ? e2.message : 'Saving failed.' }); } finally { setBusy(false); }
       }}>
         <div className="grid gap-2 md:grid-cols-3" role="radiogroup" aria-label="Address type">
@@ -70,7 +74,7 @@ export function AppsDomainCard() {
           {mode !== 'platform' && (
             <div className="min-w-[16rem] flex-1">
               <label className="label" htmlFor="apps-domain">Domain</label>
-              <input id="apps-domain" className="input num" placeholder="acme.com or apps.acme.com" value={domain} disabled={!isAdmin}
+              <input id="apps-domain" key={mode} className="input num" placeholder={mode === 'route53' ? 'A domain with a Route 53 hosted zone, e.g. acme.com' : 'Any domain, e.g. acme.com or apps.acme.com'} value={domain} disabled={!isAdmin}
                      onChange={(e) => setDomain(e.target.value.toLowerCase().trim())} />
             </div>
           )}

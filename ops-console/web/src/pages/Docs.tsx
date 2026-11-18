@@ -88,9 +88,9 @@ const ARTICLES: Article[] = [
     body: () => (<>
       <P>Settings → <b>App addresses</b> sets how new apps get their address. Every option includes a free Let&rsquo;s Encrypt certificate.</P>
       <H>Provided addresses</H>
-      <P>Where the platform offers them, apps get an address like <C>shop.acme.apps.example.com</C> with no domain needed. DNS is managed by the platform.</P>
+      <P>Where the platform offers them, apps get an address like <C>&lt;app-name&gt;.acme.apps.example.com</C> with no domain needed. DNS is managed by the platform.</P>
       <H>Domain in Route 53</H>
-      <P>Enter a domain (for example <C>acme.com</C> or <C>apps.acme.com</C>) whose DNS is a hosted zone in the connected AWS account. New apps receive an address such as <C>shop.acme.com</C>; the console creates the record, and removes it again if an app creation fails.</P>
+      <P>Enter a domain (for example <C>acme.com</C> or <C>apps.acme.com</C>) whose DNS is a hosted zone in the connected AWS account. New apps receive an address such as <C>&lt;app-name&gt;.acme.com</C>; the console creates the record, and removes it again if an app creation fails.</P>
       <H>Domain at another DNS provider</H>
       <OL>
         <li>Enter the domain and create the app as usual.</li>

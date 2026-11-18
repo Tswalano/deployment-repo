@@ -4,6 +4,7 @@ import { ActivityList } from '../components/ActivityList';
 import { FailedDeployments } from '../components/FailedDeployments';
 import { ago, Alert, dur, PageHeader, Skeleton } from '../components/ui';
 import { usePoll } from '../usePoll';
+import { MonitoringNav } from '../components/MonitoringNav';
 
 const STATUS = { success: 'pill-ok', failed: 'pill-bad', rolled_back: 'pill-warn' } as Record<string, string>;
 
@@ -13,6 +14,7 @@ export function Activity() {
   const { data: pending } = usePoll(api.pendingDeployments, 30_000);
   return (
     <div>
+      <MonitoringNav />
       <PageHeader title="Activity" subtitle="Deployments across all instances, newest first" />
       {error && <div className="mb-4"><Alert>{error}</Alert></div>}
       <FailedDeployments />
