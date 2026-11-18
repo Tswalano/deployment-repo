@@ -10,7 +10,8 @@ import { currentWorkspace, db } from './db';
  * so its repositories are only ever reachable with its own credentials. Workspace 1 keeps the original app.
  */
 const API = 'https://api.github.com';
-const PARAM = '/ops-console/github';
+// a local multi-customer test run uses its own prefix: its workspace ids would otherwise collide with production's
+const PARAM = /^\/ops-console\/[a-z0-9/-]+$/.test(process.env.GITHUB_PARAM_PREFIX ?? '') ? process.env.GITHUB_PARAM_PREFIX! : '/ops-console/github';
 const REGION = process.env.CONSOLE_REGION || process.env.AWS_REGION || 'af-south-1';
 export const WEBHOOK_URL = process.env.GITHUB_WEBHOOK_URL || 'https://ops.glenify.studio/api/github/webhook';
 export const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
