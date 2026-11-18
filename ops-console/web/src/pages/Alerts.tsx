@@ -4,6 +4,7 @@ import { Alert as AlertT, api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, dur, PageHeader, Skeleton } from '../components/ui';
 import { usePoll } from '../usePoll';
+import { MonitoringNav } from '../components/MonitoringNav';
 
 const SEV = {
   critical: { pill: 'pill-bad', bar: 'bg-rose-500', label: 'Critical' },
@@ -55,6 +56,7 @@ export function Alerts() {
 
   return (
     <div>
+      <MonitoringNav />
       <PageHeader
         title="Alerts"
         subtitle={data ? `${data.counts.open} open · ${data.counts.week ?? 0} in the last 7 days` : 'Loading…'}

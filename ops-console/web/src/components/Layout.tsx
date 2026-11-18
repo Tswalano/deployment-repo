@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NoWorkspace } from '../pages/Team';
 import { Onboarding } from '../pages/Onboarding';
@@ -10,7 +10,7 @@ import { useAuth } from '../auth';
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
 const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/callback', '/billing', '/billing/return'];
 
-type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; mobile?: boolean; group?: 'Operations' | 'Administration'; icon: JSX.Element };
+type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; mobile?: boolean; group?: 'Monitoring' | 'Operations' | 'Administration'; icon: JSX.Element };
 
 const Icon = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]" aria-hidden>
@@ -20,8 +20,8 @@ const Icon = ({ d }: { d: string }) => (
 const TABS: Tab[] = [
   { to: '/', label: 'Overview', end: true, mobile: true, icon: <Icon d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /> },
   { to: '/instances', label: 'Instances', mobile: true, icon: <Icon d="M4 6h16M4 12h16M4 18h16M7 6v0M7 12v0M7 18v0" /> },
-  { to: '/activity', label: 'Activity', mobile: true, icon: <Icon d="M3 12h4l3-8 4 16 3-8h4" /> },
-  { to: '/alerts', label: 'Alerts', mobile: true, icon: <Icon d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /> },
+  { to: '/alerts', label: 'Alerts', group: 'Monitoring', icon: <Icon d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /> },
+  { to: '/activity', label: 'Activity', group: 'Monitoring', icon: <Icon d="M3 12h4l3-8 4 16 3-8h4" /> },
   { to: '/backups', label: 'Backups', group: 'Operations', icon: <Icon d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /> },
   { to: '/costs', label: 'Costs', group: 'Operations', deployer: true, icon: <Icon d="M12 2v20M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5" /> },
   { to: '/users', label: 'Users', group: 'Administration', admin: true, icon: <Icon d="M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 19v-1a4 4 0 0 0-3-3.9M16 2.1a4 4 0 0 1 0 7.8" /> },
@@ -48,7 +48,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
               aria-label="Menu" className="flex items-center gap-1.5 rounded-full border border-ink-600 py-0.5 pl-0.5 pr-2 text-slate-400 transition hover:border-ink-500 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-indigo-500/40 to-sky-500/30 text-xs font-semibold text-indigo-100">{initials}</span>
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-indigo-500/30 text-xs font-semibold text-indigo-100">{initials}</span>
         <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
       </button>
       {open && (
@@ -88,7 +88,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
               ))}
             </div>
           </div>
-          {(['Operations', 'Administration'] as const).map((g) => {
+          {(['Monitoring', 'Operations', 'Administration'] as const).map((g) => {
             const items = pages.filter((t) => t.group === g);
             return items.length ? (
               <div key={g} className="border-b border-ink-700 py-1.5 md:hidden">
@@ -118,7 +118,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
 }
 
 /** Navbar dropdown for a group of pages (Operations, Administration). */
-function NavGroup({ label, items }: { label: string; items: Tab[] }) {
+function NavGroup({ label, items, badge, itemBadge }: { label: string; items: Tab[]; badge?: ReactNode; itemBadge?: (t: Tab) => ReactNode }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { pathname } = useLocation();
@@ -137,7 +137,7 @@ function NavGroup({ label, items }: { label: string; items: Tab[] }) {
       <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
               className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${active
                 ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:border-ink-500 hover:text-slate-200'}`}>
-        {label}
+        {label}{badge}
         <svg viewBox="0 0 24 24" className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
       </button>
       {open && (
@@ -145,7 +145,7 @@ function NavGroup({ label, items }: { label: string; items: Tab[] }) {
           {items.map((t) => (
             <NavLink key={t.to} to={t.to} role="menuitem"
                      className={({ isActive }) => `flex items-center gap-2.5 px-4 py-2 text-sm ${isActive ? 'bg-ink-800 text-slate-100' : 'text-slate-300 hover:bg-ink-800 hover:text-white'}`}>
-              <span className="text-slate-500">{t.icon}</span>{t.label}
+              <span className="text-slate-500">{t.icon}</span>{t.label}{itemBadge?.(t) && <span className="ml-auto">{itemBadge(t)}</span>}
             </NavLink>
           ))}
         </div>
@@ -193,9 +193,12 @@ export function Layout() {
        { to: '/billing', label: 'Billing', group: 'Administration' as const, admin: true, icon: <Icon d="M3 7h18v12H3zM3 11h18M7 15h3" /> }]
     : TABS;
   const tabs = TABS_HERE.filter((t) => (!t.admin || user.role === 'admin') && (!t.deployer || ((user.role === 'admin' || user.role === 'deployer') && !user.isDemo)));
-  const badge = (t: Tab) => t.to === '/alerts' && alerts.open > 0 && (
-    <span className={`num ml-0.5 rounded-full px-1.5 text-2xs font-semibold ${alerts.critical ? 'bg-rose-500 text-white' : 'bg-amber-400 text-ink-950'}`}>{alerts.open}</span>
-  );
+  const alertBadge = alerts.open > 0 ? (
+    <span className={`num ml-0.5 rounded-full px-1.5 text-2xs font-semibold ${alerts.critical ? 'bg-rose-500 text-white' : 'bg-amber-400 text-ink-950'}`}
+          title={`${alerts.open} open alert${alerts.open === 1 ? '' : 's'}`}>{alerts.open}</span>
+  ) : null;
+  const badge = (t: Tab) => (t.to === '/alerts' ? alertBadge : null);
+  const monitoringActive = pathname === '/alerts' || pathname === '/activity';
 
   return (
     <div className="min-h-screen pb-20 md:pb-0">
@@ -250,6 +253,7 @@ export function Layout() {
               {t.icon}{t.label}{badge(t)}
             </NavLink>
           ))}
+          <NavGroup label="Monitoring" items={tabs.filter((t) => t.group === 'Monitoring')} badge={alertBadge} itemBadge={badge} />
           <NavGroup label="Operations" items={tabs.filter((t) => t.group === 'Operations')} />
           <NavGroup label="Administration" items={tabs.filter((t) => t.group === 'Administration')} />
         </nav>}
@@ -261,14 +265,17 @@ export function Layout() {
       <Footer setup={setup} />
 
       {/* Phones: only the views that make sense on a small screen */}
-      {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+      {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
         {TABS.filter((t) => t.mobile).map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end}
                    className={({ isActive }) => `relative flex flex-col items-center gap-1 py-2.5 text-2xs font-medium ${isActive ? 'text-indigo-300' : 'text-slate-500'}`}>
             {t.icon}{t.label}
-            {t.to === '/alerts' && alerts.open > 0 && <span className={`absolute right-[calc(50%-1.1rem)] top-1.5 h-2 w-2 rounded-full ${alerts.critical ? 'bg-rose-500' : 'bg-amber-400'}`} />}
           </NavLink>
         ))}
+        <NavLink to="/alerts" className={`relative flex flex-col items-center gap-1 py-2.5 text-2xs font-medium ${monitoringActive ? 'text-indigo-300' : 'text-slate-500'}`}>
+          <Icon d="M3 12h4l3-8 4 16 3-8h4" />Monitoring
+          {alerts.open > 0 && <span className={`absolute right-[calc(50%-1.1rem)] top-1.5 h-2 w-2 rounded-full ${alerts.critical ? 'bg-rose-500' : 'bg-amber-400'}`} />}
+        </NavLink>
       </nav>}
     </div>
   );
