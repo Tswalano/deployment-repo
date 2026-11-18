@@ -24,6 +24,7 @@ billing.get('/', multiOnly, requireRole('viewer'), async (c) => {
     return c.json({
         enabled: billingEnabled(), plan: w.plan, status: w.billing_status, trialEndsAt: w.trial_ends_at, currentPeriodEnd: w.current_period_end,
         graceUntil: w.grace_until, active: s.active, reason: s.reason, hasSubscription: !!w.subscription_code, billingEmail: w.billing_email,
+        complimentary: !!w.complimentary, compUntil: w.comp_until ?? null, suspended: !!w.suspended_at,
         limits: { servers: lim(s.limits.servers), apps: lim(s.limits.apps), members: lim(s.limits.members), approvals: s.limits.approvals }, usage,
         plans: (Object.keys(PLANS) as PlanId[]).map((p) => ({ id: p, name: PLANS[p].name, price: PLANS[p].amount / 100, limits: PLANS[p].limits })),
     });
@@ -105,7 +106,7 @@ billing.post('/paystack', rateLimit(120, 60_000, () => 'paystack-webhook'), asyn
  * Multi-customer: a workspace that isn't paid up is read-only. Reads always work; so do signing in, your account,
  * billing, switching or creating workspaces, and leaving one. Its servers and apps keep running regardless.
  */
-const allowed = ['/api/auth/', '/api/account/', '/api/billing/', '/api/workspaces'];
+const allowed = ['/api/auth/', '/api/account/', '/api/billing/', '/api/workspaces', '/api/platform/'];
 const standingCache = new Map<number, { at: number; active: boolean; reason: string | null }>();
 export const billingGuard: MiddlewareHandler<Env> = async (c, next) => {
     const user = c.get('user');

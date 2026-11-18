@@ -8,6 +8,7 @@ import { dummyPasswordHash, hashPassword, passwordProblem, verifyPassword } from
 import { cleanEmail, cleanUsername, sendVerification } from '../accounts';
 import { DeployError } from '../deploys';
 import { createSession, destroySession, destroyUserSessions } from '../sessions';
+import { isPlatformAdmin } from '../platform';
 
 const auth = new Hono<Env>();
 
@@ -80,9 +81,9 @@ auth.post('/logout', async (c) => {
     return c.json({ ok: true });
 });
 
-auth.get('/me', (c) => {
+auth.get('/me', async (c) => {
     const user = c.get('user');
-    return user ? c.json({ user }) : c.json({ error: 'Not signed in' }, 401);
+    return user ? c.json({ user: { ...user, platformAdmin: await isPlatformAdmin(user) } }) : c.json({ error: 'Not signed in' }, 401);
 });
 
 auth.post('/password', denyDemo, async (c) => {

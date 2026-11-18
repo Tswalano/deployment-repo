@@ -742,3 +742,70 @@ test("off-site backup copies and server snapshots: the workspace's own bucket, t
     assert.equal(snapshotRole, `arn:aws:iam::${conn.account_id}:role/OpsConsoleSnapshots-${conn.region}`);
     assert.equal(policies['af-south-1'].retain, 7);
 });
+
+test('platform owner portal: only platform admins; suspend/reactivate (read-only for the customer), extend trial, complimentary plan, change email, all audited', async () => {
+    const { db, withWorkspace, asSystem } = dist('db');
+    const { rows: [alice] } = await db().query("SELECT id FROM users WHERE username = 'alice'");
+    await asSystem(() => db().query("INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (1, $1, 'admin') ON CONFLICT DO NOTHING", [alice.id]));
+    try {
+        const a = client();
+        assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+        const b = client();
+        assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+        const wsB = (await b.get('/api/auth/me')).json.user.workspaceId;
+        assert.equal((await b.get('/api/platform/overview')).status, 404, 'customers never see the portal');
+        assert.equal((await b.get('/api/auth/me')).json.user.platformAdmin, false);
+        assert.equal((await a.get('/api/auth/me')).json.user.platformAdmin, true, 'an admin of the internal workspace');
+
+        const ov = (await a.get('/api/platform/overview')).json;
+        assert.ok(ov.workspaces >= 2 && typeof ov.mrr === 'number');
+        const list = (await a.get('/api/platform/workspaces')).json.workspaces;
+        const bob = list.find((w) => w.id === wsB);
+        assert.ok(bob && bob.owner.email && typeof bob.servers === 'number');
+        assert.equal(list.find((w) => w.id === 1).status, 'platform');
+        const det = (await a.get(`/api/platform/workspaces/${wsB}`)).json;
+        assert.ok(det.members.some((m) => m.email === 'bob@example.com'));
+        assert.equal((await a.get('/api/platform/health')).status, 200);
+
+        // suspend: the customer's workspace becomes read-only (servers keep running), then reactivate
+        const putDomain = (cl) => app.request('/api/aws-connection/apps-domain', { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: cl.cookieHeader() }, body: JSON.stringify({ mode: 'external', domain: 'bob-apps.example' }) });
+        assert.equal((await a.post(`/api/platform/workspaces/${wsB}/suspend`, { reason: 'no' })).status, 400, 'a reason is required');
+        assert.equal((await a.post(`/api/platform/workspaces/${wsB}/suspend`, { reason: 'Terms review' })).status, 200);
+        const blocked = await putDomain(b);
+        assert.equal(blocked.status, 402);
+        assert.match((await blocked.json()).error, /suspended \(Terms review\)/);
+        assert.equal((await b.get('/api/billing')).json.suspended, true);
+        assert.equal((await a.post(`/api/platform/workspaces/${wsB}/reactivate`)).status, 200);
+        assert.equal((await putDomain(b)).status, 200);
+        assert.ok((await withWorkspace(wsB, () => db().query("SELECT 1 FROM audit_log WHERE action = 'platform.suspend' AND username = 'platform:alice'"))).rows.length, "in the customer's audit log");
+
+        // trial and complimentary plans (on a fresh trial workspace); the platform's own workspace is off limits
+        const { rows: [ini] } = await asSystem(() => db().query("INSERT INTO workspaces (name, slug, plan, trial_ends_at) VALUES ('Initech', 'initech', 'trial', now() + interval '1 day') RETURNING id"));
+        const ext = await a.post(`/api/platform/workspaces/${ini.id}/trial`, { days: 10 });
+        assert.equal(ext.status, 200);
+        assert.ok(Date.parse(ext.json.trialEndsAt) > Date.now() + 10.5 * 86400e3);
+        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/trial`, { days: 500 })).status, 400);
+        const until = new Date(Date.now() + 30 * 86400e3).toISOString();
+        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/complimentary`, { plan: 'pro', until })).status, 200);
+        let w = (await a.get(`/api/platform/workspaces/${ini.id}`)).json.workspace;
+        assert.deepEqual([w.plan, w.status, w.active], ['pro', 'complimentary', true]);
+        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/trial`, { days: 5 })).status, 409, 'no longer on a trial');
+        assert.equal((await a.post(`/api/platform/workspaces/${ini.id}/complimentary`, { plan: null })).status, 200);
+        w = (await a.get(`/api/platform/workspaces/${ini.id}`)).json.workspace;
+        assert.deepEqual([w.status, w.active], ['ended', false]);
+        assert.equal((await a.post('/api/platform/workspaces/1/suspend', { reason: 'Testing it' })).status, 409);
+
+        // change a customer's sign-in email: unique, to be confirmed by them
+        const { rows: [dee] } = await db().query("SELECT id FROM users WHERE username = 'dee'");
+        const put = (body) => app.request(`/api/platform/users/${dee.id}/email`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: a.cookieHeader() }, body: JSON.stringify(body) });
+        assert.equal((await put({ email: 'alice@example.com' })).status, 409);
+        assert.equal((await put({ email: 'dee.new@example.com' })).status, 200);
+        const { rows: [d2] } = await db().query("SELECT email, email_verified_at FROM users WHERE id = $1", [dee.id]);
+        assert.deepEqual([d2.email, d2.email_verified_at], ['dee.new@example.com', null]);
+
+        const trail = (await a.get('/api/platform/audit')).json.entries.map((e) => e.action);
+        for (const x of ['platform.suspend', 'platform.reactivate', 'platform.trial', 'platform.complimentary', 'platform.complimentary_end', 'platform.email']) assert.ok(trail.includes(x), x);
+    } finally {
+        await asSystem(() => db().query('DELETE FROM workspace_members WHERE workspace_id = 1 AND user_id = $1', [alice.id]));
+    }
+});

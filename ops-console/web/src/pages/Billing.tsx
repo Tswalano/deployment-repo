@@ -33,6 +33,8 @@ export function Billing() {
   const price = (id: string) => b.plans.find((p) => p.id === id)?.price ?? '';
   const other = subscribed ? b.plans.find((p) => p.id !== b.plan) : undefined;
   const [statusText, tone] = b.plan === 'internal' ? ['Not billed', 'bg-slate-500']
+    : b.suspended ? ['Suspended by the platform; contact support', 'bg-rose-400']
+    : b.complimentary && b.active ? [`Complimentary, provided by the platform${b.compUntil ? ` until ${day(b.compUntil)}` : ''}`, 'bg-emerald-400']
     : b.plan === 'trial' ? (b.active ? [`Trial, ${trialLeft} day${trialLeft === 1 ? '' : 's'} left; no card needed until a plan is chosen`, 'bg-indigo-400'] : ['Trial ended', 'bg-rose-400'])
     : b.status === 'active' ? ['Active', 'bg-emerald-400']
     : b.status === 'past_due' ? [`Payment failed; update the card before ${day(b.graceUntil)}`, 'bg-rose-400']
@@ -59,14 +61,14 @@ export function Billing() {
               <dt className="text-slate-500">Status</dt>
               <dd className="flex items-center gap-2 text-slate-200"><span className={`h-1.5 w-1.5 rounded-full ${tone}`} />{statusText}</dd>
             </div>
-            {subscribed && b.status === 'active' && (
+            {subscribed && !b.complimentary && b.status === 'active' && (
               <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Next renewal</dt><dd className="text-slate-200">{day(b.currentPeriodEnd)}</dd></div>
             )}
             {b.billingEmail && (
               <div className="grid grid-cols-[9rem_minmax(0,1fr)] gap-4 py-3"><dt className="text-slate-500">Billing email</dt><dd className="truncate text-slate-200">{b.billingEmail}</dd></div>
             )}
           </dl>
-          {isAdmin && subscribed && (
+          {isAdmin && subscribed && !b.complimentary && (
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-ink-700 pt-5">
               {other && b.status === 'active' && (
                 <button className="btn-primary" disabled={!!busy} onClick={() => {

@@ -76,6 +76,14 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
               }}>+ New workspace</button>
             </div>
           )}
+          {user.platformAdmin && (
+            <div className="border-b border-ink-700 py-1.5">
+              <NavLink to="/platform" role="menuitem" onClick={() => setOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-sm text-slate-300 hover:bg-ink-800 hover:text-white">
+                <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden><path d="M12 3l8 4v5c0 4.5-3.4 8.4-8 9-4.6-.6-8-4.5-8-9V7z" /></svg>
+                Platform admin
+              </NavLink>
+            </div>
+          )}
           <div className="border-b border-ink-700 px-4 py-3">
             <div className="mb-2 text-2xs font-semibold uppercase tracking-wider text-slate-500">Theme</div>
             <div className="grid grid-cols-3 gap-1 rounded-lg border border-ink-600 bg-ink-950 p-1" role="radiogroup" aria-label="Theme">
