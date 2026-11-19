@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Navigate, NavLink, useParams } from 'react-router-dom';
-import { api, AssistantAction, AssistantStatus } from '../api';
+import { api, AssistantAction } from '../api';
 import { useAuth } from '../auth';
 import { ActionCard } from '../components/ActionCard';
 import { ProposalHistory } from '../components/ProposalHistory';
 import { AssistantSettingsForm } from '../components/AssistantSettingsForm';
 import { McpTokens } from '../components/McpTokens';
-import { Alert, PageHeader } from '../components/ui';
+import { PageHeader } from '../components/ui';
 import { ListChecks, MessageSquare, Plug } from 'lucide-react';
 import { smallIcon } from '../components/icons';
 
@@ -22,28 +22,7 @@ const TABS = [
   { slug: 'proposals', label: 'Proposals', icon: ListChecks },
 ] as const;
 
-export function openAsk() { window.dispatchEvent(new CustomEvent('ops:open-ask')); }
-
-function AssistantTab() {
-  const { user } = useAuth();
-  const [st, setSt] = useState<AssistantStatus | null>(null);
-  useEffect(() => { api.assistant().then(setSt).catch(() => setSt({ enabled: false })); }, []);
-  return (
-    <div className="space-y-5">
-      <section className="card space-y-3">
-        <h2 className="font-medium text-slate-100">Ask Ops Console</h2>
-        <p className="text-sm text-slate-400">
-          A chat that answers questions about this workspace from live data (servers, apps, deploys, alerts, uptime, backups and costs) and can prepare a deploy,
-          rollback, or a server start or reboot for you to confirm. It opens as a floating window on every page.
-        </p>
-        {st?.enabled
-          ? <div className="flex flex-wrap items-center gap-3"><button className="btn-primary" onClick={openAsk}>Open the chat</button><span className="text-xs text-slate-500">Uses {st.providerName} · {st.model}</span></div>
-          : <Alert tone="warn">Not set up yet{user?.role === 'admin' ? ': choose a provider and add an API key below.' : ': a workspace admin can set it up here.'}</Alert>}
-      </section>
-      {user?.role === 'admin' && <AssistantSettingsForm />}
-    </div>
-  );
-}
+function AssistantTab() { return <AssistantSettingsForm />; }
 
 function ProposalsTab() {
   const { user } = useAuth();
@@ -88,15 +67,7 @@ export function AI() {
         ))}
       </nav>
       {tab === 'assistant' && <AssistantTab />}
-      {tab === 'mcp' && (
-        <section className="card space-y-4">
-          <div>
-            <h2 className="font-medium text-slate-100">MCP server</h2>
-            <p className="mt-1 text-sm text-slate-400">Connect ChatGPT, Claude, Cursor or VS Code to this workspace. They can read it with your role, and propose changes that you confirm under Proposals.</p>
-          </div>
-          <McpTokens />
-        </section>
-      )}
+      {tab === 'mcp' && <McpTokens />}
       {tab === 'proposals' && <ProposalsTab />}
     </div>
   );
