@@ -141,7 +141,7 @@ export async function addCredit(workspaceId: number, amount: number, kind: 'gran
  */
 const price = (p: PlanId) => PLANS[p].amount;
 const addMonth = (d: Date) => { const x = new Date(d); x.setMonth(x.getMonth() + 1); return x; };
-type Meta = { workspace_id?: number | string; plan?: PlanId; kind?: 'subscribe' | 'renewal' | 'switch' | 'card'; credit?: number; period_start?: string; proration?: number };
+type Meta = { workspace_id?: number | string; console?: string; plan?: PlanId; kind?: 'subscribe' | 'renewal' | 'switch' | 'card'; credit?: number; period_start?: string; proration?: number };
 interface PaystackAuth { authorization_code?: string; reusable?: boolean; brand?: string; last4?: string; card_type?: string; exp_month?: string; exp_year?: string }
 const cardLabel = (a?: PaystackAuth) => (a?.last4 ? `${(a.brand ?? a.card_type ?? 'Card').trim().replace(/^./, (x) => x.toUpperCase())} •••• ${a.last4}` : null);
 
@@ -188,7 +188,7 @@ export async function checkout(workspaceId: number, plan: PlanId, email: string)
         const due = price(plan) - credit;
         let t: PaystackTx | null = null;
         if (due > 0) {
-            t = await chargeCard(w, due, reference, { workspace_id: workspaceId, plan, kind: 'switch', credit, proration, period_start: new Date().toISOString() });
+            t = await chargeCard(w, due, reference, tagged({ workspace_id: workspaceId, plan, kind: 'switch', credit, proration, period_start: new Date().toISOString() }));
             if (t.status !== 'success') throw new DeployError(`The card ${w.card_label ?? 'on file'} was declined${t.gateway_response ? ` (${t.gateway_response})` : ''}. Update the card and try again.`, 409);
         }
         await startPeriod(workspaceId, plan, new Date(), reference, due, credit, t, { amount: proration, note: `Unused ${PLANS[w.plan as PlanId].name} time` });
@@ -204,7 +204,7 @@ export async function checkout(workspaceId: number, plan: PlanId, email: string)
     const d = await paystack<{ authorization_url: string; reference: string }>('/transaction/initialize', {
         method: 'POST',
         body: { email, amount: price(plan) - credit, currency: 'ZAR', channels: ['card'], callback_url: `${config.publicUrl}/billing/return`,
-            metadata: { workspace_id: workspaceId, plan, kind: 'subscribe', credit, cancel_action: `${config.publicUrl}/billing` } },
+            metadata: { ...tagged({ workspace_id: workspaceId, plan, kind: 'subscribe', credit }), cancel_action: `${config.publicUrl}/billing` } },
     });
     return { url: d.authorization_url, reference: d.reference };
 }
@@ -213,6 +213,15 @@ interface PaystackTx { status: string; reference: string; amount: number; curren
     customer?: { id?: number; customer_code?: string; email?: string }; paid_at?: string | null; created_at?: string; gateway_response?: string;
     authorization?: PaystackAuth; plan?: string | null; plan_object?: { plan_code?: string } }
 const metaOf = (t: PaystackTx): Meta => (typeof t.metadata === 'object' && t.metadata ? t.metadata : {});
+/**
+ * Which console started a payment. Workspace ids restart in every console's database (production, staging, a local
+ * copy), and several consoles may share one Paystack account, so a payment is ours only when it carries our tag
+ * as well as the workspace id. Payments from before the tag existed carry none.
+ */
+export const consoleTag = () => new URL(config.publicUrl).host;
+const tagged = (m: Meta): Meta => ({ ...m, console: consoleTag() });
+const ours = (m: Meta) => m.console === consoleTag();
+const foreign = (m: Meta) => !!m.console && m.console !== consoleTag();
 
 /** Charge the saved card (never twice for one reference: Paystack rejects a reused reference). */
 async function chargeCard(w: WorkspaceBilling, amount: number, reference: string, metadata: Meta): Promise<PaystackTx> {
@@ -235,7 +244,7 @@ export async function confirmCheckout(workspaceId: number, reference: string): P
     }
     const t = await paystack<PaystackTx>(`/transaction/verify/${encodeURIComponent(reference)}`);
     const meta = metaOf(t);
-    if (Number(meta.workspace_id) !== workspaceId) throw new DeployError('That payment belongs to another workspace.', 403);
+    if (foreign(meta) || Number(meta.workspace_id) !== workspaceId) throw new DeployError('That payment belongs to another workspace.', 403);
     if (t.status !== 'success') throw new DeployError(`The payment was not completed (${t.status}).`, 409);
     await applyPayment(workspaceId, t);
     return ws(workspaceId);
@@ -290,7 +299,7 @@ export async function renew(w: WorkspaceBilling): Promise<'renewed' | 'failed' |
         return 'failed' as const;
     };
     if (!w.paystack_authorization) return fail('No card on file.');
-    const t = await chargeCard(w, price(plan) - credit, reference, { workspace_id: w.id, plan, kind: 'renewal', credit, period_start: from.toISOString() });
+    const t = await chargeCard(w, price(plan) - credit, reference, tagged({ workspace_id: w.id, plan, kind: 'renewal', credit, period_start: from.toISOString() }));
     if (t.status === 'success') { await applyPayment(w.id, t); return 'renewed'; }
     if (t.status === 'failed' || t.status === 'abandoned' || t.status === 'reversed') return fail(t.gateway_response || 'The card was declined.');
     await asSystem(() => db().query(`UPDATE workspaces SET charge_reference = $2, next_retry_at = now() + interval '1 hour', last_charge_at = now() WHERE id = $1`, [w.id, reference]));
@@ -344,7 +353,7 @@ export async function cardLink(workspaceId: number, email: string): Promise<stri
     if (w.subscription_code) return manageLink(workspaceId);
     const d = await paystack<{ authorization_url: string }>('/transaction/initialize', { method: 'POST', body: {
         email, amount: CARD_CHECK, currency: 'ZAR', channels: ['card'], callback_url: `${config.publicUrl}/billing/return`,
-        metadata: { workspace_id: workspaceId, kind: 'card', cancel_action: `${config.publicUrl}/billing` } } });
+        metadata: { ...tagged({ workspace_id: workspaceId, kind: 'card' }), cancel_action: `${config.publicUrl}/billing` } } });
     return d.authorization_url;
 }
 
@@ -370,9 +379,20 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<boolean> {
     const id = `${e.event}:${d.id ?? d.subscription_code ?? d.reference ?? d.invoice_code ?? JSON.stringify(d).length}`;
     return asSystem(async () => {
         const customer = d.customer?.customer_code ?? null;
-        let wsId: number | null = Number((typeof d.metadata === 'object' && d.metadata?.workspace_id) || 0) || null;
-        if (!wsId && customer) wsId = (await db().query<{ id: number }>('SELECT id FROM workspaces WHERE paystack_customer = $1', [customer])).rows[0]?.id ?? null;
-        if (!wsId && d.subscription_code) wsId = (await db().query<{ id: number }>('SELECT id FROM workspaces WHERE subscription_code = $1', [d.subscription_code])).rows[0]?.id ?? null;
+        const meta = metaOf(d as PaystackTx);
+        let wsId: number | null = null;
+        if (foreign(meta)) {
+            // started by another console sharing this Paystack account: recorded, never applied here
+        } else if (meta.workspace_id) {
+            wsId = ours(meta)
+                ? Number(meta.workspace_id) || null
+                // from before payments were tagged: trust the workspace id only when the Paystack customer is that workspace's too
+                : customer ? (await db().query<{ id: number }>('SELECT id FROM workspaces WHERE id = $1 AND paystack_customer = $2', [Number(meta.workspace_id) || 0, customer])).rows[0]?.id ?? null : null;
+        } else {
+            // no workspace in the metadata: Paystack subscription events from before the console ran renewals itself
+            if (customer) wsId = (await db().query<{ id: number }>('SELECT id FROM workspaces WHERE paystack_customer = $1', [customer])).rows[0]?.id ?? null;
+            if (!wsId && d.subscription_code) wsId = (await db().query<{ id: number }>('SELECT id FROM workspaces WHERE subscription_code = $1', [d.subscription_code])).rows[0]?.id ?? null;
+        }
         const { rowCount } = await db().query(`INSERT INTO billing_events (id, workspace_id, event, summary) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`,
             [id, wsId, e.event, JSON.stringify({ status: d.status, reference: d.reference, plan: d.plan?.plan_code ?? d.plan, amount: d.amount })]);
         if (!rowCount) return false;
@@ -466,7 +486,9 @@ export async function syncInvoices(workspaceId: number): Promise<void> {
     const txs = await paystack<PaystackTx[]>(`/transaction?customer=${cust.id}&status=success&perPage=100`).catch(() => [] as PaystackTx[]);
     for (const t of txs) {
         const meta = metaOf(t);
-        if (meta.workspace_id && Number(meta.workspace_id) !== workspaceId) continue;   // a payment for another workspace of the same person
+        // only this console's payments for this workspace: the same person (one Paystack customer) can pay for other
+        // workspaces, and other consoles sharing the Paystack account number their workspaces from 1 too
+        if (!ours(meta) || Number(meta.workspace_id) !== workspaceId) continue;
         await recordInvoice(workspaceId, t);
     }
 }
