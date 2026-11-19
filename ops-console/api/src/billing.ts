@@ -403,7 +403,9 @@ export async function handlePaystackEvent(e: PaystackEvent): Promise<boolean> {
                 if (d.status !== 'success' || d.currency !== 'ZAR') break;
                 if (metaOf(d as PaystackTx).kind) {   // started by the console (checkout, renewal, plan switch, card check)
                     await applyPayment(wsId, d as PaystackTx).catch((err) => console.error('payment from webhook not applied:', (err as Error).message));
-                } else if (plan) {                      // a renewal of a Paystack subscription from before
+                } else if (plan && (await db().query('SELECT 1 FROM workspaces WHERE id = $1 AND subscription_code IS NOT NULL', [wsId])).rows.length) {
+                    // a renewal of an Ops Console Paystack subscription from before; other products on a shared Paystack
+                    // account (same customer, same price) never had one with this workspace, so they don't count
                     await activate(wsId, plan, customer, d.customer?.email ?? null);
                     await recordInvoice(wsId, d as PaystackTx);
                 }
