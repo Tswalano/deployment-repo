@@ -34,6 +34,7 @@ import { Platform, PlatformAuditPage, PlatformConsolePage, PlatformWorkspacePage
 import { DialogProvider } from './components/Dialog';
 import { Demo } from './pages/Demo';
 import { OAuthConsent } from './pages/OAuthConsent';
+import { AI } from './pages/AI';
 
 function Protected({ children, role }: { children: JSX.Element; role?: Role }) {
   const { user, loading, site } = useAuth();
@@ -77,6 +78,8 @@ function App() {
         <Route path="backups" element={<Backups />} />
         <Route path="costs" element={<Costs />} />
         <Route path="account" element={<Account />} />
+        <Route path="ai" element={<Navigate to="/ai/assistant" replace />} />
+        <Route path="ai/:tab" element={<AI />} />
         <Route path="github/callback" element={<Protected role="admin"><GithubCallback /></Protected>} />
         <Route path="settings" element={<Protected role="admin"><Settings /></Protected>} />
         <Route path="users" element={<Protected role="admin"><Users /></Protected>} />

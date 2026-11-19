@@ -3,14 +3,17 @@ import { InstanceRow } from '../collector';
 import { latestCosts } from '../costs';
 import { db } from '../db';
 import { uptimeSummaries } from '../uptime';
+import { ActionCtx, propose } from './actions';
 
 /**
- * Read-only tools for the assistant. Every tool runs in the asking user's workspace context (row-level security), so
+
+ * Tools for the assistant and the MCP server: read-only lookups, plus propose_* tools that only record a proposal for the
+ * person to confirm in the console (actions.ts). Every tool runs in the asking user's workspace context (row-level security), so
  * it can only ever see that workspace; tools never return secrets (setting values, tokens, keys). Results are compact
  * JSON with a `now` timestamp, so the model can say "2 hours ago" without a clock in the (cached) system prompt.
  */
 export type Role = 'admin' | 'deployer' | 'viewer';
-interface Tool { def: Anthropic.Beta.BetaTool; label: string; run: (input: Record<string, unknown>, role: Role) => Promise<unknown> }
+interface Tool { def: Anthropic.Beta.BetaTool; label: string; proposes?: boolean; run: (input: Record<string, unknown>, role: Role, ctx?: ActionCtx) => Promise<unknown> }
 
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : null);
 const gb = (n: number) => Math.round((n / 1073741824) * 10) / 10;
@@ -107,6 +110,32 @@ const TOOLS: Record<string, Tool> = {
     },
 };
 
+// ------------------------------------------------------------------ proposals: change nothing until the person confirms in the console
+const PROPOSE_NOTE = ' This only proposes it: nothing happens until the person confirms it in the console. Use it only when the person asks for this change, after checking the server and app exist (list_servers / get_server).';
+Object.assign(TOOLS, {
+    propose_deploy: {
+        label: 'Prepared a deploy to confirm', proposes: true,
+        def: { name: 'propose_deploy', description: 'Propose deploying an app: the latest commit of its branch, or a given branch, tag or commit.' + PROPOSE_NOTE,
+            input_schema: obj({ server_id: { type: 'integer', description: 'The server id from list_servers.' }, app: { type: 'string', description: 'The app name as shown by get_server.' },
+                ref: { type: 'string', description: 'Optional branch, tag or commit SHA. Leave out for the latest of the app\'s branch.' } }, ['server_id', 'app']) },
+        run: (input, role, ctx) => propose('deploy', input, role, ctx),
+    },
+    propose_rollback: {
+        label: 'Prepared a rollback to confirm', proposes: true,
+        def: { name: 'propose_rollback', description: 'Propose rolling an app back: to the previous good deploy, or to a given commit SHA.' + PROPOSE_NOTE,
+            input_schema: obj({ server_id: { type: 'integer', description: 'The server id from list_servers.' }, app: { type: 'string', description: 'The app name as shown by get_server.' },
+                ref: { type: 'string', description: 'Optional commit SHA (7-40 hex). Leave out for the previous good deploy.' } }, ['server_id', 'app']) },
+        run: (input, role, ctx) => propose('rollback', input, role, ctx),
+    },
+    propose_server_power: {
+        label: 'Prepared a server action to confirm', proposes: true,
+        def: { name: 'propose_server_power', description: 'Propose starting a stopped server or rebooting a running one. (Stopping or terminating servers is only done in the console itself.)' + PROPOSE_NOTE,
+            input_schema: obj({ server_id: { type: 'integer', description: 'The server id from list_servers.' }, action: { type: 'string', enum: ['start', 'reboot'] } }, ['server_id', 'action']) },
+        run: (input, role, ctx) => propose(input.action === 'start' ? 'start' : 'reboot', input, role, ctx),
+    },
+} satisfies Record<string, Tool>);
+export const PROPOSAL_TOOLS = new Set(Object.entries(TOOLS).filter(([, t]) => t.proposes).map(([n]) => n));
+
 /** Tool definitions in a fixed order (a stable prefix keeps the prompt cache warm). */
 export const toolDefs = (): Anthropic.Beta.BetaTool[] =>
     Object.values(TOOLS).map((t) => ({ ...t.def, strict: true, eager_input_streaming: true }));
@@ -114,17 +143,18 @@ export const toolDefs = (): Anthropic.Beta.BetaTool[] =>
 export const toolLabel = (name: string) => TOOLS[name]?.label ?? 'Looked something up';
 
 /** Run one tool call. Inputs are untrusted model output: validated here; errors come back as data, not exceptions. */
-export async function runTool(name: string, input: unknown, role: Role): Promise<{ content: string; isError: boolean }> {
+export async function runTool(name: string, input: unknown, role: Role, ctx?: ActionCtx): Promise<{ content: string; isError: boolean }> {
     const t = TOOLS[name];
     if (!t) return { content: JSON.stringify({ error: `Unknown tool ${name}.` }), isError: true };
-    const props = (t.def.input_schema as { properties: Record<string, { type: string }>; required?: string[] });
+    const props = (t.def.input_schema as { properties: Record<string, { type: string; enum?: string[] }>; required?: string[] });
     const args = (input && typeof input === 'object' && !Array.isArray(input) ? input : null) as Record<string, unknown> | null;
     const bad = !args || Object.keys(args).some((k) => !props.properties[k])
         || (props.required ?? []).some((k) => args[k] === undefined)
-        || Object.entries(args).some(([k, v]) => (props.properties[k].type === 'integer' ? !Number.isInteger(v) : typeof v !== 'string'));
+        || Object.entries(args).some(([k, v]) => (props.properties[k].type === 'integer' ? !Number.isInteger(v) : typeof v !== 'string'))
+        || Object.entries(args).some(([k, v]) => props.properties[k].enum && !props.properties[k].enum!.includes(v as string));
     if (bad) return { content: JSON.stringify({ error: 'Invalid input for this tool.', expected: props }), isError: true };
     try {
-        const out = await t.run(args!, role);
+        const out = await t.run(args!, role, ctx);
         return { content: JSON.stringify({ now: new Date().toISOString(), result: out }), isError: false };
     } catch (err) {
         return { content: JSON.stringify({ error: (err as Error).message.slice(0, 200) }), isError: true };

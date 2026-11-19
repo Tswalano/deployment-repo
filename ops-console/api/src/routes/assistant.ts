@@ -89,7 +89,7 @@ assistant.post('/ask', rateLimit(20, 10 * 60_000, (c) => `assistant:${c.get('use
         const emit = (e: { type: string }) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
         try {
             await withWorkspace(ws, () => ask({
-                userId: user.id, workspaceId: ws, workspace: w?.name ?? 'this workspace', role: user.role,
+                userId: user.id, username: user.username, workspaceId: ws, workspace: w?.name ?? 'this workspace', role: user.role,
                 conversationId: typeof b.conversationId === 'string' && /^[0-9a-f]{24}$/.test(b.conversationId) ? b.conversationId : null,
                 question: String(b.question ?? ''), emit,
             }));

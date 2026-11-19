@@ -12,7 +12,7 @@ import { AskButton, AskPanel } from './AskPanel';
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
 const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/callback', '/billing', '/billing/return'];
 
-type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; mobile?: boolean; group?: 'Monitoring' | 'Operations' | 'Administration'; icon: JSX.Element };
+type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; noDemo?: boolean; mobile?: boolean; group?: 'Monitoring' | 'Operations' | 'Administration'; icon: JSX.Element };
 
 const Icon = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]" aria-hidden>
@@ -22,6 +22,7 @@ const Icon = ({ d }: { d: string }) => (
 const TABS: Tab[] = [
   { to: '/', label: 'Overview', end: true, mobile: true, icon: <Icon d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /> },
   { to: '/instances', label: 'Instances', mobile: true, icon: <Icon d="M4 6h16M4 12h16M4 18h16M7 6v0M7 12v0M7 18v0" /> },
+  { to: '/ai', label: 'AI', noDemo: true, icon: <Icon d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" /> },
   { to: '/alerts', label: 'Alerts', group: 'Monitoring', icon: <Icon d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /> },
   { to: '/activity', label: 'Activity', group: 'Monitoring', icon: <Icon d="M3 12h4l3-8 4 16 3-8h4" /> },
   { to: '/backups', label: 'Backups', group: 'Operations', icon: <Icon d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /> },
@@ -176,6 +177,21 @@ export function Layout() {
   const [askSignal, setAskSignal] = useState(0);   // the header button also restores a minimised window
   // shown once the workspace has a provider key, and to admins (who can set one up from the panel)
   useEffect(() => { if (user && !user.isDemo) api.assistant().then((s) => setAskOn(s.enabled || !!s.canConfigure)).catch(() => setAskOn(false)); }, [user]);
+  useEffect(() => {   // the AI page's "Open the chat"
+    const on = () => { setAskOpen(true); setAskSignal((n) => n + 1); };
+    window.addEventListener('ops:open-ask', on);
+    return () => window.removeEventListener('ops:open-ask', on);
+  }, []);
+  // proposals from AI waiting for this person's confirmation (badge on the AI link)
+  const [waiting, setWaiting] = useState(0);
+  useEffect(() => {
+    if (!user || user.isDemo || (site.multiTenant && user.workspaceId == null)) return;
+    const poll = () => api.actions(true).then((a) => setWaiting(a.length)).catch(() => undefined);
+    void poll();
+    const t = setInterval(poll, 30_000);
+    window.addEventListener('ops:actions-changed', poll);
+    return () => { clearInterval(t); window.removeEventListener('ops:actions-changed', poll); };
+  }, [user, site.multiTenant]);
   const [resent, setResent] = useState(false);
   useEffect(() => { if (user && site.multiTenant && user.workspaceId != null) api.workspaces().then((r) => setWss(r.workspaces)).catch(() => undefined); }, [user, site.multiTenant]);
   // Setup mode (multi-customer): until the workspace has a server, show the onboarding screen without the app's
@@ -211,12 +227,13 @@ export function Layout() {
     ? [...TABS.map((t) => (t.to === '/users' ? { ...t, to: '/team', label: 'Team', admin: false } : t)),
        { to: '/billing', label: 'Billing', group: 'Administration' as const, admin: true, icon: <Icon d="M3 7h18v12H3zM3 11h18M7 15h3" /> }]
     : TABS;
-  const tabs = TABS_HERE.filter((t) => (!t.admin || user.role === 'admin') && (!t.deployer || ((user.role === 'admin' || user.role === 'deployer') && !user.isDemo)));
+  const tabs = TABS_HERE.filter((t) => (!t.noDemo || !user.isDemo) && (!t.admin || user.role === 'admin') && (!t.deployer || ((user.role === 'admin' || user.role === 'deployer') && !user.isDemo)));
   const alertBadge = alerts.open > 0 ? (
     <span className={`num ml-0.5 rounded-full px-1.5 text-2xs font-semibold ${alerts.critical ? 'bg-rose-500 text-white' : 'bg-amber-400 text-ink-950'}`}
           title={`${alerts.open} open alert${alerts.open === 1 ? '' : 's'}`}>{alerts.open}</span>
   ) : null;
-  const badge = (t: Tab) => (t.to === '/alerts' ? alertBadge : null);
+  const proposalBadge = waiting > 0 ? <span className="num ml-0.5 rounded-full bg-amber-400 px-1.5 text-2xs font-semibold text-ink-950" title={`${waiting} proposal${waiting === 1 ? '' : 's'} waiting for confirmation`}>{waiting}</span> : null;
+  const badge = (t: Tab) => (t.to === '/alerts' ? alertBadge : t.to === '/ai' ? proposalBadge : null);
   const monitoringActive = pathname === '/alerts' || pathname === '/activity';
 
   return (
