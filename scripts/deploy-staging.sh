@@ -4,6 +4,7 @@
 #   ./scripts/deploy-staging.sh                      # deploy the qa branch to staging (install = build + DB + service)
 #   ./scripts/deploy-staging.sh expose               # nginx + HTTPS for staging.glenify.studio (DNS A record first)
 #   ./scripts/deploy-staging.sh set-admin <username> # create/reset a staging admin; password asked (hidden)
+#   ./scripts/deploy-staging.sh platform-admin <username> on|off   # staging platform owner portal
 #
 # Staging runs next to production on the same server but shares nothing that matters: its own service
 # (ops-console-staging, port 9210), database (opsconsole_staging), settings (SSM /apps/ops-console-staging/*),
@@ -39,17 +40,18 @@ case "$cmd" in
     SKIP_DB_BACKUP=1 exec ./deploy.sh ops-console install ;;
   expose)
     exec ./deploy.sh ops-console expose "$DOMAIN" ;;
-  set-admin)
-    user="${2:?usage: deploy-staging.sh set-admin <username>}"
+  set-admin|platform-admin)
+    user="${2:?usage: deploy-staging.sh $1 <username>}"
     [[ "$user" =~ ^[A-Za-z0-9._-]{3,32}$ ]] || { echo "bad username" >&2; exit 1; }
-    read -rsp "Password for $user on staging: " pw; echo
+    if [[ "$1" == set-admin ]]; then read -rsp "Password for $user on staging: " pw; echo; cli="set-admin $user"
+    else onoff="${3:?usage: deploy-staging.sh platform-admin <username> on|off}"; [[ "$onoff" == on || "$onoff" == off ]] || { echo "on or off" >&2; exit 1; }; pw=""; cli="platform-admin $user $onoff"; fi
     TARGET="${DEPLOY_USER:-ec2-user}@${DEPLOY_HOST:?set DEPLOY_HOST}"
     if [[ -n "${EC2_INSTANCE_ID:-}" ]]; then
       key="$(mktemp -d)/key"; ssh-keygen -q -t ed25519 -N '' -f "$key"
       aws ec2-instance-connect send-ssh-public-key --region "$REGION" --instance-id "$EC2_INSTANCE_ID" --instance-os-user "${DEPLOY_USER:-ec2-user}" --ssh-public-key "file://$key.pub" >/dev/null
     else key="${DEPLOY_SSH_KEY:?set DEPLOY_SSH_KEY or EC2_INSTANCE_ID}"; fi
     printf '%s' "$pw" | ssh -o BatchMode=yes -i "$key" "$TARGET" \
-      "sudo bash -c 'set -a; . /run/app-secrets/$INSTANCE.env; set +a; cd /opt/$INSTANCE/api && exec node dist/cli.js set-admin $user'"
-    echo "Next (platform portal on staging): run 'node dist/cli.js platform-admin $user on' there the same way." ;;
-  *) sed -n '3,6p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+      "sudo bash -c 'set -a; . /run/app-secrets/$INSTANCE.env; set +a; cd /opt/$INSTANCE/api && exec node dist/cli.js $cli'"
+    if [[ "$1" == set-admin ]]; then echo "Next: sign in at https://$DOMAIN and create a workspace; for the platform portal: $0 platform-admin $user on"; fi ;;
+  *) sed -n '3,7p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

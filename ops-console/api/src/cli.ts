@@ -9,7 +9,7 @@
  */
 import { audit } from './audit';
 import { cutoverCheck, cutoverConnect, cutoverPrepare, setEmail } from './cutover';
-import { closeDb, db } from './db';
+import { asSystem, closeDb, db } from './db';
 import { migrate } from './migrate';
 import { hashPassword, passwordProblem } from './password';
 import { destroyUserSessions } from './sessions';
@@ -36,7 +36,7 @@ async function main() {
         await migrate();
         const { rowCount } = await db().query('UPDATE users SET platform_admin = $2 WHERE lower(username) = lower($1) AND NOT is_demo', [arg, arg2 === 'on']);
         if (!rowCount) throw new Error(`no user ${arg}`);
-        await audit(null, arg2 === 'on' ? 'platform.admin_grant' : 'platform.admin_revoke', arg, { via: 'cli' }, null);
+        await asSystem(() => audit(null, arg2 === 'on' ? 'platform.admin_grant' : 'platform.admin_revoke', arg, { via: 'cli' }, null));
         console.log(`${arg}: platform admin ${arg2}`);
     } else if (cmd === 'migrate') {
         const applied = await migrate();
@@ -56,7 +56,8 @@ async function main() {
                    failed_logins = 0, locked_until = NULL, password_changed_at = now()
              RETURNING id, (xmax = 0) AS created`, [arg, hash]);
         await destroyUserSessions(rows[0].id);
-        await audit({ id: null, username: 'cli' }, rows[0].created ? 'user.create' : 'user.password_reset', arg, { role: 'admin', via: 'cli' }, null);
+        // the CLI acts outside any workspace: its audit entries are written as the system (row-level security)
+        await asSystem(() => audit({ id: null, username: 'cli' }, rows[0].created ? 'user.create' : 'user.password_reset', arg, { role: 'admin', via: 'cli' }, null));
         console.log(`${rows[0].created ? 'created' : 'reset'} admin '${arg}'`);
     } else if (cmd === 'ensure-demo') {
         await migrate();
