@@ -23,6 +23,9 @@
 #   EC2_INSTANCE_ID   use EC2 Instance Connect + AWS CLI creds (option B, no .pem needed)
 #   AWS_REGION        default: af-south-1
 #   REMOTE_DIR        where the pipeline lives on the server, default: /opt/deploy
+#   DEPLOY_VIA        auto (default): SSH, or AWS Systems Manager when SSH can't connect (some networks block
+#                     port 22); ssh or ssm to force one. SSM needs EC2_INSTANCE_ID and an S3 bucket for a short-lived
+#                     bundle: DEPLOY_BUCKET, or the console's /apps/ops-console/TRANSFER_BUCKET parameter.
 # Any of FORCE / SKIP_DB_BACKUP / NO_AUTO_ROLLBACK are forwarded to the server.
 # =============================================================================
 set -Eeuo pipefail
@@ -54,12 +57,6 @@ fi
 SSH_OPTS+=(-i "$DEPLOY_SSH_KEY")
 TARGET="$DEPLOY_USER@$DEPLOY_HOST"
 
-echo "→ syncing pipeline to $TARGET:$REMOTE_DIR"
-push_key
-ssh "${SSH_OPTS[@]}" "$TARGET" "sudo mkdir -p '$REMOTE_DIR' && sudo chown \$(id -un) '$REMOTE_DIR'"
-push_key
-rsync -az --delete --exclude node_modules --exclude dist -e "ssh ${SSH_OPTS[*]}" server projects systemd ops-dashboard ops-console templates "$TARGET:$REMOTE_DIR/"
-
 ENV_FWD=""
 # who/what triggered this run, shown on the ops dashboard
 DEPLOY_ACTOR="${DEPLOY_ACTOR:-$(git config user.name 2>/dev/null || id -un) (local)}"
@@ -68,6 +65,66 @@ for v in FORCE SKIP_DB_BACKUP NO_AUTO_ROLLBACK HEALTH_TIMEOUT DEPLOY_ACTOR DEPLO
   [[ -n "${!v:-}" ]] && ENV_FWD+="$v=$(printf %q "${!v}") "
 done
 ARGS="$(printf '%q ' "$@")"
+SYNC_DIRS=(server projects systemd ops-dashboard ops-console templates)
+
+# ---------------------------------------------------------------------------- transport: SSH, or SSM over HTTPS
+VIA="${DEPLOY_VIA:-auto}"
+if [[ "$VIA" == auto ]]; then
+  push_key
+  if ssh -o ConnectTimeout=10 "${SSH_OPTS[@]}" "$TARGET" true 2>/dev/null; then VIA=ssh
+  else VIA=ssm; echo "→ SSH can't connect from this network: using AWS Systems Manager (HTTPS) instead"; fi
+fi
+
+# Same steps as the SSH path below, through Systems Manager: the files go up as a bundle in S3 (the server fetches it
+# with a link valid 15 minutes, which also sits in the SSM command history until then), are synced into REMOTE_DIR,
+# and pipeline.sh runs as DEPLOY_USER with the same forwarded settings. The bundle is deleted afterwards.
+deploy_via_ssm() {
+  : "${EC2_INSTANCE_ID:?the Systems Manager fallback needs EC2_INSTANCE_ID}"
+  local bucket="${DEPLOY_BUCKET:-}"
+  [[ -n "$bucket" ]] || bucket="$(aws ssm get-parameter --region "$AWS_REGION" --name /apps/ops-console/TRANSFER_BUCKET --with-decryption --query Parameter.Value --output text 2>/dev/null || true)"
+  [[ -n "$bucket" && "$bucket" != None ]] || { echo "✘ set DEPLOY_BUCKET: an S3 bucket the deploy can use for a short-lived bundle" >&2; exit 1; }
+  local work key url cid status=""
+  work="$(mktemp -d)"; key="deploy-bundles/$(date +%Y%m%d-%H%M%S)-$$.tgz"
+  trap 'aws s3 rm --quiet "s3://'"$bucket"'/'"$key"'" 2>/dev/null || true; rm -rf "'"$work"'" "'"$(dirname "${TMPKEY:-/nonexistent/x}")"'"' EXIT
+  tar -czf "$work/bundle.tgz" --exclude node_modules --exclude dist "${SYNC_DIRS[@]}"
+  echo "→ uploading the pipeline ($(du -h "$work/bundle.tgz" | cut -f1)) for $EC2_INSTANCE_ID"
+  aws s3 cp --quiet "$work/bundle.tgz" "s3://$bucket/$key"
+  url="$(aws s3 presign "s3://$bucket/$key" --region "$AWS_REGION" --expires-in 900)"
+  local dirs=""; for d in "${SYNC_DIRS[@]}"; do dirs+="\"\$d/x/$d\" "; done
+  cat > "$work/remote.sh" <<REMOTE
+set -euo pipefail
+d=\$(mktemp -d); trap 'rm -rf "\$d"' EXIT
+curl -fsS -o "\$d/bundle.tgz" '$url'
+mkdir "\$d/x"; tar -xzf "\$d/bundle.tgz" -C "\$d/x"
+mkdir -p '$REMOTE_DIR'
+rsync -a --delete --exclude node_modules --exclude dist $dirs '$REMOTE_DIR/'
+chown -R '$DEPLOY_USER' '$REMOTE_DIR'
+cd /
+sudo -u '$DEPLOY_USER' -H env ${ENV_FWD}bash '$REMOTE_DIR/server/pipeline.sh' $ARGS
+REMOTE
+  python3 -c 'import json,sys; print(json.dumps({"commands": open(sys.argv[1]).read().split("\n"), "executionTimeout": ["3600"]}))' "$work/remote.sh" > "$work/params.json"
+  echo "→ running via SSM: pipeline.sh $*"
+  cid="$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" --document-name AWS-RunShellScript \
+          --comment "deploy.sh $*" --timeout-seconds 600 --parameters "file://$work/params.json" --query Command.CommandId --output text)"
+  rm -f "$work/remote.sh" "$work/params.json"
+  while :; do
+    status="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$cid" --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)"
+    case "$status" in Success|Failed|Cancelled|TimedOut) break ;; esac
+    sleep 5
+  done
+  # SSM keeps the first 24,000 characters of each stream
+  aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$cid" --instance-id "$EC2_INSTANCE_ID" --query StandardOutputContent --output text
+  local err; err="$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$cid" --instance-id "$EC2_INSTANCE_ID" --query StandardErrorContent --output text)"
+  [[ -n "$err" && "$err" != None ]] && echo "$err" >&2
+  [[ "$status" == Success ]] || { echo "✘ the run ended: $status" >&2; exit 1; }
+}
+if [[ "$VIA" == ssm ]]; then deploy_via_ssm "$@"; exit 0; fi
+
+echo "→ syncing pipeline to $TARGET:$REMOTE_DIR"
+push_key
+ssh "${SSH_OPTS[@]}" "$TARGET" "sudo mkdir -p '$REMOTE_DIR' && sudo chown \$(id -un) '$REMOTE_DIR'"
+push_key
+rsync -az --delete --exclude node_modules --exclude dist -e "ssh ${SSH_OPTS[*]}" "${SYNC_DIRS[@]}" "$TARGET:$REMOTE_DIR/"
 
 echo "→ running: pipeline.sh $*"
 push_key
