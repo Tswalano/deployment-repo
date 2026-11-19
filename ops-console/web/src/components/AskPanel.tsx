@@ -1,4 +1,4 @@
-import { Fragment, KeyboardEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { Fragment, KeyboardEvent, PointerEvent as RPointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { api, ApiError, askAssistant, AssistantStatus, AssistantTurn } from '../api';
 
 /** "Ask Ops Console": a side panel that answers questions about the workspace (read-only). */
@@ -47,7 +47,7 @@ export function AskButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?: number; onClose: () => void }) {
   const [status, setStatus] = useState<AssistantStatus | null>(null);
   const [convId, setConvId] = useState<string | null>(null);
   const [turns, setTurns] = useState<AssistantTurn[]>([]);
@@ -55,18 +55,47 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
-  const end = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
 
-  const loadStatus = () => api.assistant().then(setStatus).catch(() => setStatus({ enabled: false }));
-  useEffect(() => { if (open) { void loadStatus(); setTimeout(() => box.current?.focus(), 50); } }, [open]);
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [turns]);
+  // floating window: dragged by its title bar, normal or large, minimised to a pill; position remembered per browser
+  const [pos, setPos] = useState<{ right: number; bottom: number }>(() => {
+    try { const v = JSON.parse(localStorage.getItem('ask.pos') ?? 'null'); if (v && Number.isFinite(v.right) && Number.isFinite(v.bottom)) return v; } catch { /* no storage */ }
+    return { right: 20, bottom: 20 };
+  });
+  const [large, setLarge] = useState(false);
+  const [minimised, setMinimised] = useState(false);
+  const [wide, setWide] = useState(() => window.matchMedia('(min-width: 640px)').matches);
+  const scroller = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; right: number; bottom: number } | null>(null);
   useEffect(() => {
-    if (!open) return;
-    const esc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', esc);
-    return () => document.removeEventListener('keydown', esc);
-  }, [open, onClose]);
+    const mq = window.matchMedia('(min-width: 640px)');
+    const on = () => setWide(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  const clamp = (p: { right: number; bottom: number }) => ({
+    right: Math.min(Math.max(8, p.right), Math.max(8, window.innerWidth - 160)),
+    bottom: Math.min(Math.max(8, p.bottom), Math.max(8, window.innerHeight - 56)),
+  });
+  const startDrag = (e: RPointerEvent<HTMLElement>) => {
+    if (!wide || (e.target as HTMLElement).closest('button')) return;
+    drag.current = { x: e.clientX, y: e.clientY, ...pos };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const moveDrag = (e: RPointerEvent<HTMLElement>) => {
+    const d = drag.current;
+    if (d) setPos(clamp({ right: d.right - (e.clientX - d.x), bottom: d.bottom - (e.clientY - d.y) }));
+  };
+  const endDrag = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    try { localStorage.setItem('ask.pos', JSON.stringify(pos)); } catch { /* no storage */ }
+  };
+  useEffect(() => { const r = () => setPos((p) => clamp(p)); window.addEventListener('resize', r); return () => window.removeEventListener('resize', r); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadStatus = () => api.assistant().then(setStatus).catch(() => setStatus({ enabled: false }));
+  useEffect(() => { if (open) { setMinimised(false); void loadStatus(); setTimeout(() => box.current?.focus(), 50); } }, [open, signal]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const el = scroller.current; if (el) el.scrollTop = el.scrollHeight; }, [turns, minimised]);
 
   async function send(question: string) {
     const q = question.trim();
@@ -96,20 +125,34 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(input); } };
 
   if (!open) return null;
+  const place = wide ? { right: pos.right, bottom: pos.bottom } : undefined;
+  if (minimised) {
+    return (
+      <button style={place} onClick={() => setMinimised(false)} aria-label="Open Ask Ops Console"
+              className="fixed bottom-3 right-3 z-40 flex items-center gap-2 rounded-full border border-ink-600 bg-ink-900 px-3.5 py-2 text-sm text-slate-200 shadow-xl shadow-black/40 hover:border-ink-500">
+        <SparkIcon className="h-4 w-4 text-indigo-300" />Ask Ops Console
+        {busy && <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-400 motion-reduce:animate-none" aria-label="answering" />}
+      </button>
+    );
+  }
+  const size = wide ? (large ? 'w-[min(44rem,calc(100vw-2.5rem))] h-[min(52rem,calc(100vh-5rem))]' : 'w-[26rem] h-[min(38rem,calc(100vh-5rem))]') : 'inset-x-2 bottom-2 h-[82vh]';
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <aside role="dialog" aria-label="Ask Ops Console" className="flex h-full w-full max-w-md flex-col border-l border-ink-700 bg-ink-900 shadow-2xl shadow-black/50">
-        <header className="flex items-center gap-2 border-b border-ink-700 px-4 py-3">
+    <aside role="dialog" aria-label="Ask Ops Console" style={place} onKeyDown={(e) => { if (e.key === 'Escape') setMinimised(true); }}
+           className={`fixed z-40 flex flex-col overflow-hidden rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl shadow-black/50 ${size}`}>
+        <header onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+                className={`flex select-none items-center gap-2 border-b border-ink-700 px-4 py-3 ${wide ? 'cursor-move' : ''}`}>
           <span className="grid h-7 w-7 place-items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-300"><SparkIcon /></span>
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-slate-100">Ask Ops Console</h2>
             <p className="truncate text-2xs text-slate-500">Read-only answers about this workspace{status?.providerName ? ` · ${status.providerName}` : ''}</p>
           </div>
           {turns.length > 0 && <button className="btn-ghost px-2 py-1 text-xs" onClick={newChat}>New chat</button>}
-          <button className="btn-ghost px-2 py-1 text-xs" onClick={onClose} aria-label="Close">✕</button>
+          {wide && <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setLarge((l) => !l)} aria-label={large ? 'Smaller' : 'Larger'} title={large ? 'Smaller' : 'Larger'}>{large ? '⤡' : '⤢'}</button>}
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setMinimised(true)} aria-label="Minimise" title="Minimise">–</button>
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={onClose} aria-label="Close" title="Close">✕</button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm leading-6 text-slate-300">
+        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm leading-6 text-slate-300">
           {status && !status.enabled ? (
             <div className="text-slate-400">
               <p>Ask Ops Console isn&rsquo;t set up for this workspace yet. It uses the workspace&rsquo;s own Claude (Anthropic) or ChatGPT (OpenAI) API key.</p>
@@ -144,7 +187,6 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
                   )}
                 </Fragment>
               ))}
-              <div ref={end} />
             </div>
           )}
           {error && <p className="mt-3 rounded-lg border border-rose-500/30 px-3 py-2 text-rose-300">{error}</p>}
@@ -160,7 +202,6 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
             Answers come from live data but can be wrong: check the page before acting.
           </p>
         </footer>
-      </aside>
-    </div>
+    </aside>
   );
 }

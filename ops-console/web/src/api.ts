@@ -355,8 +355,14 @@ export async function askAssistant(question: string, conversationId: string | nu
   }
 }
 
+export interface McpToken { id: number; name: string; prefix: string; userId: number; username: string; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; lastUsedIp: string | null }
+export interface McpView { url: string; tools: { name: string; description: string }[]; tokens: McpToken[]; canSeeAll: boolean }
+
 export const api = {
   assistant: () => call<AssistantStatus>('GET', '/api/assistant'),
+  mcpTokens: (all = false) => call<McpView>('GET', `/api/mcp-tokens${all ? '?all=1' : ''}`),
+  createMcpToken: (name: string, days: number | null) => call<{ token: string; row: McpToken }>('POST', '/api/mcp-tokens', { name, days }),
+  revokeMcpToken: (id: number) => call<{ ok: true }>('DELETE', `/api/mcp-tokens/${id}`),
   assistantSettings: () => call<AssistantSettingsView>('GET', '/api/assistant/settings'),
   assistantModels: (provider: AssistantProvider, apiKey?: string) => call<{ models: string[]; suggested: string | null }>('POST', '/api/assistant/models', { provider, apiKey }),
   saveAssistantSettings: (b: { provider: AssistantProvider; model: string; apiKey?: string }) => call<{ settings: AssistantSettings }>('PUT', '/api/assistant/settings', b).then((r) => r.settings),
