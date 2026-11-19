@@ -114,7 +114,7 @@ export function Privacy() {
         <li>Amazon Web Services: hosting and email delivery.</li>
         <li>Paystack: payment processing.</li>
         <li>GitHub: repository access, when connected by the customer.</li>
-        <li>Anthropic: answers questions asked in &ldquo;Ask Ops Console&rdquo; (the question, and the workspace status the assistant looks up to answer it; never setting values or other secrets).</li>
+        <li>Anthropic or OpenAI, whichever a workspace admin chooses for &ldquo;Ask Ops Console&rdquo;, under the customer&rsquo;s own account with that provider: answers questions (the question, and the workspace status the assistant looks up to answer it; never setting values or other secrets).</li>
       </UL>
       <H>Retention</H>
       <P>Account and audit information is kept while the account is active and as long as required for legal and accounting purposes afterwards. Invoices are kept as required by tax law.</P>

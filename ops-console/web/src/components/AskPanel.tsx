@@ -80,7 +80,6 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
         if (e.type === 'conversation') setConvId(e.id);
         else if (e.type === 'tool') patch((l) => ({ ...l, tools: [...new Set([...(l.tools ?? []), e.label])] }));
         else if (e.type === 'text') patch((l) => ({ ...l, text: l.text + e.delta }));
-        else if (e.type === 'done') setStatus((s) => (s ? { ...s, remaining: e.remaining } : s));
         else if (e.type === 'error') { setError(e.message); patch((l) => l); }
       }, abort.current.signal);
     } catch (e) {
@@ -104,7 +103,7 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
           <span className="grid h-7 w-7 place-items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-300"><SparkIcon /></span>
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-slate-100">Ask Ops Console</h2>
-            <p className="truncate text-2xs text-slate-500">Read-only answers about this workspace</p>
+            <p className="truncate text-2xs text-slate-500">Read-only answers about this workspace{status?.providerName ? ` · ${status.providerName}` : ''}</p>
           </div>
           {turns.length > 0 && <button className="btn-ghost px-2 py-1 text-xs" onClick={newChat}>New chat</button>}
           <button className="btn-ghost px-2 py-1 text-xs" onClick={onClose} aria-label="Close">✕</button>
@@ -112,7 +111,10 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm leading-6 text-slate-300">
           {status && !status.enabled ? (
-            <p className="text-slate-400">The assistant isn&rsquo;t set up on this console.</p>
+            <div className="text-slate-400">
+              <p>Ask Ops Console isn&rsquo;t set up for this workspace yet. It uses the workspace&rsquo;s own Claude (Anthropic) or ChatGPT (OpenAI) API key.</p>
+              <p className="mt-2">{status.canConfigure ? <a className="text-indigo-300 hover:text-indigo-200" href="/settings#assistant" onClick={onClose}>Add a key in Settings →</a> : 'A workspace admin can add one under Settings.'}</p>
+            </div>
           ) : turns.length === 0 ? (
             <div>
               <p className="text-slate-400">Ask about servers, apps, deploys, alerts, uptime, backups or AWS costs. It looks things up for you and can&rsquo;t change anything.</p>
@@ -155,7 +157,7 @@ export function AskPanel({ open, onClose }: { open: boolean; onClose: () => void
             <button className="btn-primary" disabled={busy || !input.trim() || (!!status && !status.enabled)} onClick={() => void send(input)}>{busy ? '…' : 'Ask'}</button>
           </div>
           <p className="mt-2 text-2xs text-slate-500">
-            {status?.remaining != null ? `${status.remaining} question${status.remaining === 1 ? '' : 's'} left this month · ` : ''}Answers come from live data but can be wrong: check the page before acting.
+            Answers come from live data but can be wrong: check the page before acting.
           </p>
         </footer>
       </aside>
