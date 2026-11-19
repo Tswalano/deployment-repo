@@ -1,5 +1,6 @@
 import { Fragment, KeyboardEvent, PointerEvent as RPointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
-import { api, ApiError, askAssistant, AssistantStatus, AssistantTurn } from '../api';
+import { api, ApiError, askAssistant, AssistantAction, AssistantStatus, AssistantTurn } from '../api';
+import { ActionCard } from './ActionCard';
 
 /** "Ask Ops Console": a side panel that answers questions about the workspace (read-only). */
 
@@ -51,6 +52,7 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
   const [status, setStatus] = useState<AssistantStatus | null>(null);
   const [convId, setConvId] = useState<string | null>(null);
   const [turns, setTurns] = useState<AssistantTurn[]>([]);
+  const [actions, setActions] = useState<Record<string, AssistantAction>>({});
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +109,11 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
     try {
       await askAssistant(q, convId, (e) => {
         if (e.type === 'conversation') setConvId(e.id);
+        else if (e.type === 'action') {
+          setActions((m) => ({ ...m, [e.action.id]: e.action }));
+          patch((l) => ({ ...l, actions: [...new Set([...(l.actions ?? []), e.action.id])] }));
+          window.dispatchEvent(new Event('ops:actions-changed'));
+        }
         else if (e.type === 'tool') patch((l) => ({ ...l, tools: [...new Set([...(l.tools ?? []), e.label])] }));
         else if (e.type === 'text') patch((l) => ({ ...l, text: l.text + e.delta }));
         else if (e.type === 'error') { setError(e.message); patch((l) => l); }
@@ -118,9 +125,9 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
       setTurns((t) => (t.length && t[t.length - 1].role === 'assistant' && !t[t.length - 1].text ? t.slice(0, -1) : t));
     }
   }
-  const newChat = () => { abort.current?.abort(); setConvId(null); setTurns([]); setError(null); void loadStatus(); box.current?.focus(); };
+  const newChat = () => { abort.current?.abort(); setConvId(null); setTurns([]); setActions({}); setError(null); void loadStatus(); box.current?.focus(); };
   const openConversation = async (id: string) => {
-    try { const c = await api.assistantConversation(id); setConvId(c.id); setTurns(c.turns); setError(null); } catch (e) { setError(e instanceof ApiError ? e.message : 'Could not open that conversation.'); }
+    try { const c = await api.assistantConversation(id); setConvId(c.id); setTurns(c.turns); setActions(Object.fromEntries(c.actions.map((a) => [a.id, a]))); setError(null); } catch (e) { setError(e instanceof ApiError ? e.message : 'Could not open that conversation.'); }
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(input); } };
 
@@ -144,7 +151,7 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
           <span className="grid h-7 w-7 place-items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-300"><SparkIcon /></span>
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-slate-100">Ask Ops Console</h2>
-            <p className="truncate text-2xs text-slate-500">Read-only answers about this workspace{status?.providerName ? ` · ${status.providerName}` : ''}</p>
+            <p className="truncate text-2xs text-slate-500">Answers about this workspace; changes only after you confirm{status?.providerName ? ` · ${status.providerName}` : ''}</p>
           </div>
           {turns.length > 0 && <button className="btn-ghost px-2 py-1 text-xs" onClick={newChat}>New chat</button>}
           {wide && <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setLarge((l) => !l)} aria-label={large ? 'Smaller' : 'Larger'} title={large ? 'Smaller' : 'Larger'}>{large ? '⤡' : '⤢'}</button>}
@@ -156,11 +163,11 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
           {status && !status.enabled ? (
             <div className="text-slate-400">
               <p>Ask Ops Console isn&rsquo;t set up for this workspace yet. It uses the workspace&rsquo;s own Claude (Anthropic) or ChatGPT (OpenAI) API key.</p>
-              <p className="mt-2">{status.canConfigure ? <a className="text-indigo-300 hover:text-indigo-200" href="/settings#assistant" onClick={onClose}>Add a key in Settings →</a> : 'A workspace admin can add one under Settings.'}</p>
+              <p className="mt-2">{status.canConfigure ? <a className="text-indigo-300 hover:text-indigo-200" href="/ai/assistant" onClick={onClose}>Set it up on the AI page →</a> : 'A workspace admin can set it up on the AI page.'}</p>
             </div>
           ) : turns.length === 0 ? (
             <div>
-              <p className="text-slate-400">Ask about servers, apps, deploys, alerts, uptime, backups or AWS costs. It looks things up for you and can&rsquo;t change anything.</p>
+              <p className="text-slate-400">Ask about servers, apps, deploys, alerts, uptime, backups or AWS costs. It looks things up for you, and can prepare a deploy, rollback or server restart for you to confirm.</p>
               <div className="mt-4 flex flex-col gap-2">
                 {SUGGESTIONS.map((s) => <button key={s} className="rounded-lg border border-ink-700 px-3 py-2 text-left text-slate-300 hover:border-ink-500 hover:text-slate-100" onClick={() => void send(s)}>{s}</button>)}
               </div>
@@ -183,6 +190,7 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
                     <div className="mr-4">
                       {!!t.tools?.length && <div className="mb-1 flex flex-wrap gap-1.5">{t.tools.map((l) => <span key={l} className="rounded-md border border-ink-700 px-1.5 py-0.5 text-2xs text-slate-500">✓ {l}</span>)}</div>}
                       {t.text ? <Markdown text={t.text} /> : busy && i === turns.length - 1 && <p className="animate-pulse text-slate-500 motion-reduce:animate-none">Looking it up…</p>}
+                      {t.actions?.map((id) => actions[id] && <div key={id} className="mt-2"><ActionCard action={actions[id]} onChange={(a) => setActions((m) => ({ ...m, [a.id]: a }))} /></div>)}
                     </div>
                   )}
                 </Fragment>

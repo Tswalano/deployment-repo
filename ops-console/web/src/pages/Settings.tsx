@@ -4,7 +4,6 @@ import { useAuth } from '../auth';
 import { Alert, DesktopOnly, Dot, PageHeader, ago } from '../components/ui';
 import { AlertSettingsForm } from '../components/AlertSettingsForm';
 import { CostCurrencyForm } from '../components/CostCurrencyForm';
-import { AssistantSettingsForm } from '../components/AssistantSettingsForm';
 import { DeployPolicyForm } from '../components/DeployPolicyForm';
 import { GithubConnect } from '../components/GithubConnect';
 import { WorkspaceForm } from '../components/WorkspaceForm';
@@ -86,7 +85,7 @@ export function Settings() {
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     const id = window.location.hash.slice(1);
-    if (!['alerts', 'policy', 'github', 'assistant'].includes(id)) return;
+    if (!['alerts', 'policy', 'github'].includes(id)) return;
     const t = setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }), 400);
     return () => clearTimeout(t);
   }, []);
@@ -160,7 +159,6 @@ export function Settings() {
         <DeployPolicyForm />
         <AlertSettingsForm />
         <CostCurrencyForm />
-        <AssistantSettingsForm />
       </div>
     </div>
   );

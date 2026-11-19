@@ -30,6 +30,7 @@ import assistantRoutes from './routes/assistant';
 import { mcp } from './mcp';
 import mcpTokenRoutes from './routes/mcptokens';
 import { oauth, oauthConsent, wellKnown } from './oauth';
+import actionRoutes from './routes/actions';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
@@ -80,6 +81,7 @@ export function createApp() {
     app.route('/api/platform', platformRoutes);
     app.route('/api/assistant', assistantRoutes);
     app.route('/api/mcp-tokens', mcpTokenRoutes);
+    app.route('/api/actions', actionRoutes);
     app.route('/api/oauth', oauthConsent);
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);

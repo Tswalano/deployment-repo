@@ -330,8 +330,13 @@ export type AssistantProvider = 'anthropic' | 'openai';
 export interface AssistantStatus { enabled: boolean; provider?: AssistantProvider | null; providerName?: string | null; model?: string | null; canConfigure?: boolean; conversations?: { id: string; title: string; provider: AssistantProvider; updatedAt: string }[] }
 export interface AssistantSettings { provider: AssistantProvider; model: string; keyLast4: string; updatedBy: string; updatedAt: string }
 export interface AssistantSettingsView { settings: AssistantSettings | null; usage: { questions: number; inputTokens: number; cachedTokens: number; outputTokens: number }; providers: Record<AssistantProvider, string> }
-export interface AssistantTurn { role: 'user' | 'assistant'; text: string; tools?: string[] }
-export type AssistantEvent = { type: 'conversation'; id: string } | { type: 'tool'; label: string } | { type: 'text'; delta: string } | { type: 'done' } | { type: 'error'; message: string };
+export interface AssistantTurn { role: 'user' | 'assistant'; text: string; tools?: string[]; actions?: string[] }
+export interface AssistantAction {
+  id: string; kind: 'deploy' | 'rollback' | 'start' | 'reboot'; summary: string; note: string | null; server: { id: number; name: string; environment: string }; app: string | null; ref: string;
+  status: 'proposed' | 'running' | 'done' | 'failed' | 'cancelled' | 'expired'; source: 'chat' | 'mcp'; via: string; createdAt: string; expiresAt: string; decidedAt: string | null;
+  result: { message?: string; error?: string; deploymentId?: number; deploymentStatus?: string } | null; link: string;
+}
+export type AssistantEvent = { type: 'conversation'; id: string } | { type: 'action'; action: AssistantAction } | { type: 'tool'; label: string } | { type: 'text'; delta: string } | { type: 'done' } | { type: 'error'; message: string };
 /** Ask a question; events stream in as the answer is written (server-sent events over a POST). */
 export async function askAssistant(question: string, conversationId: string | null, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void> {
   const res = await fetch('/api/assistant/ask', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, conversationId }), signal });
@@ -362,6 +367,9 @@ export const api = {
   assistant: () => call<AssistantStatus>('GET', '/api/assistant'),
   oauthCheck: (p: Record<string, string | undefined>) => call<{ client: { name: string; uri: string | null; redirectHost: string }; workspaces: { id: number; name: string; role: string }[]; current: number | null; scope: string }>('POST', '/api/oauth/check', p),
   oauthDecide: (b: Record<string, unknown>) => call<{ redirect: string }>('POST', '/api/oauth/decide', b),
+  actions: (open = false) => call<{ actions: AssistantAction[] }>('GET', `/api/actions${open ? '?open=1' : ''}`).then((r) => r.actions),
+  confirmAction: (id: string) => call<{ action: AssistantAction }>('POST', `/api/actions/${id}/confirm`, {}).then((r) => r.action),
+  cancelAction: (id: string) => call<{ action: AssistantAction }>('POST', `/api/actions/${id}/cancel`, {}).then((r) => r.action),
   mcpTokens: (all = false) => call<McpView>('GET', `/api/mcp-tokens${all ? '?all=1' : ''}`),
   createMcpToken: (name: string, days: number | null) => call<{ token: string; row: McpToken }>('POST', '/api/mcp-tokens', { name, days }),
   revokeMcpToken: (id: number) => call<{ ok: true }>('DELETE', `/api/mcp-tokens/${id}`),
@@ -369,7 +377,7 @@ export const api = {
   assistantModels: (provider: AssistantProvider, apiKey?: string) => call<{ models: string[]; suggested: string | null }>('POST', '/api/assistant/models', { provider, apiKey }),
   saveAssistantSettings: (b: { provider: AssistantProvider; model: string; apiKey?: string }) => call<{ settings: AssistantSettings }>('PUT', '/api/assistant/settings', b).then((r) => r.settings),
   removeAssistantSettings: () => call<{ ok: true }>('DELETE', '/api/assistant/settings'),
-  assistantConversation: (id: string) => call<{ id: string; title: string; turns: AssistantTurn[] }>('GET', `/api/assistant/conversations/${encodeURIComponent(id)}`),
+  assistantConversation: (id: string) => call<{ id: string; title: string; turns: AssistantTurn[]; actions: AssistantAction[] }>('GET', `/api/assistant/conversations/${encodeURIComponent(id)}`),
   site: () => call<SiteConfig>('GET', '/api/account/config'),
   signup: (b: { name: string; email: string; password: string; workspace: string; username?: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
   billing: () => call<BillingView>('GET', '/api/billing'),

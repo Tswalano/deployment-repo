@@ -4,7 +4,7 @@ import { useDialog } from './Dialog';
 import { ago, Alert } from './ui';
 
 /**
- * Account → AI tools (MCP): connect Claude Code, Claude Desktop, Cursor or VS Code to this workspace with a personal
+ * AI → MCP server: connect Claude Code, Claude Desktop, Cursor or VS Code to this workspace with a personal
  * access token. The token is shown once; the tools get the owner's role, read-only.
  */
 type Client = 'claude-code' | 'claude-desktop' | 'json';

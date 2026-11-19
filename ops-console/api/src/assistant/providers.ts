@@ -4,6 +4,7 @@ import { config } from '../config';
 import { connection } from '../connections';
 import { db } from '../db';
 import { DeployError } from '../deploys';
+import { ActionCtx } from './actions';
 import { Role, runTool, toolDefs, toolLabel } from './tools';
 
 /**
@@ -108,7 +109,7 @@ function keyError(status: number | undefined, who: string) {
 // ------------------------------------------------------------------ one question, either provider
 export type Stored = Record<string, unknown>;
 export interface RunCtx {
-    key: string; model: string; system: string; role: Role; items: Stored[];
+    key: string; model: string; system: string; role: Role; items: Stored[]; actionCtx?: ActionCtx;
     emit: (e: { type: 'tool'; label: string } | { type: 'text'; delta: string }) => void | Promise<void>;
     usage: { input: number; cached: number; output: number };
 }
@@ -118,7 +119,7 @@ const MAX_TURNS = 8;   // tool round trips per question
 export async function runAnthropic(c: RunCtx): Promise<void> {
     try { await anthropicTurns(c); } catch (err) {
         if (!(err instanceof Anthropic.APIError)) throw err;
-        if (err.status === 401 || err.status === 403) throw new DeployError('Anthropic rejected the workspace\'s API key (Settings → Ask Ops Console).', 409);
+        if (err.status === 401 || err.status === 403) throw new DeployError('Anthropic rejected the workspace\'s API key (AI → Ask Ops Console).', 409);
         if (err.status === 429) throw new DeployError('Anthropic is rate-limiting the workspace\'s key, or its credit has run out.', 409);
         if (err.status === 400 || err.status === 404) throw new DeployError(`Anthropic couldn't answer (${err.message.slice(0, 160)}).`, 409);
         throw new DeployError('Anthropic is busy or unavailable right now. Try again in a moment.', 409);
@@ -150,7 +151,7 @@ async function anthropicTurns(c: RunCtx): Promise<void> {
         const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
         for (const call of calls) {
             await c.emit({ type: 'tool', label: toolLabel(call.name) });
-            const r = await runTool(call.name, call.input, c.role);
+            const r = await runTool(call.name, call.input, c.role, c.actionCtx);
             results.push({ type: 'tool_result', tool_use_id: call.id, content: r.content, ...(r.isError ? { is_error: true } : {}) });
         }
         c.items.push({ role: 'user', content: results });   // all results of the turn in one message
@@ -174,7 +175,7 @@ export async function runOpenAI(c: RunCtx): Promise<void> {
         });
         if (!res.ok || !res.body) {
             const detail = await res.json().catch(() => ({})) as { error?: { message?: string } };
-            if (res.status === 401 || res.status === 403) throw new DeployError('OpenAI rejected the workspace\'s API key (Settings → Ask Ops Console).', 409);
+            if (res.status === 401 || res.status === 403) throw new DeployError('OpenAI rejected the workspace\'s API key (AI → Ask Ops Console).', 409);
             if (res.status === 429) throw new DeployError('OpenAI is rate-limiting the workspace\'s key, or its credit has run out.', 409);
             throw new DeployError(`OpenAI couldn't answer (${detail.error?.message?.slice(0, 160) ?? `HTTP ${res.status}`}).`, 409);
         }
@@ -197,7 +198,7 @@ export async function runOpenAI(c: RunCtx): Promise<void> {
             await c.emit({ type: 'tool', label: toolLabel(call.name) });
             let args: unknown = null;
             try { args = JSON.parse(call.arguments || '{}'); } catch { /* invalid JSON: runTool reports it */ }
-            const r = await runTool(call.name, args, c.role);
+            const r = await runTool(call.name, args, c.role, c.actionCtx);
             c.items.push({ type: 'function_call_output', call_id: call.call_id, output: r.content });
         }
     }
@@ -225,19 +226,28 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Reco
 }
 
 /** What the person sees of a stored conversation, whichever provider wrote it. */
-export function visibleTurns(provider: Provider, items: Stored[]): { role: 'user' | 'assistant'; text: string; tools?: string[] }[] {
-    const out: { role: 'user' | 'assistant'; text: string; tools?: string[] }[] = [];
+export function visibleTurns(provider: Provider, items: Stored[]): { role: 'user' | 'assistant'; text: string; tools?: string[]; actions?: string[] }[] {
+    const out: { role: 'user' | 'assistant'; text: string; tools?: string[]; actions?: string[] }[] = [];
     let pending: string[] = [];
-    const say = (text: string) => { if (text) { out.push({ role: 'assistant', text, tools: [...new Set(pending)] }); pending = []; } };
+    let actions: string[] = [];
+    const say = (text: string) => { if (text) { out.push({ role: 'assistant', text, tools: [...new Set(pending)], ...(actions.length ? { actions } : {}) }); pending = []; actions = []; } };
+    // a proposal made during the turn (from the tool result) is shown with the answer that follows it
+    const proposal = (content: unknown) => {
+        try { const id = (JSON.parse(String(content)) as { result?: { actionId?: string } }).result?.actionId; if (id && !actions.includes(id)) actions.push(id); } catch { /* not JSON */ }
+    };
     for (const m of items) {
         if (provider === 'openai') {
             if (m.role === 'user' && typeof m.content === 'string') out.push({ role: 'user', text: m.content });
             else if (m.type === 'function_call') pending.push(toolLabel(String(m.name)));
+            else if (m.type === 'function_call_output') proposal(m.output);
             else if (m.type === 'message' && m.role === 'assistant') say(((m.content as { type: string; text?: string }[]) ?? []).filter((b) => b.type === 'output_text').map((b) => b.text).join(''));
             continue;
         }
         const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : (m.content as { type: string; text?: string; name?: string }[]);
-        if (m.role === 'user') { const t = blocks.filter((b) => b.type === 'text').map((b) => b.text).join(''); if (t) out.push({ role: 'user', text: t }); continue; }
+        if (m.role === 'user') {
+            for (const b of blocks as { type: string; content?: unknown }[]) if (b.type === 'tool_result') proposal(b.content);
+            const t = blocks.filter((b) => b.type === 'text').map((b) => b.text).join(''); if (t) out.push({ role: 'user', text: t }); continue;
+        }
         pending.push(...blocks.filter((b) => b.type === 'tool_use').map((b) => toolLabel(b.name ?? '')));
         say(blocks.filter((b) => b.type === 'text').map((b) => b.text).join(''));
     }

@@ -121,11 +121,11 @@ const ARTICLES: Article[] = [
     </>) },
   { slug: 'assistant', group: 'Operate', title: 'Ask Ops Console', summary: 'Questions about the workspace, answered from live data.',
     body: () => (<>
-      <P>Select <b>Ask</b> in the header and ask in plain language, for example <C>Did any deploy fail this week?</C> or <C>Which server is closest to running out of disk?</C>. The assistant looks up the answer in the workspace (servers, apps, deploys, alerts, uptime, backups and AWS costs) and shows what it checked.</P>
+      <P>Select <b>Ask</b> in the header (or open the <b>AI</b> page) and ask in plain language, for example <C>Did any deploy fail this week?</C> or <C>Which server is closest to running out of disk?</C>. The assistant looks up the answer in the workspace (servers, apps, deploys, alerts, uptime, backups and AWS costs) and shows what it checked.</P>
       <UL>
-        <li><b>Read-only:</b> it can&rsquo;t deploy, restart or change anything; it says where in the console to do that.</li>
+        <li><b>Changes only after confirmation:</b> asked to deploy, roll back, or start or reboot a server, it prepares a proposal and shows a card with <b>Confirm</b> and <b>Cancel</b>. Nothing happens unless the person confirms within 15 minutes; it then runs as them, exactly like the console&rsquo;s button: role checks, approvals, freeze windows, audit log and emails. Stopping or terminating servers, policy overrides and settings are only done in the console itself.</li>
         <li><b>The person&rsquo;s own access:</b> it sees only this workspace, with the asker&rsquo;s role (for example, costs only for deployers and admins). Setting values and other secrets are never available to it.</li>
-        <li><b>The workspace&rsquo;s own AI account:</b> an admin turns it on under <b>Settings → Ask Ops Console</b>, choosing Claude (Anthropic) or ChatGPT (OpenAI), pasting an API key from that provider and picking a model. The provider bills usage directly; Settings shows this month&rsquo;s questions and tokens. The key is checked with the provider, stored encrypted in the workspace&rsquo;s AWS account (Parameter Store) and never shown again.</li>
+        <li><b>The workspace&rsquo;s own AI account:</b> an admin turns it on under <b>AI → Ask Ops Console</b>, choosing Claude (Anthropic) or ChatGPT (OpenAI), pasting an API key from that provider and picking a model. The provider bills usage directly; the AI page shows this monthSettings shows this month&rsquo;s questions and tokensrsquo;s questions and tokens. The key is checked with the provider, stored encrypted in the workspace&rsquo;s AWS account (Parameter Store) and never shown again.</li>
         <li><b>Switching provider</b> starts new chats; earlier chats stay readable.</li>
         <li><b>Answers can be wrong:</b> check the page before acting on one.</li>
       </UL>
@@ -135,10 +135,11 @@ const ARTICLES: Article[] = [
     body: () => (<>
       <P>The workspace has its own MCP server (Model Context Protocol), so AI tools can look up servers, apps, deploys, alerts, uptime, backups and AWS costs while helping with work elsewhere. It uses the same read-only tools as Ask Ops Console, and the AI tool&rsquo;s own subscription: no API key is needed in the console.</P>
       <UL>
-        <li><b>Create a token:</b> <b>Account → AI tools (MCP)</b>, name it after where it will be used and choose an expiry. Copy it straight away: it&rsquo;s shown once. Ready-to-paste setup is shown for Claude Code, Claude Desktop and editors such as Cursor and VS Code.</li>
+        <li><b>Create a token:</b> <b>AI → MCP server</b>, name it after where it will be used and choose an expiry. Copy it straight away: it&rsquo;s shown once. Ready-to-paste setup is shown for Claude Code, Claude Desktop and editors such as Cursor and VS Code.</li>
         <li><b>The token owner&rsquo;s access:</b> one workspace, the owner&rsquo;s role (costs only for deployers and admins), read-only. It stops working at once when revoked, when it expires, or when the owner is disabled or leaves the workspace.</li>
+        <li><b>Proposals:</b> a connected tool can propose a deploy, rollback, or server start or reboot. It appears under <b>AI → Proposals</b> (the AI link shows a badge) for the token owner to confirm or cancel within 15 minutes; nothing runs before that.</li>
         <li><b>Visibility:</b> each token shows when it was last used; admins can list and revoke everyone&rsquo;s tokens. Each tool call is recorded in the audit log.</li>
-        <li><b>ChatGPT, claude.ai and Claude Desktop connectors:</b> add a custom connector with the MCP server address (shown under Account → AI tools). The app opens the console&rsquo;s sign-in and an approval page that says what it will be able to read and lets the person choose the workspace. No token is pasted; the connection renews itself while used (30 days) and appears in the list as a connected app, where it can be disconnected.</li>
+        <li><b>ChatGPT, claude.ai and Claude Desktop connectors:</b> add a custom connector with the MCP server address (shown under AI → MCP server). The app opens the console&rsquo;s sign-in and an approval page that says what it will be able to read and lets the person choose the workspace. No token is pasted; the connection renews itself while used (30 days) and appears in the list as a connected app, where it can be disconnected.</li>
       </UL>
       <P>Data the AI tool reads goes to that tool&rsquo;s provider under the person&rsquo;s own account with them.</P>
     </>) },

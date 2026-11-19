@@ -2,7 +2,6 @@ import { FormEvent, ReactNode, useCallback, useEffect, useState } from 'react';
 import { api, ApiError, Profile, Role } from '../api';
 import { useAuth } from '../auth';
 import { ago, Alert, Skeleton } from '../components/ui';
-import { McpTokens } from '../components/McpTokens';
 
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
 const date = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '—');
@@ -165,13 +164,6 @@ export function Account() {
           <Row title="Password" sub="At least 8 characters; a long passphrase is best. Changing it ends all other sessions.">
             <PasswordForm onChanged={load} />
           </Row>
-          {p.workspaces.length > 0 && (
-            <div id="mcp">
-              <Row title="AI tools (MCP)" sub="Connect Claude Code, Claude Desktop, Cursor or VS Code to this workspace. They can only read, with this account's role.">
-                <McpTokens />
-              </Row>
-            </div>
-          )}
           <Row title="Account" sub="Account history and access.">
             <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
               <div><dt className="text-slate-500">Member since</dt><dd className="mt-0.5 text-slate-200">{date(p.createdAt)}</dd></div>

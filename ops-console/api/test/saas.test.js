@@ -1103,7 +1103,7 @@ test('assistant: the workspace\'s own key (Claude or ChatGPT); streamed answers 
         const [r1, r2] = oaCalls;
         assert.deepEqual([r1.model, r1.stream, r1.store, r1.include[0]], ['gpt-test-1', true, false, 'reasoning.encrypted_content']);
         assert.ok(r1.tools.every((t) => t.type === 'function' && t.name && t.parameters));
-        assert.match(r1.instructions, /You can only read/);
+        assert.match(r1.instructions, /A proposal changes nothing/);
         // second turn: the reasoning and call go back unchanged, then the tool output from Alice's workspace
         assert.deepEqual(r2.input.slice(1, 3), [reasoning, fcall]);
         const out = r2.input[3];
@@ -1154,8 +1154,8 @@ test('mcp: personal tokens (shown once, hashed); /mcp speaks MCP with the read-o
     assert.equal((await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202);
     const list = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'mcp-protocol-version': '2025-06-18' });
     const tools = list.json.result.tools;
-    assert.ok(tools.length >= 6 && tools.every((t) => t.inputSchema && t.annotations.readOnlyHint === true));
-    assert.ok(!tools.some((t) => /deploy_app|restart|delete/.test(t.name)), 'read-only tools only');
+    assert.ok(tools.length >= 6 && tools.every((t) => t.inputSchema && t.annotations.readOnlyHint === !t.name.startsWith('propose_')));
+    assert.ok(!tools.some((t) => /deploy_app|restart|delete|stop|terminate/.test(t.name)), 'lookups and proposals only');
     // a call runs in Alice's workspace only
     const call = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_servers', arguments: {} } });
     assert.equal(call.json.result.isError, false);
@@ -1296,4 +1296,106 @@ test('mcp oauth: discovery, client registration, approval with PKCE, single-use 
     // unknown client / unsupported grant
     assert.equal((await tok({ grant_type: 'authorization_code', code: 'x', code_verifier: verifier, client_id: 'ocl_' + 'z'.repeat(24) })).status, 401);
     assert.equal((await tok({ grant_type: 'password', client_id: cl.client_id })).status, 400);
+});
+
+test('actions: AI proposes deploy/rollback/start/reboot; nothing runs until the proposer confirms; confirm runs it like the button; cancel, expiry, viewers, other users and workspaces refused; chat shows the card', async () => {
+    const { db, asSystem, withWorkspace } = dist('db');
+    const tools = dist('assistant/tools');
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const me = (await a.get('/api/auth/me')).json.user;
+    const tok = (await a.post('/api/mcp-tokens', { name: 'Proposals test' })).json.token;
+    const rpc = async (method, params) => {
+        const r = await app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+        return (await r.json()).result;
+    };
+    const call = async (name, args) => JSON.parse((await rpc('tools/call', { name, arguments: args })).content[0].text);
+    // a server of Alice's with an app on it
+    const status = { apps: [{ project: 'shop', healthy: true }], deploying: null, deployEvents: [], services: [], certificates: [], databases: [],
+        host: { memory: { used: 1, total: 2 }, disk: { used: 1, total: 2, free: 1 }, load: [0, 0, 0], cpus: 2, uptimeSeconds: 3600 } };
+    const { rows: [inst] } = await withWorkspace(me.workspaceId, () => db().query(
+        "INSERT INTO instances (name, aws_instance_id, region, last_status, last_ok_at, ec2_state) VALUES ('ai-box', 'i-0ddddddddddddddd4', 'af-south-1', $1, now(), 'running') RETURNING id, name, last_status", [JSON.stringify(status)]));
+    const appName = inst.last_status.apps[0].project;
+    const deploysBefore = (await withWorkspace(me.workspaceId, () => db().query('SELECT count(*)::int AS n FROM deployments'))).rows[0].n;
+
+    // bad proposals come back as data, and create nothing
+    assert.match((await call('propose_deploy', { server_id: inst.id, app: 'no-such-app' })).result.error, /isn't an app/);
+    assert.match((await call('propose_deploy', { server_id: 999999, app: appName })).result.error, /No server/);
+    assert.equal((await rpc('tools/call', { name: 'propose_server_power', arguments: { server_id: inst.id, action: 'terminate' } })).isError, true, 'only start/reboot');
+    const viewer = await tools.runTool('propose_deploy', { server_id: inst.id, app: appName }, 'viewer', { userId: me.id, username: 'alice', source: 'mcp', via: 'x' });
+    assert.match(JSON.parse(viewer.content).result.error, /viewer/);
+
+    // a proposal: nothing has run
+    const p = (await call('propose_deploy', { server_id: inst.id, app: appName })).result;
+    assert.equal(p.proposed, true);
+    assert.match(p.nextStep, /Nothing has happened yet/);
+    assert.equal((await withWorkspace(me.workspaceId, () => db().query('SELECT count(*)::int AS n FROM deployments'))).rows[0].n, deploysBefore);
+    // asking again returns the same open proposal
+    assert.equal((await call('propose_deploy', { server_id: inst.id, app: appName })).result.actionId, p.actionId);
+    const open = (await a.get('/api/actions?open=1')).json.actions;
+    assert.equal(open.length, 1);
+    assert.deepEqual([open[0].kind, open[0].app, open[0].via, open[0].source, open[0].status], ['deploy', appName, 'Proposals test', 'mcp', 'proposed']);
+
+    // only the proposer decides: another workspace's admin can't see or confirm it
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+    assert.equal((await b.post(`/api/actions/${p.actionId}/confirm`)).status, 404);
+    assert.equal((await b.get('/api/actions')).json.actions.length, 0);
+    const d = client();
+    assert.equal((await d.post('/api/auth/demo')).status, 200);
+    assert.equal((await d.post(`/api/actions/${p.actionId}/confirm`)).status, 403);
+
+    // confirm: it runs through requestDeployment, as Alice, and is audited with where it came from
+    const done = (await a.post(`/api/actions/${p.actionId}/confirm`)).json.action;
+    assert.equal(done.status, 'done', JSON.stringify(done.result));
+    {
+        assert.ok(done.result.deploymentId);
+        const { rows: [dep] } = await withWorkspace(me.workspaceId, () => db().query('SELECT requested_by_name, project FROM deployments WHERE id = $1', [done.result.deploymentId]));
+        assert.deepEqual([dep.requested_by_name, dep.project], ['alice', appName]);
+        const { rows: [au] } = await withWorkspace(me.workspaceId, () => db().query("SELECT detail FROM audit_log WHERE action LIKE 'app.deploy%' ORDER BY id DESC LIMIT 1"));
+        assert.equal(au.detail.proposal, p.actionId);
+        assert.equal(au.detail.via, 'Proposals test');
+    }
+    assert.equal((await a.post(`/api/actions/${p.actionId}/confirm`)).status, 409, 'decided once');
+
+    // cancel; expiry
+    const r = (await call('propose_rollback', { server_id: inst.id, app: appName })).result;
+    assert.equal((await a.post(`/api/actions/${r.actionId}/cancel`)).json.action.status, 'cancelled');
+    assert.equal((await a.post(`/api/actions/${r.actionId}/confirm`)).status, 409);
+    await asSystem(() => db().query("UPDATE deployments SET status = 'failed', finished_at = now() WHERE status IN ('running', 'pending_approval')"));
+    const e = (await call('propose_deploy', { server_id: inst.id, app: appName, ref: 'main' })).result;
+    await asSystem(() => db().query("UPDATE assistant_actions SET expires_at = now() - interval '1 second' WHERE id = $1", [e.actionId]));
+    const exp = await a.post(`/api/actions/${e.actionId}/confirm`);
+    assert.equal(exp.status, 409);
+    assert.match(exp.json.error, /expired/);
+
+    // in the chat: the proposal arrives as an "action" event, and the conversation keeps the card with the answer
+    const prov = dist('assistant/providers');
+    const stored = new Map();
+    prov.setKeyStore({ get: async (rg, n) => stored.get(n) ?? null, put: async (rg, n, v) => { stored.set(n, v); }, del: async (rg, n) => { stored.delete(n); } });
+    let script = [];
+    prov.setAnthropicFactory(() => ({
+        models: { list: async function* () { yield { id: 'claude-opus-5-5' }; } },
+        beta: { messages: { stream: () => { const msg = script.shift(); let cb = null; return { on(ev, f) { if (ev === 'text') cb = f; return this; }, async finalMessage() { for (const bl of msg.content) if (bl.type === 'text' && cb) cb(bl.text); return msg; } }; } } },
+    }));
+    try {
+        assert.equal((await a.put('/api/assistant/settings', { provider: 'anthropic', model: 'claude-opus-5-5', apiKey: 'sk-ant-api03-' + 'y'.repeat(40) })).status, 200);
+        const usage = { input_tokens: 10, output_tokens: 5 };
+        script = [
+            { stop_reason: 'tool_use', usage, content: [{ type: 'tool_use', id: 'tu_p', name: 'propose_server_power', input: { server_id: inst.id, action: 'reboot' } }] },
+            { stop_reason: 'end_turn', usage, content: [{ type: 'text', text: `Once you confirm, ${inst.name} will reboot.` }] },
+        ];
+        const raw = await (await app.request('/api/assistant/ask', { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: a.cookieHeader() }, body: JSON.stringify({ question: `Reboot ${inst.name}` }) })).text();
+        const ev = raw.split('\n\n').filter(Boolean).map((c) => JSON.parse(c.split('\n').find((l) => l.startsWith('data:')).slice(5)));
+        const act = ev.find((x) => x.type === 'action');
+        assert.ok(act, 'an action event');
+        assert.deepEqual([act.action.kind, act.action.source, act.action.status], ['reboot', 'chat', 'proposed']);
+        const conv = (await a.get(`/api/assistant/conversations/${ev[0].id}`)).json;
+        assert.deepEqual(conv.turns.at(-1).actions, [act.action.id]);
+        assert.equal(conv.actions[0].id, act.action.id);
+        await a.post(`/api/actions/${act.action.id}/cancel`);
+        await a.del('/api/assistant/settings');
+    } finally {
+        prov.setKeyStore(null); prov.setAnthropicFactory(null);
+    }
 });
