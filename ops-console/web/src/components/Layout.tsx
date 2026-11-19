@@ -8,29 +8,28 @@ import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
 import { useDialog } from './Dialog';
 import { AskPanel } from './AskPanel';
+import { navIcon, smallIcon } from './icons';
+import { Activity, Bell, ChevronDown, CreditCard, DatabaseBackup, Gauge, LayoutDashboard, LogOut, Monitor, Moon, Plus, ScrollText, Server, Settings, Shield,
+  ShieldCheck, Sparkles, Sun, UserRound, Users, Wallet, Wrench } from 'lucide-react';
 
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
 const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/callback', '/billing', '/billing/return'];
 
 type Tab = { to: string; label: string; end?: boolean; admin?: boolean; deployer?: boolean; noDemo?: boolean; mobile?: boolean; group?: 'Monitoring' | 'Operations' | 'Administration'; icon: JSX.Element };
 
-const Icon = ({ d }: { d: string }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]" aria-hidden>
-    <path d={d} />
-  </svg>
-);
 const TABS: Tab[] = [
-  { to: '/', label: 'Overview', end: true, mobile: true, icon: <Icon d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /> },
-  { to: '/instances', label: 'Instances', mobile: true, icon: <Icon d="M4 6h16M4 12h16M4 18h16M7 6v0M7 12v0M7 18v0" /> },
-  { to: '/ai', label: 'AI Console', noDemo: true, icon: <Icon d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" /> },
-  { to: '/alerts', label: 'Alerts', group: 'Monitoring', icon: <Icon d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /> },
-  { to: '/activity', label: 'Activity', group: 'Monitoring', icon: <Icon d="M3 12h4l3-8 4 16 3-8h4" /> },
-  { to: '/backups', label: 'Backups', group: 'Operations', icon: <Icon d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /> },
-  { to: '/costs', label: 'Costs', group: 'Operations', deployer: true, icon: <Icon d="M12 2v20M17 6.5c0-1.9-2.2-3.5-5-3.5s-5 1.6-5 3.5 2.2 3 5 3.5 5 1.6 5 3.5-2.2 3.5-5 3.5-5-1.6-5-3.5" /> },
-  { to: '/users', label: 'Users', group: 'Administration', admin: true, icon: <Icon d="M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 19v-1a4 4 0 0 0-3-3.9M16 2.1a4 4 0 0 1 0 7.8" /> },
-  { to: '/audit', label: 'Audit log', group: 'Administration', admin: true, icon: <Icon d="M9 12h6M9 16h6M9 8h2M6 3h9l5 5v13H6z" /> },
-  { to: '/settings', label: 'Settings', group: 'Administration', admin: true, icon: <Icon d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /> },
+  { to: '/', label: 'Overview', end: true, mobile: true, icon: navIcon(LayoutDashboard) },
+  { to: '/instances', label: 'Instances', mobile: true, icon: navIcon(Server) },
+  { to: '/ai', label: 'AI Console', noDemo: true, icon: navIcon(Sparkles) },
+  { to: '/alerts', label: 'Alerts', group: 'Monitoring', icon: navIcon(Bell) },
+  { to: '/activity', label: 'Activity', group: 'Monitoring', icon: navIcon(Activity) },
+  { to: '/backups', label: 'Backups', group: 'Operations', icon: navIcon(DatabaseBackup) },
+  { to: '/costs', label: 'Costs', group: 'Operations', deployer: true, icon: navIcon(Wallet) },
+  { to: '/users', label: 'Users', group: 'Administration', admin: true, icon: navIcon(Users) },
+  { to: '/audit', label: 'Audit log', group: 'Administration', admin: true, icon: navIcon(ScrollText) },
+  { to: '/settings', label: 'Settings', group: 'Administration', admin: true, icon: navIcon(Settings) },
 ];
+const GROUP_ICON = { Monitoring: Gauge, Operations: Wrench, Administration: ShieldCheck } as const;
 
 function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; workspaces?: Workspace[]; onSwitched?: () => Promise<void> }) {
   const { user, logout } = useAuth();
@@ -53,7 +52,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
       <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
               aria-label="Menu" className="flex items-center gap-1.5 rounded-full border border-ink-600 py-0.5 pl-0.5 pr-2 text-slate-400 transition hover:border-ink-500 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
         <span className="grid h-7 w-7 place-items-center rounded-full bg-indigo-500/30 text-xs font-semibold text-indigo-100">{initials}</span>
-        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
+        <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
       </button>
       {open && (
         <div role="menu" className="absolute right-0 top-10 z-30 w-60 overflow-hidden rounded-xl border border-ink-600 bg-ink-850 shadow-2xl shadow-black/50">
@@ -72,20 +71,20 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
                   <span className="min-w-0 flex-1 truncate">{w.name}</span><span className="text-2xs capitalize text-slate-500">{w.role}</span>
                 </button>
               ))}
-              <button role="menuitem" className="block w-full px-4 py-2 text-left text-sm text-slate-400 hover:bg-ink-800" onClick={async () => {
+              <button role="menuitem" className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm text-slate-400 hover:bg-ink-800" onClick={async () => {
                 setOpen(false);
                 const name = await dialog.prompt({ title: 'New workspace', body: 'A separate workspace with its own servers, team and billing (it starts on a free trial).',
                   label: 'Workspace name', placeholder: 'e.g. Acme Ltd', minLength: 2, maxLength: 80, confirmLabel: 'Create workspace' });
                 if (!name) return;
                 try { await api.createWorkspace(name); await onSwitched?.(); }
                 catch (e) { await dialog.alert({ title: "The workspace wasn't created", body: e instanceof Error ? e.message : 'Something went wrong.' }); }
-              }}>+ New workspace</button>
+              }}>{smallIcon(Plus, 'text-slate-500')}New workspace</button>
             </div>
           )}
           {user.platformAdmin && (
             <div className="border-b border-ink-700 py-1.5">
               <NavLink to="/platform" role="menuitem" onClick={() => setOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-sm text-slate-300 hover:bg-ink-800 hover:text-white">
-                <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-500" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden><path d="M12 3l8 4v5c0 4.5-3.4 8.4-8 9-4.6-.6-8-4.5-8-9V7z" /></svg>
+                {smallIcon(Shield, 'text-slate-500')}
                 Platform admin
               </NavLink>
             </div>
@@ -93,10 +92,10 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
           <div className="border-b border-ink-700 px-4 py-3">
             <div className="mb-2 text-2xs font-semibold uppercase tracking-wider text-slate-500">Theme</div>
             <div className="grid grid-cols-3 gap-1 rounded-lg border border-ink-600 bg-ink-950 p-1" role="radiogroup" aria-label="Theme">
-              {([['dark', 'Dark', 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'], ['light', 'Light', 'M12 4V2m0 20v-2m8-8h2M2 12h2m13.7-5.7 1.4-1.4M4.9 19.1l1.4-1.4m0-11.4L4.9 4.9m14.2 14.2-1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z'], ['system', 'System', 'M4 5h16v11H4zM8 20h8M12 16v4']] as const).map(([v, label, d]) => (
+              {([['dark', 'Dark', Moon], ['light', 'Light', Sun], ['system', 'System', Monitor]] as const).map(([v, label, I]) => (
                 <button key={v} role="radio" aria-checked={theme === v} onClick={() => setTheme(v)}
                         className={`flex flex-col items-center gap-1 rounded-md px-1 py-1.5 text-2xs ${theme === v ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:bg-ink-800 hover:text-slate-200'}`}>
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d={d} /></svg>
+                  {smallIcon(I)}
                   {label}
                 </button>
               ))}
@@ -106,7 +105,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
             const items = pages.filter((t) => t.group === g);
             return items.length ? (
               <div key={g} className="border-b border-ink-700 py-1.5 md:hidden">
-                <div className="px-4 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-slate-500">{g}</div>
+                <div className="flex items-center gap-1.5 px-4 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-slate-500">{smallIcon(GROUP_ICON[g], 'h-3.5 w-3.5')}{g}</div>
                 {items.map((t) => (
                   <NavLink key={t.to} to={t.to} role="menuitem" onClick={() => setOpen(false)}
                            className={({ isActive }) => `flex items-center gap-2.5 px-4 py-2 text-sm ${isActive ? 'bg-ink-800 text-slate-100' : 'text-slate-300 hover:bg-ink-800'}`}>
@@ -117,13 +116,13 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
             ) : null;
           })}
           {!user.isDemo && (
-            <button role="menuitem" className="block w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-ink-800" onClick={() => { setOpen(false); navigate('/account'); }}>
-              Account & password
+            <button role="menuitem" className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-ink-800" onClick={() => { setOpen(false); navigate('/account'); }}>
+              {smallIcon(UserRound, 'text-slate-500')}Account & password
             </button>
           )}
-          <button role="menuitem" className="block w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-ink-800"
+          <button role="menuitem" className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-ink-800"
                   onClick={async () => { await logout(); navigate('/login'); }}>
-            Sign out
+            {smallIcon(LogOut, 'text-slate-500')}Sign out
           </button>
         </div>
       )}
@@ -132,7 +131,7 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
 }
 
 /** Navbar dropdown for a group of pages (Operations, Administration). */
-function NavGroup({ label, items, badge, itemBadge }: { label: string; items: Tab[]; badge?: ReactNode; itemBadge?: (t: Tab) => ReactNode }) {
+function NavGroup({ label, items, badge, itemBadge }: { label: keyof typeof GROUP_ICON; items: Tab[]; badge?: ReactNode; itemBadge?: (t: Tab) => ReactNode }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { pathname } = useLocation();
@@ -149,10 +148,10 @@ function NavGroup({ label, items, badge, itemBadge }: { label: string; items: Ta
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
-              className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${active
+              className={`-mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors ${active
                 ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:border-ink-500 hover:text-slate-200'}`}>
-        {label}{badge}
-        <svg viewBox="0 0 24 24" className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="m6 9 6 6 6-6" /></svg>
+        {navIcon(GROUP_ICON[label])}{label}{badge}
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} strokeWidth={2} aria-hidden />
       </button>
       {open && (
         <div role="menu" className="absolute left-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-xl border border-ink-600 bg-ink-850 py-1.5 shadow-2xl shadow-black/50">
@@ -225,7 +224,7 @@ export function Layout() {
   // with many customers the global Users page becomes the workspace's Team page (all members see it)
   const TABS_HERE = site.multiTenant
     ? [...TABS.map((t) => (t.to === '/users' ? { ...t, to: '/team', label: 'Team', admin: false } : t)),
-       { to: '/billing', label: 'Billing', group: 'Administration' as const, admin: true, icon: <Icon d="M3 7h18v12H3zM3 11h18M7 15h3" /> }]
+       { to: '/billing', label: 'Billing', group: 'Administration' as const, admin: true, icon: navIcon(CreditCard) }]
     : TABS;
   const tabs = TABS_HERE.filter((t) => (!t.noDemo || !user.isDemo) && (!t.admin || user.role === 'admin') && (!t.deployer || ((user.role === 'admin' || user.role === 'deployer') && !user.isDemo)));
   const alertBadge = alerts.open > 0 ? (
@@ -275,8 +274,8 @@ export function Layout() {
             {site.multiTenant && current && <span className="hidden max-w-[12rem] truncate rounded-md border border-ink-600 px-2 py-0.5 text-xs text-slate-400 sm:inline" title="Current workspace">{current.name}</span>}
           </NavLink>
           <div className="ml-auto flex items-center gap-2">
-            {setup && <NavLink to="/team" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Team</NavLink>}
-            {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Billing</NavLink>}
+            {setup && <NavLink to="/team" className={({ isActive }) => `hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm sm:flex ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>{smallIcon(Users)}Team</NavLink>}
+            {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm sm:flex ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>{smallIcon(CreditCard)}Billing</NavLink>}
             <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
         </div>
@@ -310,7 +309,7 @@ export function Layout() {
           </NavLink>
         ))}
         <NavLink to="/alerts" className={`relative flex flex-col items-center gap-1 py-2.5 text-2xs font-medium ${monitoringActive ? 'text-indigo-300' : 'text-slate-500'}`}>
-          <Icon d="M3 12h4l3-8 4 16 3-8h4" />Monitoring
+          {navIcon(Gauge)}Monitoring
           {alerts.open > 0 && <span className={`absolute right-[calc(50%-1.1rem)] top-1.5 h-2 w-2 rounded-full ${alerts.critical ? 'bg-rose-500' : 'bg-amber-400'}`} />}
         </NavLink>
       </nav>}

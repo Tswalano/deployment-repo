@@ -13,6 +13,8 @@ import { EnvTab } from './app/EnvTab';
 import { RepoCard } from './app/RepoCard';
 import { ActionDialog, errMsg, Facts, RunningBanner, Section } from './app/shared';
 import { useDialog } from '../components/Dialog';
+import { Database, KeyRound, LayoutDashboard, LucideIcon, Rocket, ScrollText } from 'lucide-react';
+import { smallIcon } from '../components/icons';
 
 type Tab = 'overview' | 'deploy' | 'environment' | 'database' | 'logs';
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -295,7 +297,7 @@ export function AppDetail() {
   if (!data) return <div className="space-y-3"><Skeleton className="h-12 w-72" /><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   const { app, instance } = data;
   const t = appTone(app);
-  const tabs: [Tab, string, boolean][] = [['overview', 'Overview', true], ['deploy', 'Deploy', true], ['environment', 'Environment', op], ['database', 'Database', !!app.db], ['logs', 'Logs', true]];
+  const tabs: [Tab, string, boolean, LucideIcon][] = [['overview', 'Overview', true, LayoutDashboard], ['deploy', 'Deploy', true, Rocket], ['environment', 'Environment', op, KeyRound], ['database', 'Database', !!app.db, Database], ['logs', 'Logs', true, ScrollText]];
 
   return (
     <div>
@@ -328,12 +330,12 @@ export function AppDetail() {
       {detailError && !detail && <div className="mb-5"><Alert tone="warn">Details unavailable: {detailError}</Alert></div>}
 
       <nav aria-label="App sections" className="mb-5 flex gap-1 overflow-x-auto border-b border-ink-700">
-        {tabs.filter(([, , show]) => show).map(([id, label]) => (
+        {tabs.filter(([, , show]) => show).map(([id, label, , I]) => (
           <button key={id} onClick={() => setSearch(id === 'overview' ? {} : { tab: id }, { replace: true })}
-                  className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${id === 'logs' || id === 'environment' ? 'hidden md:block' : ''} ${tab === id
+                  className={`-mb-px items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors ${id === 'logs' || id === 'environment' ? 'hidden md:flex' : 'flex'} ${tab === id
                     ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
                   aria-current={tab === id ? 'page' : undefined}>
-            {label}{id === 'deploy' && detail?.git.behind ? <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-2xs text-amber-300">{detail.git.behind}</span> : null}
+            {smallIcon(I)}{label}{id === 'deploy' && detail?.git.behind ? <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-2xs text-amber-300">{detail.git.behind}</span> : null}
           </button>
         ))}
       </nav>

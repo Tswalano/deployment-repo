@@ -1,6 +1,7 @@
 import { Fragment, KeyboardEvent, PointerEvent as RPointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { api, ApiError, askAssistant, AssistantAction, AssistantStatus, AssistantTurn } from '../api';
 import { ActionCard } from './ActionCard';
+import { Maximize2, Minimize2, Minus, Sparkles, X } from 'lucide-react';
 
 /** "Ask Ops Console": a side panel that answers questions about the workspace (read-only). */
 
@@ -34,19 +35,7 @@ function Markdown({ text }: { text: string }) {
 }
 
 const SUGGESTIONS = ['Are all my apps healthy?', 'Did any deploy fail this week?', 'When was the last backup of each database?', 'Which server is closest to running out of disk?', "What's the AWS bill so far this month?"];
-const SparkIcon = ({ className = 'h-4 w-4' }: { className?: string }) => (
-  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" /><circle cx="12" cy="12" r="3" />
-  </svg>
-);
-
-export function AskButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="flex items-center gap-1.5 rounded-lg border border-ink-600 px-2.5 py-1.5 text-sm text-slate-300 hover:border-ink-500 hover:text-slate-100" title="Ask Ops Console about this workspace">
-      <SparkIcon /><span className="hidden sm:inline">Ask</span>
-    </button>
-  );
-}
+const SparkIcon = ({ className = 'h-4 w-4' }: { className?: string }) => <Sparkles className={className} strokeWidth={1.75} aria-hidden />;
 
 export function AskPanel({ open, signal = 0, onOpen, onClose }: { open: boolean; signal?: number; onOpen: () => void; onClose: () => void }) {
   const [status, setStatus] = useState<AssistantStatus | null>(null);
@@ -154,9 +143,9 @@ export function AskPanel({ open, signal = 0, onOpen, onClose }: { open: boolean;
             <p className="truncate text-2xs text-slate-500">Answers about this workspace; changes only after you confirm{status?.providerName ? ` · ${status.providerName}` : ''}</p>
           </div>
           {turns.length > 0 && <button className="btn-ghost px-2 py-1 text-xs" onClick={newChat}>New chat</button>}
-          {wide && <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setLarge((l) => !l)} aria-label={large ? 'Smaller' : 'Larger'} title={large ? 'Smaller' : 'Larger'}>{large ? '⤡' : '⤢'}</button>}
-          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setMinimised(true)} aria-label="Minimise" title="Minimise">–</button>
-          <button className="btn-ghost px-2 py-1 text-xs" onClick={onClose} aria-label="Close" title="Close">✕</button>
+          {wide && <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setLarge((l) => !l)} aria-label={large ? 'Smaller' : 'Larger'} title={large ? 'Smaller' : 'Larger'}>{large ? <Minimize2 className="h-3.5 w-3.5" aria-hidden /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden />}</button>}
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setMinimised(true)} aria-label="Minimise" title="Minimise"><Minus className="h-3.5 w-3.5" aria-hidden /></button>
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={onClose} aria-label="Close" title="Close"><X className="h-3.5 w-3.5" aria-hidden /></button>
         </header>
 
         <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm leading-6 text-slate-300">
