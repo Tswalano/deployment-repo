@@ -8,6 +8,8 @@
   --ink-700: 30 36 46;
   --ink-600: 42 50 64;
   --ink-500: 58 68 86;
+  --ask-bg: 31 37 48;        /* the floating chat window: lighter than the page so it stands apart */
+  --ask-field: 20 24 31;
   --slate-100: 241 245 249;
   --slate-200: 226 232 240;
   --slate-300: 203 213 225;
@@ -52,6 +54,8 @@
   --ink-700: 225 229 235;
   --ink-600: 203 210 220;
   --ink-500: 168 178 192;
+  --ask-bg: 255 255 255;
+  --ask-field: 245 246 248;
   --slate-100: 15 23 42;
   --slate-200: 30 41 59;
   --slate-300: 51 65 85;

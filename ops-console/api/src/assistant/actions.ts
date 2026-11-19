@@ -91,7 +91,7 @@ export async function propose(kind: ActionKind, input: Record<string, unknown>, 
         proposed: true, actionId: action.id, summary, note, expiresAt: action.expiresAt,
         nextStep: ctx.source === 'chat'
             ? 'Nothing has happened yet. A confirmation card is shown to the person in this chat; it runs only if they confirm. Tell them briefly what will happen.'
-            : `Nothing has happened yet. The person must confirm it in the console within 15 minutes (it is waiting at the top of every page${action.link ? ' and on the app\'s page' : ''}).`,
+            : 'Nothing has happened yet. The person must confirm it in the console within 15 minutes, under AI Console → Proposals.',
     };
 }
 

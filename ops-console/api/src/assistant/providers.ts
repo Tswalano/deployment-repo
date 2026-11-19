@@ -119,7 +119,7 @@ const MAX_TURNS = 8;   // tool round trips per question
 export async function runAnthropic(c: RunCtx): Promise<void> {
     try { await anthropicTurns(c); } catch (err) {
         if (!(err instanceof Anthropic.APIError)) throw err;
-        if (err.status === 401 || err.status === 403) throw new DeployError('Anthropic rejected the workspace\'s API key (AI → Ask Ops Console).', 409);
+        if (err.status === 401 || err.status === 403) throw new DeployError('Anthropic rejected the workspace\'s API key (AI Console → Ask Ops Console).', 409);
         if (err.status === 429) throw new DeployError('Anthropic is rate-limiting the workspace\'s key, or its credit has run out.', 409);
         if (err.status === 400 || err.status === 404) throw new DeployError(`Anthropic couldn't answer (${err.message.slice(0, 160)}).`, 409);
         throw new DeployError('Anthropic is busy or unavailable right now. Try again in a moment.', 409);
@@ -175,7 +175,7 @@ export async function runOpenAI(c: RunCtx): Promise<void> {
         });
         if (!res.ok || !res.body) {
             const detail = await res.json().catch(() => ({})) as { error?: { message?: string } };
-            if (res.status === 401 || res.status === 403) throw new DeployError('OpenAI rejected the workspace\'s API key (AI → Ask Ops Console).', 409);
+            if (res.status === 401 || res.status === 403) throw new DeployError('OpenAI rejected the workspace\'s API key (AI Console → Ask Ops Console).', 409);
             if (res.status === 429) throw new DeployError('OpenAI is rate-limiting the workspace\'s key, or its credit has run out.', 409);
             throw new DeployError(`OpenAI couldn't answer (${detail.error?.message?.slice(0, 160) ?? `HTTP ${res.status}`}).`, 409);
         }

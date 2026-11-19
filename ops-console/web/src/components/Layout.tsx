@@ -7,7 +7,7 @@ import { useTheme } from '../theme';
 import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
 import { useDialog } from './Dialog';
-import { AskButton, AskPanel } from './AskPanel';
+import { AskPanel } from './AskPanel';
 
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
 const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/callback', '/billing', '/billing/return'];
@@ -22,7 +22,7 @@ const Icon = ({ d }: { d: string }) => (
 const TABS: Tab[] = [
   { to: '/', label: 'Overview', end: true, mobile: true, icon: <Icon d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" /> },
   { to: '/instances', label: 'Instances', mobile: true, icon: <Icon d="M4 6h16M4 12h16M4 18h16M7 6v0M7 12v0M7 18v0" /> },
-  { to: '/ai', label: 'AI', noDemo: true, icon: <Icon d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" /> },
+  { to: '/ai', label: 'AI Console', noDemo: true, icon: <Icon d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" /> },
   { to: '/alerts', label: 'Alerts', group: 'Monitoring', icon: <Icon d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /> },
   { to: '/activity', label: 'Activity', group: 'Monitoring', icon: <Icon d="M3 12h4l3-8 4 16 3-8h4" /> },
   { to: '/backups', label: 'Backups', group: 'Operations', icon: <Icon d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /> },
@@ -177,12 +177,12 @@ export function Layout() {
   const [askSignal, setAskSignal] = useState(0);   // the header button also restores a minimised window
   // shown once the workspace has a provider key, and to admins (who can set one up from the panel)
   useEffect(() => { if (user && !user.isDemo) api.assistant().then((s) => setAskOn(s.enabled || !!s.canConfigure)).catch(() => setAskOn(false)); }, [user]);
-  useEffect(() => {   // the AI page's "Open the chat"
+  useEffect(() => {   // the AI Console's "Open the chat"
     const on = () => { setAskOpen(true); setAskSignal((n) => n + 1); };
     window.addEventListener('ops:open-ask', on);
     return () => window.removeEventListener('ops:open-ask', on);
   }, []);
-  // proposals from AI waiting for this person's confirmation (badge on the AI link)
+  // proposals from AI waiting for this person's confirmation (badge on the AI Console link)
   const [waiting, setWaiting] = useState(0);
   useEffect(() => {
     if (!user || user.isDemo || (site.multiTenant && user.workspaceId == null)) return;
@@ -277,7 +277,6 @@ export function Layout() {
           <div className="ml-auto flex items-center gap-2">
             {setup && <NavLink to="/team" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Team</NavLink>}
             {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Billing</NavLink>}
-            {askOn && !setup && <AskButton onClick={() => { setAskOpen(true); setAskSignal((n) => n + 1); }} />}
             <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
         </div>
@@ -300,7 +299,7 @@ export function Layout() {
         {setup && pathname === '/' ? <Onboarding /> : <Outlet />}
       </main>
       <Footer setup={setup} />
-      {askOn && <AskPanel open={askOpen} signal={askSignal} onClose={() => setAskOpen(false)} />}
+      {askOn && !setup && <AskPanel open={askOpen} signal={askSignal} onOpen={() => { setAskOpen(true); setAskSignal((n) => n + 1); }} onClose={() => setAskOpen(false)} />}
 
       {/* Phones: only the views that make sense on a small screen */}
       {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">

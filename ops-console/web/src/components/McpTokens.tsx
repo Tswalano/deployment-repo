@@ -4,7 +4,7 @@ import { useDialog } from './Dialog';
 import { ago, Alert } from './ui';
 
 /**
- * AI → MCP server: connect Claude Code, Claude Desktop, Cursor or VS Code to this workspace with a personal
+ * AI Console → MCP server: connect Claude Code, Claude Desktop, Cursor or VS Code to this workspace with a personal
  * access token. The token is shown once; the tools get the owner's role, read-only.
  */
 type Client = 'claude-code' | 'claude-desktop' | 'json';
@@ -140,8 +140,29 @@ export function McpTokens() {
       </div>
       {view && (
         <details className="text-sm text-slate-400">
-          <summary className="cursor-pointer text-slate-300">What AI tools can read ({view.tools.length} read-only tools)</summary>
-          <ul className="mt-2 space-y-1">{view.tools.map((t) => <li key={t.name}><code className="font-mono text-xs text-slate-200">{t.name}</code>: {t.description}</li>)}</ul>
+          <summary className="cursor-pointer text-slate-300">
+            What AI tools can do ({view.tools.filter((t) => !t.proposes).length} lookups, {view.tools.filter((t) => t.proposes).length} proposals)
+          </summary>
+          <div className="mt-3 overflow-x-auto rounded-lg border border-ink-700">
+            <table className="w-full min-w-[36rem] text-left text-sm">
+              <thead className="bg-ink-850 text-2xs uppercase tracking-wider text-slate-500">
+                <tr><th className="px-3 py-2 font-semibold">Tool</th><th className="px-3 py-2 font-semibold">Type</th><th className="px-3 py-2 font-semibold">What it does</th></tr>
+              </thead>
+              <tbody className="divide-y divide-ink-700">
+                {view.tools.map((t) => (
+                  <tr key={t.name} className="align-top">
+                    <td className="whitespace-nowrap px-3 py-2"><code className="font-mono text-xs text-slate-200">{t.name}</code></td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      {t.proposes
+                        ? <span className="rounded border border-amber-400/40 px-1.5 py-0.5 text-2xs text-amber-300">Proposal: you confirm</span>
+                        : <span className="rounded border border-ink-600 px-1.5 py-0.5 text-2xs text-slate-400">Read-only</span>}
+                    </td>
+                    <td className="px-3 py-2 text-slate-400">{t.description.split(' This only proposes it')[0]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </details>
       )}
     </div>

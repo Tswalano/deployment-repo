@@ -70,7 +70,7 @@ export function OAuthConsent() {
                 ) : <Alert>This account isn&rsquo;t a member of any active workspace.</Alert>
               )}
               <p className="text-xs text-slate-500">
-                After approving, the browser returns to <b className="text-slate-300">{info.client.redirectHost}</b>. The connection lasts 30 days while it&rsquo;s used, and can be ended any time under AI → MCP server. Data it reads goes to {info.client.name}&rsquo;s provider.
+                After approving, the browser returns to <b className="text-slate-300">{info.client.redirectHost}</b>. The connection lasts 30 days while it&rsquo;s used, and can be ended any time under AI Console → MCP server. Data it reads goes to {info.client.name}&rsquo;s provider.
               </p>
               <div className="flex gap-2">
                 <button className="btn-primary flex-1" disabled={busy || (site.multiTenant && !ws)} onClick={() => void decide(true)}>{busy ? 'Connecting…' : 'Approve'}</button>
