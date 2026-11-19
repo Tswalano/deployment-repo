@@ -1122,3 +1122,73 @@ test('assistant: the workspace\'s own key (Claude or ChatGPT); streamed answers 
         prov.setKeyStore(null); prov.setAnthropicFactory(null); prov.setOpenAIFetch(null);
     }
 });
+
+test('mcp: personal tokens (shown once, hashed); /mcp speaks MCP with the read-only tools in the token owner\'s workspace and role; revoked, foreign-origin, demo and bad tokens refused', async () => {
+    const { db, asSystem, withWorkspace } = dist('db');
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
+    const view = (await a.get('/api/mcp-tokens')).json;
+    assert.match(view.url, /\/mcp$/);
+    assert.ok(view.tools.some((t) => t.name === 'list_servers'));
+    assert.equal((await a.post('/api/mcp-tokens', { name: 'x' })).status, 400);
+    const created = await a.post('/api/mcp-tokens', { name: 'Claude Desktop', days: 30 });
+    assert.equal(created.status, 200);
+    const token = created.json.token;
+    assert.match(token, /^opc_[A-Za-z0-9_-]{40}$/);
+    assert.ok(created.json.row.expiresAt);
+    const { rows: stored } = await asSystem(() => db().query('SELECT token_hash, prefix FROM mcp_tokens WHERE id = $1', [created.json.row.id]));
+    assert.notEqual(stored[0].token_hash, token, 'only a hash is stored');
+    assert.ok(!JSON.stringify((await a.get('/api/mcp-tokens')).json).includes(token), 'the token is never listed again');
+
+    const rpc = async (body, headers = {}) => {
+        const r = await app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${token}`, ...headers }, body: JSON.stringify(body) });
+        return { status: r.status, json: r.status === 202 ? null : await r.json(), headers: r.headers };
+    };
+    // the MCP handshake
+    const init = await rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } } });
+    assert.equal(init.status, 200);
+    assert.equal(init.json.result.protocolVersion, '2025-06-18');
+    assert.deepEqual(init.json.result.capabilities, { tools: { listChanged: false } });
+    assert.match(init.json.result.instructions, /Read-only/);
+    assert.equal((await rpc({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202);
+    const list = await rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'mcp-protocol-version': '2025-06-18' });
+    const tools = list.json.result.tools;
+    assert.ok(tools.length >= 6 && tools.every((t) => t.inputSchema && t.annotations.readOnlyHint === true));
+    assert.ok(!tools.some((t) => /deploy_app|restart|delete/.test(t.name)), 'read-only tools only');
+    // a call runs in Alice's workspace only
+    const call = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_servers', arguments: {} } });
+    assert.equal(call.json.result.isError, false);
+    const mine = (await withWorkspace(wsA, () => db().query('SELECT name FROM instances'))).rows.map((r) => r.name).sort();
+    assert.deepEqual(JSON.parse(call.json.result.content[0].text).result.map((s) => s.name).sort(), mine);
+    assert.equal((await rpc({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'get_server', arguments: { server_id: 'drop table' } } })).json.result.isError, true);
+    assert.equal((await rpc({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'restart_everything', arguments: {} } })).json.error.code, -32602);
+    assert.equal((await rpc({ jsonrpc: '2.0', id: 6, method: 'nope' })).json.error.code, -32601);
+    const { rows: [used] } = await asSystem(() => db().query('SELECT last_used_at FROM mcp_tokens WHERE id = $1', [created.json.row.id]));
+    assert.ok(used.last_used_at);
+    const { rows: audited } = await withWorkspace(wsA, () => db().query("SELECT target FROM audit_log WHERE action = 'mcp.tool' ORDER BY id DESC LIMIT 1"));
+    assert.equal(audited[0].target, 'get_server');
+
+    // refused: no token, a wrong token, a foreign browser origin, GET, an unknown protocol version
+    const noAuth = await app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"ping"}' });
+    assert.equal(noAuth.status, 401);
+    assert.match(noAuth.headers.get('www-authenticate'), /^Bearer /);
+    assert.equal((await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' }, { authorization: 'Bearer opc_' + 'A'.repeat(40) })).status, 401);
+    assert.equal((await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' }, { origin: 'https://evil.example' })).status, 403);
+    assert.equal((await app.request('/mcp', { headers: { authorization: `Bearer ${token}` } })).status, 405);
+    assert.equal((await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' }, { 'mcp-protocol-version': '1999-01-01' })).status, 400);
+
+    // another workspace's person can't see or revoke Alice's token; the demo can't make tokens
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+    assert.ok(!(await b.get('/api/mcp-tokens?all=1')).json.tokens.some((t) => t.id === created.json.row.id));
+    assert.equal((await b.del(`/api/mcp-tokens/${created.json.row.id}`)).status, 404);
+    const d = client();
+    assert.equal((await d.post('/api/auth/demo')).status, 200);
+    assert.equal((await d.post('/api/mcp-tokens', { name: 'demo token' })).status, 403);
+
+    // revoked: refused at once
+    assert.equal((await a.del(`/api/mcp-tokens/${created.json.row.id}`)).status, 200);
+    assert.equal((await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' })).status, 401);
+    assert.equal((await a.get('/api/mcp-tokens')).json.tokens.length, 0);
+});

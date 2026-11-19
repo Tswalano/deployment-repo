@@ -131,6 +131,17 @@ const ARTICLES: Article[] = [
       </UL>
       <P>Questions and the data looked up to answer them are processed by the chosen provider (see the Privacy Policy). The assistant isn&rsquo;t available in the read-only demo.</P>
     </>) },
+  { slug: 'mcp', group: 'Operate', title: 'AI tools (MCP)', summary: 'Connect Claude Code, Claude Desktop, Cursor or VS Code to the workspace.',
+    body: () => (<>
+      <P>The workspace has its own MCP server (Model Context Protocol), so AI tools can look up servers, apps, deploys, alerts, uptime, backups and AWS costs while helping with work elsewhere. It uses the same read-only tools as Ask Ops Console, and the AI tool&rsquo;s own subscription: no API key is needed in the console.</P>
+      <UL>
+        <li><b>Create a token:</b> <b>Account → AI tools (MCP)</b>, name it after where it will be used and choose an expiry. Copy it straight away: it&rsquo;s shown once. Ready-to-paste setup is shown for Claude Code, Claude Desktop and editors such as Cursor and VS Code.</li>
+        <li><b>The token owner&rsquo;s access:</b> one workspace, the owner&rsquo;s role (costs only for deployers and admins), read-only. It stops working at once when revoked, when it expires, or when the owner is disabled or leaves the workspace.</li>
+        <li><b>Visibility:</b> each token shows when it was last used; admins can list and revoke everyone&rsquo;s tokens. Each tool call is recorded in the audit log.</li>
+        <li><b>ChatGPT and claude.ai connectors</b> need sign-in with OAuth instead of a token; that is planned.</li>
+      </UL>
+      <P>Data the AI tool reads goes to that tool&rsquo;s provider under the person&rsquo;s own account with them.</P>
+    </>) },
   { slug: 'access', group: 'Operate', title: 'Terminal and SSH access', summary: 'Secure access to servers.',
     body: () => (<>
       <H>Browser terminal</H>

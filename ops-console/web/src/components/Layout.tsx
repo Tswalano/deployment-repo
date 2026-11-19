@@ -173,6 +173,7 @@ export function Layout() {
   // "Ask Ops Console" (never in the demo)
   const [askOn, setAskOn] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
+  const [askSignal, setAskSignal] = useState(0);   // the header button also restores a minimised window
   // shown once the workspace has a provider key, and to admins (who can set one up from the panel)
   useEffect(() => { if (user && !user.isDemo) api.assistant().then((s) => setAskOn(s.enabled || !!s.canConfigure)).catch(() => setAskOn(false)); }, [user]);
   const [resent, setResent] = useState(false);
@@ -259,7 +260,7 @@ export function Layout() {
           <div className="ml-auto flex items-center gap-2">
             {setup && <NavLink to="/team" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Team</NavLink>}
             {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Billing</NavLink>}
-            {askOn && !setup && <AskButton onClick={() => setAskOpen(true)} />}
+            {askOn && !setup && <AskButton onClick={() => { setAskOpen(true); setAskSignal((n) => n + 1); }} />}
             <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
         </div>
@@ -282,7 +283,7 @@ export function Layout() {
         {setup && pathname === '/' ? <Onboarding /> : <Outlet />}
       </main>
       <Footer setup={setup} />
-      {askOn && <AskPanel open={askOpen} onClose={() => setAskOpen(false)} />}
+      {askOn && <AskPanel open={askOpen} signal={askSignal} onClose={() => setAskOpen(false)} />}
 
       {/* Phones: only the views that make sense on a small screen */}
       {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">

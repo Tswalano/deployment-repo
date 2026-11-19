@@ -84,6 +84,7 @@ assistant.post('/ask', rateLimit(20, 10 * 60_000, (c) => `assistant:${c.get('use
     const b = await c.req.json().catch(() => ({})) as { question?: unknown; conversationId?: unknown };
     const ws = wsOf(c)!;
     const { rows: [w] } = await db().query<{ name: string }>('SELECT name FROM workspaces WHERE id = $1', [ws]);
+    c.header('X-Accel-Buffering', 'no');   // nginx: pass each event on at once instead of buffering the answer
     return streamSSE(c, async (stream) => {
         const emit = (e: { type: string }) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
         try {

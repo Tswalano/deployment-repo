@@ -27,6 +27,8 @@ import { account, teamRoutes, workspaces } from './routes/accounts';
 import platformRoutes from './routes/platform';
 import { requestMetrics } from './consolehealth';
 import assistantRoutes from './routes/assistant';
+import { mcp } from './mcp';
+import mcpTokenRoutes from './routes/mcptokens';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
@@ -47,6 +49,8 @@ export function createApp() {
         return c.json(dryRun ? { status: 'ok', mode: 'local-dry-run' } : { status: 'ok' });
     });
 
+    // the workspace MCP server: bearer tokens, no cookies (so outside /api and its session/CSRF checks)
+    app.route('/mcp', mcp);
     app.use('/api/*', requestMetrics);
     app.use('/api/*', loadSession, checkOrigin, billingGuard);
     app.route('/api/auth', auth);
@@ -72,6 +76,7 @@ export function createApp() {
     app.route('/api/billing', billingRoutes);
     app.route('/api/platform', platformRoutes);
     app.route('/api/assistant', assistantRoutes);
+    app.route('/api/mcp-tokens', mcpTokenRoutes);
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);
     app.route('/api/backups', backups);
