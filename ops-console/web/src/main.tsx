@@ -33,6 +33,7 @@ import './index.css';
 import { Platform, PlatformAuditPage, PlatformConsolePage, PlatformWorkspacePage } from './pages/Platform';
 import { DialogProvider } from './components/Dialog';
 import { Demo } from './pages/Demo';
+import { OAuthConsent } from './pages/OAuthConsent';
 
 function Protected({ children, role }: { children: JSX.Element; role?: Role }) {
   const { user, loading, site } = useAuth();
@@ -62,6 +63,7 @@ function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify" element={<VerifyEmail />} />
       <Route path="/invite" element={<AcceptInvite />} />
+      <Route path="/oauth/authorize" element={<Protected><OAuthConsent /></Protected>} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route index element={<Overview />} />
         <Route path="instances" element={<Instances />} />
