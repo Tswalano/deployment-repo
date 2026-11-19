@@ -57,7 +57,7 @@ export function McpTokens() {
     finally { setBusy(false); }
   }
   async function revoke(t: McpToken) {
-    if (!(await dialog.confirm({ title: `Revoke “${t.name}”?`, body: 'Any AI tool using this token loses access immediately.', confirmLabel: 'Revoke', danger: true }))) return;
+    if (!(await dialog.confirm({ title: `${t.kind === 'oauth' ? 'Disconnect' : 'Revoke'} “${t.name}”?`, body: t.kind === 'oauth' ? 'The app loses access immediately and must be approved again to reconnect.' : 'Any AI tool using this token loses access immediately.', confirmLabel: 'Revoke', danger: true }))) return;
     try { await api.revokeMcpToken(t.id); if (created?.row.id === t.id) setCreated(null); await load(); setMsg({ tone: 'ok', text: `“${t.name}” revoked.` }); }
     catch (e) { setMsg({ tone: 'bad', text: e instanceof ApiError ? e.message : 'Revoking failed.' }); }
   }
@@ -73,6 +73,10 @@ export function McpTokens() {
         {url && <Copy text={url} />}
       </div>
 
+      <p className="text-sm text-slate-400">
+        <b className="text-slate-200">ChatGPT, claude.ai and Claude Desktop connectors:</b> add a custom connector with the address above; the app sends you here to sign in and approve, with no token needed.
+        For Claude Code, Cursor, VS Code or scripts, create a token below.
+      </p>
       {created ? (
         <div className="space-y-3 rounded-lg border border-emerald-500/30 p-4">
           <p className="text-sm text-slate-200"><b>Token “{created.row.name}” created.</b> Copy it now: it isn&rsquo;t shown again.</p>
@@ -90,7 +94,7 @@ export function McpTokens() {
             <pre className="overflow-x-auto rounded-lg bg-ink-950 p-3 pr-16 font-mono text-xs leading-5 text-slate-200">{shown}</pre>
             <div className="absolute right-2 top-2"><Copy text={shown!} /></div>
           </div>
-          <p className="text-xs text-slate-500">{HINT[client]} ChatGPT and claude.ai connectors need sign-in (OAuth), which is coming next.</p>
+          <p className="text-xs text-slate-500">{HINT[client]}</p>
           <button type="button" className="btn-ghost text-xs" onClick={() => setCreated(null)}>Done</button>
         </div>
       ) : (
@@ -111,7 +115,7 @@ export function McpTokens() {
 
       <div>
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">{all ? 'Everyone\'s tokens in this workspace' : 'Your tokens'}</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">{all ? 'Everyone\'s tokens and connected apps in this workspace' : 'Your tokens and connected apps'}</h3>
           {view?.canSeeAll && (
             <label className="flex items-center gap-1.5 text-xs text-slate-400">
               <input type="checkbox" checked={all} onChange={(e) => { setAll(e.target.checked); void load(e.target.checked); }} /> Show everyone&rsquo;s
@@ -123,12 +127,12 @@ export function McpTokens() {
             {view?.tokens.map((t) => (
               <li key={t.id} className="flex items-center gap-3 px-3 py-2 text-sm">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-slate-200">{t.name} <code className="ml-1 font-mono text-2xs text-slate-500">{t.prefix}…</code>{all && <span className="text-slate-500"> · {t.username}</span>}</div>
+                  <div className="truncate text-slate-200">{t.name} {t.kind === 'oauth' ? <span className="ml-1 rounded border border-ink-600 px-1 text-2xs text-slate-400">connected app</span> : <code className="ml-1 font-mono text-2xs text-slate-500">{t.prefix}…</code>}{all && <span className="text-slate-500"> · {t.username}</span>}</div>
                   <div className="text-2xs text-slate-500">
-                    Created {ago(t.createdAt)} · {t.lastUsedAt ? `last used ${ago(t.lastUsedAt)}` : 'never used'} · {t.expiresAt ? `expires ${new Date(t.expiresAt).toLocaleDateString()}` : 'no expiry'}
+                    {t.kind === 'oauth' ? 'Connected' : 'Created'} {ago(t.createdAt)} · {t.lastUsedAt ? `last used ${ago(t.lastUsedAt)}` : 'never used'} · {t.expiresAt ? `${t.kind === 'oauth' ? 'renews while used, until' : 'expires'} ${new Date(t.expiresAt).toLocaleDateString()}` : 'no expiry'}
                   </div>
                 </div>
-                <button type="button" className="btn-ghost px-2 py-1 text-xs text-rose-300" onClick={() => void revoke(t)}>Revoke</button>
+                <button type="button" className="btn-ghost px-2 py-1 text-xs text-rose-300" onClick={() => void revoke(t)}>{t.kind === 'oauth' ? 'Disconnect' : 'Revoke'}</button>
               </li>
             ))}
           </ul>

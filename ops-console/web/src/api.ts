@@ -308,7 +308,7 @@ export interface AwsConnectionView { connection: AwsConnection; principal?: stri
 export interface AwsServer { id: string; name: string | null; state: string; type: string; az: string; publicIp: string | null; platform: string; managedTag: boolean; instanceProfile: string | null; ssmOnline: boolean; linux: boolean; added: boolean }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public code?: string) {
+  constructor(public status: number, message: string, public code?: string, public redirect?: string) {
     super(message);
   }
 }
@@ -321,7 +321,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error || `Request failed (${res.status})`, (data as { code?: string }).code);
+  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error || `Request failed (${res.status})`, (data as { code?: string }).code, (data as { redirect?: string }).redirect);
   return data as T;
 }
 
@@ -355,11 +355,13 @@ export async function askAssistant(question: string, conversationId: string | nu
   }
 }
 
-export interface McpToken { id: number; name: string; prefix: string; userId: number; username: string; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; lastUsedIp: string | null }
+export interface McpToken { id: number; kind: 'pat' | 'oauth'; name: string; prefix: string; userId: number; username: string; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; lastUsedIp: string | null }
 export interface McpView { url: string; tools: { name: string; description: string }[]; tokens: McpToken[]; canSeeAll: boolean }
 
 export const api = {
   assistant: () => call<AssistantStatus>('GET', '/api/assistant'),
+  oauthCheck: (p: Record<string, string | undefined>) => call<{ client: { name: string; uri: string | null; redirectHost: string }; workspaces: { id: number; name: string; role: string }[]; current: number | null; scope: string }>('POST', '/api/oauth/check', p),
+  oauthDecide: (b: Record<string, unknown>) => call<{ redirect: string }>('POST', '/api/oauth/decide', b),
   mcpTokens: (all = false) => call<McpView>('GET', `/api/mcp-tokens${all ? '?all=1' : ''}`),
   createMcpToken: (name: string, days: number | null) => call<{ token: string; row: McpToken }>('POST', '/api/mcp-tokens', { name, days }),
   revokeMcpToken: (id: number) => call<{ ok: true }>('DELETE', `/api/mcp-tokens/${id}`),

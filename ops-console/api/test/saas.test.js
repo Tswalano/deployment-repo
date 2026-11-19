@@ -1192,3 +1192,108 @@ test('mcp: personal tokens (shown once, hashed); /mcp speaks MCP with the read-o
     assert.equal((await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' })).status, 401);
     assert.equal((await a.get('/api/mcp-tokens')).json.tokens.length, 0);
 });
+
+test('mcp oauth: discovery, client registration, approval with PKCE, single-use codes, hourly access tokens on /mcp, rotating refresh tokens (reuse ends the grant), revocation; bad requests refused', async () => {
+    const { createHash, randomBytes } = require('crypto');
+    const { db, asSystem } = dist('db');
+    const form = (o) => new URLSearchParams(o).toString();
+    const post = (path, body, headers = {}) => app.request(path, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body });
+    // discovery: /mcp's 401 points to the resource metadata, which points to the authorization server
+    const r401 = await app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"ping"}' });
+    assert.equal(r401.status, 401);
+    const rm = /resource_metadata="([^"]+)"/.exec(r401.headers.get('www-authenticate'))[1];
+    const prm = await (await app.request(new URL(rm).pathname)).json();
+    assert.ok(prm.resource.endsWith('/mcp'));
+    const asm = await (await app.request('/.well-known/oauth-authorization-server')).json();
+    assert.equal(asm.issuer, prm.authorization_servers[0]);
+    assert.deepEqual(asm.code_challenge_methods_supported, ['S256']);
+
+    // dynamic registration: https or localhost redirects only
+    assert.equal((await app.request('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ redirect_uris: ['http://evil.example/cb'] }) })).status, 400);
+    const reg = await app.request('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'Test Connector', redirect_uris: ['https://connector.example/callback'], token_endpoint_auth_method: 'none' }) });
+    assert.equal(reg.status, 201);
+    const cl = await reg.json();
+    assert.match(cl.client_id, /^ocl_/);
+    assert.equal(cl.client_secret, undefined);
+
+    const verifier = randomBytes(32).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    const authz = { client_id: cl.client_id, redirect_uri: 'https://connector.example/callback', response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', scope: 'mcp:read', state: 'st-1', resource: prm.resource };
+
+    const a = client();
+    assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+    const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
+    // the approval page's checks
+    const chk = await a.post('/api/oauth/check', authz);
+    assert.equal(chk.status, 200);
+    assert.equal(chk.json.client.name, 'Test Connector');
+    assert.equal(chk.json.client.redirectHost, 'connector.example');
+    assert.ok(chk.json.workspaces.some((w) => w.id === wsA));
+    assert.equal((await a.post('/api/oauth/check', { ...authz, redirect_uri: 'https://evil.example/cb' })).status, 400, 'unregistered redirect: shown, never redirected');
+    const noPkce = await a.post('/api/oauth/check', { ...authz, code_challenge_method: 'plain' });
+    assert.equal(noPkce.status, 400);
+    assert.match(noPkce.json.redirect, /^https:\/\/connector\.example\/callback\?error=invalid_request/);
+    // declining sends the app access_denied
+    const no = await a.post('/api/oauth/decide', { ...authz, approve: false });
+    assert.match(no.json.redirect, /error=access_denied.*state=st-1/);
+    // a workspace the person isn't in is refused
+    assert.equal((await a.post('/api/oauth/decide', { ...authz, approve: true, workspaceId: 999999 })).status, 400);
+    const yes = await a.post('/api/oauth/decide', { ...authz, approve: true, workspaceId: wsA });
+    const back = new URL(yes.json.redirect);
+    assert.equal(back.origin + back.pathname, 'https://connector.example/callback');
+    assert.equal(back.searchParams.get('state'), 'st-1');
+    const code = back.searchParams.get('code');
+    // the demo can't approve
+    const d = client();
+    assert.equal((await d.post('/api/auth/demo')).status, 200);
+    assert.equal((await d.post('/api/oauth/decide', { ...authz, approve: true, workspaceId: wsA })).status, 403);
+
+    // token exchange: wrong verifier fails (and the code is then spent); a fresh code with the right verifier works once
+    const tok = (o) => post('/oauth/token', form(o));
+    assert.equal((await tok({ grant_type: 'authorization_code', code, code_verifier: randomBytes(32).toString('base64url'), client_id: cl.client_id, redirect_uri: authz.redirect_uri })).status, 400);
+    const code2 = new URL((await a.post('/api/oauth/decide', { ...authz, approve: true, workspaceId: wsA })).json.redirect).searchParams.get('code');
+    const t1 = await tok({ grant_type: 'authorization_code', code: code2, code_verifier: verifier, client_id: cl.client_id, redirect_uri: authz.redirect_uri, resource: prm.resource });
+    assert.equal(t1.status, 200);
+    assert.equal(t1.headers.get('cache-control'), 'no-store');
+    const g1 = await t1.json();
+    assert.deepEqual([g1.token_type, g1.expires_in, g1.scope], ['Bearer', 3600, 'mcp:read']);
+    assert.equal((await tok({ grant_type: 'authorization_code', code: code2, code_verifier: verifier, client_id: cl.client_id })).status, 400, 'codes are single-use');
+
+    // reuse of the code ended that grant (it may have been stolen); connect once more for the rest of the test
+    assert.equal((await app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${g1.access_token}` }, body: '{"jsonrpc":"2.0","id":1,"method":"ping"}' })).status, 401);
+    const code3 = new URL((await a.post('/api/oauth/decide', { ...authz, approve: true, workspaceId: wsA })).json.redirect).searchParams.get('code');
+    const g = await (await tok({ grant_type: 'authorization_code', code: code3, code_verifier: verifier, client_id: cl.client_id })).json();
+    const call = (token) => app.request('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_servers', arguments: {} } }) });
+    const ok = await call(g.access_token);
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).result.isError, false);
+    // it shows on the Account page as a connected app
+    const listed = (await a.get('/api/mcp-tokens')).json.tokens.find((t) => t.kind === 'oauth');
+    assert.equal(listed.name, 'Test Connector');
+
+    // refresh rotates both tokens; the old access token stops working
+    const r2 = await (await tok({ grant_type: 'refresh_token', refresh_token: g.refresh_token, client_id: cl.client_id })).json();
+    assert.ok(r2.access_token && r2.refresh_token && r2.refresh_token !== g.refresh_token);
+    assert.equal((await call(g.access_token)).status, 401);
+    assert.equal((await call(r2.access_token)).status, 200);
+    // presenting the old refresh token again ends the grant
+    assert.equal((await tok({ grant_type: 'refresh_token', refresh_token: g.refresh_token, client_id: cl.client_id })).status, 400);
+    assert.equal((await call(r2.access_token)).status, 401);
+
+    // another connection, then revoked by the app (RFC 7009) and refused afterwards
+    const code4 = new URL((await a.post('/api/oauth/decide', { ...authz, approve: true, workspaceId: wsA })).json.redirect).searchParams.get('code');
+    const g4 = await (await tok({ grant_type: 'authorization_code', code: code4, code_verifier: verifier, client_id: cl.client_id })).json();
+    assert.equal((await call(g4.access_token)).status, 200);
+    assert.equal((await post('/oauth/revoke', form({ token: g4.refresh_token, client_id: cl.client_id }))).status, 200);
+    assert.equal((await call(g4.access_token)).status, 401);
+    assert.equal((await tok({ grant_type: 'refresh_token', refresh_token: g4.refresh_token, client_id: cl.client_id })).status, 400);
+
+    // an expired access token is refused
+    const code5 = new URL((await a.post('/api/oauth/decide', { ...authz, approve: true, workspaceId: wsA })).json.redirect).searchParams.get('code');
+    const g5 = await (await tok({ grant_type: 'authorization_code', code: code5, code_verifier: verifier, client_id: cl.client_id })).json();
+    await asSystem(() => db().query("UPDATE mcp_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = $1", [createHash('sha256').update(g5.access_token).digest('hex')]));
+    assert.equal((await call(g5.access_token)).status, 401);
+    // unknown client / unsupported grant
+    assert.equal((await tok({ grant_type: 'authorization_code', code: 'x', code_verifier: verifier, client_id: 'ocl_' + 'z'.repeat(24) })).status, 401);
+    assert.equal((await tok({ grant_type: 'password', client_id: cl.client_id })).status, 400);
+});

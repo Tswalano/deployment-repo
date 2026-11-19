@@ -14,6 +14,7 @@ tokens.get('/', async (c) => {
     const all = user.role === 'admin' && c.req.query('all') === '1';
     return c.json({
         url: `${config.publicUrl.replace(/\/$/, '')}/mcp`,
+        oauth: true,
         tools: mcpTools().map((t) => ({ name: t.name, description: t.description })),
         tokens: await listTokens(all ? null : user.id),
         canSeeAll: user.role === 'admin',

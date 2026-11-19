@@ -6,6 +6,7 @@ import { config } from './config';
 import { asSystem, db, withWorkspace } from './db';
 import { DeployError } from './deploys';
 import { clientIp, originAllowed } from './middleware';
+import { resourceMetadataUrl, SCOPE } from './oauth';
 
 /**
  * The workspace MCP server (Model Context Protocol, Streamable HTTP transport, stateless JSON responses) at /mcp.
@@ -17,14 +18,17 @@ const MAX_TOKENS_PER_USER = 10;
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 // ------------------------------------------------------------------ personal access tokens
-export interface TokenRow { id: number; name: string; prefix: string; userId: number; username: string; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; lastUsedIp: string | null }
-const COLS = `t.id, t.name, t.prefix, t.user_id AS "userId", u.username, t.created_at AS "createdAt", t.expires_at AS "expiresAt", t.last_used_at AS "lastUsedAt", t.last_used_ip AS "lastUsedIp"`;
+export interface TokenRow { id: number; kind: 'pat' | 'oauth'; name: string; prefix: string; userId: number; username: string; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; lastUsedIp: string | null }
+// for an OAuth connection the access token renews hourly: the connection lasts as long as its refresh token
+const COLS = `t.id, t.kind, t.name, t.prefix, t.user_id AS "userId", u.username, t.created_at AS "createdAt",
+              CASE WHEN t.kind = 'oauth' THEN t.refresh_expires_at ELSE t.expires_at END AS "expiresAt", t.last_used_at AS "lastUsedAt", t.last_used_ip AS "lastUsedIp"`;
+const LIVE = `t.revoked_at IS NULL AND (CASE WHEN t.kind = 'oauth' THEN t.refresh_expires_at > now() ELSE (t.expires_at IS NULL OR t.expires_at > now()) END)`;
 
 /** Tokens in the current workspace: the person's own, or everyone's (admins). Revoked and expired ones are left out. */
 export async function listTokens(userId: number | null): Promise<TokenRow[]> {
     const { rows } = await db().query<TokenRow>(
         `SELECT ${COLS} FROM mcp_tokens t JOIN users u ON u.id = t.user_id
-          WHERE t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > now()) AND ($1::int IS NULL OR t.user_id = $1)
+          WHERE ${LIVE} AND ($1::int IS NULL OR t.user_id = $1)
           ORDER BY t.created_at DESC`, [userId]);
     return rows;
 }
@@ -32,7 +36,7 @@ export async function createToken(userId: number, name: string, days: number | n
     const clean = name.trim().replace(/\s+/g, ' ').slice(0, 60);
     if (clean.length < 2) throw new DeployError('Name the token (for example "Claude Desktop on my laptop").');
     if (days !== null && (!Number.isInteger(days) || days < 1 || days > 365)) throw new DeployError('Choose an expiry between 1 and 365 days, or none.');
-    const { rows: [n] } = await db().query<{ n: number }>('SELECT count(*)::int AS n FROM mcp_tokens WHERE user_id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())', [userId]);
+    const { rows: [n] } = await db().query<{ n: number }>("SELECT count(*)::int AS n FROM mcp_tokens WHERE user_id = $1 AND kind = 'pat' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())", [userId]);
     if (n.n >= MAX_TOKENS_PER_USER) throw new DeployError(`Each person can have ${MAX_TOKENS_PER_USER} tokens in a workspace. Revoke one first.`, 409);
     const token = `opc_${randomBytes(30).toString('base64url')}`;
     const { rows: [r] } = await db().query<{ id: number }>(
@@ -120,8 +124,9 @@ function limited(tokenId: number): boolean {
     return ++h.count > 120;
 }
 
-const unauthorized = (c: Context, message: string) => {
-    c.header('WWW-Authenticate', `Bearer realm="${config.productName}", error="invalid_token"`);
+const unauthorized = (c: Context, message: string, hadToken: boolean) => {
+    // tells MCP clients where to sign in (OAuth discovery), and that a token was missing or invalid
+    c.header('WWW-Authenticate', `Bearer realm="${config.productName}", resource_metadata="${resourceMetadataUrl()}", scope="${SCOPE}"${hadToken ? ', error="invalid_token"' : ''}`);
     return c.json(rpcError(null, -32001, message), 401);
 };
 
@@ -132,9 +137,9 @@ mcp.post('/', async (c) => {
     if (origin && !originAllowed(origin)) return c.json(rpcError(null, -32000, 'Origin not allowed'), 403);
     const auth = c.req.header('authorization') ?? '';
     const token = /^Bearer\s+(.+)$/i.exec(auth)?.[1]?.trim() ?? '';
-    if (!token) return unauthorized(c, 'An access token is required: create one under Account → AI tools (MCP).');
+    if (!token) return unauthorized(c, 'Sign in (OAuth), or use an access token from Account → AI tools (MCP).', false);
     const caller = await tokenCaller(token);
-    if (!caller) return unauthorized(c, 'This access token is not valid (revoked, expired, or the account no longer has access).');
+    if (!caller) return unauthorized(c, 'This access token is not valid (revoked, expired, or the account no longer has access).', true);
     if (limited(caller.tokenId)) return c.json(rpcError(null, -32000, 'Too many requests: try again in a minute.'), 429);
     const pv = c.req.header('mcp-protocol-version');
     if (pv && !PROTOCOL_VERSIONS.includes(pv)) return c.json(rpcError(null, -32000, `Unsupported MCP-Protocol-Version ${pv}`), 400);
