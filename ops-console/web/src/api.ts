@@ -326,9 +326,12 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 }
 
 // ------------------------------------------------------------------ "Ask Ops Console" (assistant)
-export interface AssistantStatus { enabled: boolean; model?: string; used?: number; limit?: number | null; remaining?: number | null; conversations?: { id: string; title: string; updatedAt: string }[] }
+export type AssistantProvider = 'anthropic' | 'openai';
+export interface AssistantStatus { enabled: boolean; provider?: AssistantProvider | null; providerName?: string | null; model?: string | null; canConfigure?: boolean; conversations?: { id: string; title: string; provider: AssistantProvider; updatedAt: string }[] }
+export interface AssistantSettings { provider: AssistantProvider; model: string; keyLast4: string; updatedBy: string; updatedAt: string }
+export interface AssistantSettingsView { settings: AssistantSettings | null; usage: { questions: number; inputTokens: number; cachedTokens: number; outputTokens: number }; providers: Record<AssistantProvider, string> }
 export interface AssistantTurn { role: 'user' | 'assistant'; text: string; tools?: string[] }
-export type AssistantEvent = { type: 'conversation'; id: string } | { type: 'tool'; label: string } | { type: 'text'; delta: string } | { type: 'done'; remaining: number | null } | { type: 'error'; message: string };
+export type AssistantEvent = { type: 'conversation'; id: string } | { type: 'tool'; label: string } | { type: 'text'; delta: string } | { type: 'done' } | { type: 'error'; message: string };
 /** Ask a question; events stream in as the answer is written (server-sent events over a POST). */
 export async function askAssistant(question: string, conversationId: string | null, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void> {
   const res = await fetch('/api/assistant/ask', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, conversationId }), signal });
@@ -354,6 +357,10 @@ export async function askAssistant(question: string, conversationId: string | nu
 
 export const api = {
   assistant: () => call<AssistantStatus>('GET', '/api/assistant'),
+  assistantSettings: () => call<AssistantSettingsView>('GET', '/api/assistant/settings'),
+  assistantModels: (provider: AssistantProvider, apiKey?: string) => call<{ models: string[]; suggested: string | null }>('POST', '/api/assistant/models', { provider, apiKey }),
+  saveAssistantSettings: (b: { provider: AssistantProvider; model: string; apiKey?: string }) => call<{ settings: AssistantSettings }>('PUT', '/api/assistant/settings', b).then((r) => r.settings),
+  removeAssistantSettings: () => call<{ ok: true }>('DELETE', '/api/assistant/settings'),
   assistantConversation: (id: string) => call<{ id: string; title: string; turns: AssistantTurn[] }>('GET', `/api/assistant/conversations/${encodeURIComponent(id)}`),
   site: () => call<SiteConfig>('GET', '/api/account/config'),
   signup: (b: { name: string; email: string; password: string; workspace: string; username?: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),

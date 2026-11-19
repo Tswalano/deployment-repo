@@ -39,7 +39,7 @@ function client() {
         if (set) cookie = set.split(';')[0];
         return { status: res.status, json: await res.json().catch(() => null) };
     };
-    return { cookieHeader: () => cookie, get: (u) => call('GET', u), post: (u, b) => call('POST', u, b ?? {}), patch: (u, b) => call('PATCH', u, b), del: (u) => call('DELETE', u) };
+    return { cookieHeader: () => cookie, get: (u) => call('GET', u), post: (u, b) => call('POST', u, b ?? {}), patch: (u, b) => call('PATCH', u, b), del: (u) => call('DELETE', u), put: (u, b) => call('PUT', u, b) };
 }
 const tokenFrom = (text, route) => new RegExp(`${route}\\?token=([A-Za-z0-9_-]+)`).exec(text)?.[1];
 
@@ -977,20 +977,38 @@ test("read-only demo in multi-company mode: one click, the demo account's worksp
     assert.equal((await d.post('/api/auth/login', { username: 'demo', password: 'anything-at-all' })).status, 401, 'no password sign-in for the demo account');
 });
 
-test('assistant: streams an answer from read-only tools in the asker\'s workspace only; history kept unchanged; private; not in the demo; monthly limit', async () => {
-    const chat = dist('assistant/chat');
-    const { db, asSystem, withWorkspace } = dist('db');
+test('assistant: the workspace\'s own key (Claude or ChatGPT); streamed answers from read-only tools in the asker\'s workspace; history kept unchanged; private; not in the demo', async () => {
+    const prov = dist('assistant/providers');
+    const { db, withWorkspace } = dist('db');
+    const stored = new Map();
+    prov.setKeyStore({ get: async (r, n) => stored.get(n) ?? null, put: async (r, n, v) => { stored.set(n, v); }, del: async (r, n) => { stored.delete(n); } });
+    // Claude: a stand-in SDK client
     const calls = [];
     let script = [];
-    chat.setAssistantClient({ beta: { messages: { stream: (params) => {
-        calls.push(JSON.parse(JSON.stringify(params)));
-        const msg = script.shift();
-        let textCb = null;
-        return {
-            on(evt, cb) { if (evt === 'text') textCb = cb; return this; },
-            async finalMessage() { for (const b of msg.content) if (b.type === 'text' && textCb) textCb(b.text); return msg; },
-        };
-    } } } });
+    const anthropicKeys = [];
+    prov.setAnthropicFactory((apiKey) => ({
+        models: { list: async function* () { if (apiKey.endsWith('bad')) { const e = new Error('invalid'); throw e; } yield { id: 'claude-opus-5-5' }; yield { id: 'claude-haiku-5-5' }; yield { id: 'claude-3-old' }; } },
+        beta: { messages: { stream: (params) => {
+            anthropicKeys.push(apiKey);
+            calls.push(JSON.parse(JSON.stringify(params)));
+            const msg = script.shift();
+            let textCb = null;
+            return { on(evt, cb) { if (evt === 'text') textCb = cb; return this; },
+                async finalMessage() { for (const b of msg.content) if (b.type === 'text' && textCb) textCb(b.text); return msg; } };
+        } } },
+    }));
+    // OpenAI: a stand-in for /v1/models and the streamed /v1/responses
+    const oaCalls = [];
+    let oaScript = [];
+    prov.setOpenAIFetch(async (url, init) => {
+        const auth = init.headers.authorization;
+        if (auth !== 'Bearer sk-proj-test-openai-key-123456789') return new Response('{"error":{"message":"bad key"}}', { status: 401 });
+        if (url.endsWith('/v1/models')) return Response.json({ object: 'list', data: [{ id: 'gpt-test-1', created: 2 }, { id: 'gpt-test-1-audio', created: 3 }, { id: 'text-embedding-x', created: 1 }] });
+        oaCalls.push(JSON.parse(init.body));
+        const events = oaScript.shift();
+        const body = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('') + 'data: [DONE]\n\n';
+        return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
     const usage = { input_tokens: 1200, output_tokens: 80, cache_read_input_tokens: 3000, cache_creation_input_tokens: 0 };
     const toolTurn = { stop_reason: 'tool_use', usage, content: [
         { type: 'thinking', thinking: '', signature: 'sig-1' },
@@ -1006,59 +1024,101 @@ test('assistant: streams an answer from read-only tools in the asker\'s workspac
         const a = client();
         assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
         const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
-        const st = (await a.get('/api/assistant')).json;
-        assert.deepEqual([st.enabled, st.model, typeof st.remaining], [true, 'claude-opus-5-5', 'number']);
+        const st0 = (await a.get('/api/assistant')).json;
+        assert.deepEqual([st0.enabled, st0.canConfigure], [false, true]);
+        const notSet = await sse(a, { question: 'Hello?' });
+        assert.match(notSet.at(-1).message, /isn't set up/);
+
+        // an admin adds a Claude key: checked against Anthropic; only supported models offered; stored in the workspace's AWS account, never returned
+        const claudeKey = 'sk-ant-api03-' + 'x'.repeat(40);
+        assert.equal((await a.post('/api/assistant/models', { provider: 'anthropic', apiKey: 'not-a-key' })).status, 400);
+        const m = (await a.post('/api/assistant/models', { provider: 'anthropic', apiKey: claudeKey })).json;
+        assert.deepEqual([m.models, m.suggested], [['claude-opus-5-5', 'claude-haiku-5-5'], 'claude-opus-5-5']);
+        assert.equal((await a.put('/api/assistant/settings', { provider: 'anthropic', model: 'claude-3-old', apiKey: claudeKey })).status, 400);
+        const saved = await a.put('/api/assistant/settings', { provider: 'anthropic', model: 'claude-opus-5-5', apiKey: claudeKey });
+        assert.equal(saved.status, 200);
+        assert.equal(saved.json.settings.keyLast4, 'xxxx');
+        assert.equal(stored.get('/apps/ops-console-assistant/API_KEY'), claudeKey);
+        const rawSettings = JSON.stringify((await a.get('/api/assistant/settings')).json);
+        assert.ok(!rawSettings.includes(claudeKey), 'the key is never sent back');
+        const { rows: dbRows } = await withWorkspace(wsA, () => db().query("SELECT value::text AS v FROM settings WHERE key = 'assistant'"));
+        assert.ok(!dbRows[0].v.includes(claudeKey), 'the key is not in the console database');
 
         script = [toolTurn, answer('All **2** servers are running.')];
         const ev = await sse(a, { question: 'Are my servers ok?' });
         assert.deepEqual(ev.map((e) => e.type), ['conversation', 'tool', 'text', 'done']);
         assert.equal(ev[1].label, 'Checked the servers');
+        assert.equal(anthropicKeys.at(-1), claudeKey, 'the workspace\'s own key is used');
         const convId = ev[0].id;
-
-        // the request: Opus 5.5, low effort, server-side fallback, caching, strict read-only tools with eager input streaming
         const first = calls[0];
         assert.deepEqual([first.model, first.output_config.effort, first.fallbacks, first.cache_control.type], ['claude-opus-5-5', 'low', 'default', 'ephemeral']);
-        assert.ok(first.betas.includes('server-side-fallback-2026-07-01'));
         assert.ok(first.tools.length >= 6 && first.tools.every((t) => t.strict === true && t.eager_input_streaming === true));
         assert.ok(!first.tools.some((t) => /deploy_app|restart|delete/.test(t.name)), 'read-only tools only');
-        // the tool ran in Alice's workspace: her servers, never another workspace's
         const result = JSON.parse(calls[1].messages.at(-1).content[0].content);
         const mine = (await withWorkspace(wsA, () => db().query('SELECT name FROM instances'))).rows.map((r) => r.name).sort();
         assert.deepEqual(result.result.map((s) => s.name).sort(), mine);
         assert.ok(result.now);
 
-        // follow-up: the earlier turns go back unchanged (thinking block included), appended to
+        // follow-up: earlier turns go back unchanged (thinking block included)
         script = [answer('Nothing failed today.')];
-        const ev2 = await sse(a, { question: 'Anything failed?', conversationId: convId });
-        assert.equal(ev2.at(-1).type, 'done');
+        assert.equal((await sse(a, { question: 'Anything failed?', conversationId: convId })).at(-1).type, 'done');
         const sent = calls.at(-1).messages;
-        assert.deepEqual(sent.slice(0, 4).map((m) => m.role), ['user', 'assistant', 'user', 'assistant']);
+        assert.deepEqual(sent.slice(0, 4).map((x) => x.role), ['user', 'assistant', 'user', 'assistant']);
         assert.deepEqual(sent[1].content[0], { type: 'thinking', thinking: '', signature: 'sig-1' });
         const conv = (await a.get(`/api/assistant/conversations/${convId}`)).json;
         assert.deepEqual(conv.turns.map((t) => [t.role, t.text]), [['user', 'Are my servers ok?'], ['assistant', 'All **2** servers are running.'], ['user', 'Anything failed?'], ['assistant', 'Nothing failed today.']]);
         assert.deepEqual(conv.turns[1].tools, ['Checked the servers']);
 
-        // private: another person (another workspace) can't read it; the demo can't ask at all
+        // private: another workspace's person can't read it, and isn't set up; the demo can't ask
         const b = client();
         assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
         assert.equal((await b.get(`/api/assistant/conversations/${convId}`)).status, 404);
+        assert.equal((await b.get('/api/assistant')).json.enabled, false);
         const d = client();
         assert.equal((await d.post('/api/auth/demo')).status, 200);
         assert.equal((await d.get('/api/assistant')).status, 403);
-
-        // bad tool input is refused before running (untrusted model output)
         const bad = await dist('assistant/tools').runTool('get_server', { server_id: 'drop table' }, 'admin');
         assert.equal(bad.isError, true);
 
-        // usage counted; the monthly allowance is enforced
-        const { rows: [u] } = await withWorkspace(wsA, () => db().query("SELECT questions, cached_tokens FROM assistant_usage WHERE month = date_trunc('month', now())::date"));
-        assert.ok(u.questions >= 2 && Number(u.cached_tokens) > 0);
-        await asSystem(() => db().query("UPDATE assistant_usage SET questions = 100000 WHERE workspace_id = $1", [wsA]));
-        const over = await sse(a, { question: 'One more?' });
-        assert.equal(over.at(-1).type, 'error');
-        assert.match(over.at(-1).message, /used its \d+ assistant questions/);
-        await asSystem(() => db().query("UPDATE assistant_usage SET questions = 0 WHERE workspace_id = $1", [wsA]));
+        // switch to ChatGPT: a wrong key is refused; only chat models are offered
+        assert.equal((await a.post('/api/assistant/models', { provider: 'openai', apiKey: 'sk-proj-wrong-key-0000000000000' })).status, 400);
+        const om = (await a.post('/api/assistant/models', { provider: 'openai', apiKey: 'sk-proj-test-openai-key-123456789' })).json;
+        assert.deepEqual(om.models, ['gpt-test-1']);
+        assert.equal((await a.put('/api/assistant/settings', { provider: 'openai', model: 'gpt-test-1' })).status, 400, 'a new provider needs its key');
+        assert.equal((await a.put('/api/assistant/settings', { provider: 'openai', model: 'gpt-test-1', apiKey: 'sk-proj-test-openai-key-123456789' })).status, 200);
+        // the Claude chat can't be continued with ChatGPT
+        assert.match((await sse(a, { question: 'More?', conversationId: convId })).at(-1).message, /Start a new chat/);
+
+        const reasoning = { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'enc-1' };
+        const fcall = { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'list_servers', arguments: '{}' };
+        const msgItem = (text) => ({ type: 'message', id: 'msg_1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] });
+        const ou = { input_tokens: 900, output_tokens: 40, input_tokens_details: { cached_tokens: 500 } };
+        oaScript = [
+            [{ type: 'response.created' }, { type: 'response.completed', response: { status: 'completed', output: [reasoning, fcall], usage: ou } }],
+            [{ type: 'response.output_text.delta', delta: 'Both servers ' }, { type: 'response.output_text.delta', delta: 'are up.' }, { type: 'response.completed', response: { status: 'completed', output: [msgItem('Both servers are up.')], usage: ou } }],
+        ];
+        const ev3 = await sse(a, { question: 'Servers ok?' });
+        assert.deepEqual(ev3.map((e) => e.type), ['conversation', 'tool', 'text', 'text', 'done']);
+        assert.equal(ev3.slice(2, 4).map((e) => e.delta).join(''), 'Both servers are up.');
+        const [r1, r2] = oaCalls;
+        assert.deepEqual([r1.model, r1.stream, r1.store, r1.include[0]], ['gpt-test-1', true, false, 'reasoning.encrypted_content']);
+        assert.ok(r1.tools.every((t) => t.type === 'function' && t.name && t.parameters));
+        assert.match(r1.instructions, /You can only read/);
+        // second turn: the reasoning and call go back unchanged, then the tool output from Alice's workspace
+        assert.deepEqual(r2.input.slice(1, 3), [reasoning, fcall]);
+        const out = r2.input[3];
+        assert.equal(out.type, 'function_call_output'); assert.equal(out.call_id, 'call_1');
+        assert.deepEqual(JSON.parse(out.output).result.map((s) => s.name).sort(), mine);
+        const conv3 = (await a.get(`/api/assistant/conversations/${ev3[0].id}`)).json;
+        assert.deepEqual(conv3.turns.map((t) => [t.role, t.text, t.tools]), [['user', 'Servers ok?', undefined], ['assistant', 'Both servers are up.', ['Checked the servers']]]);
+
+        // usage recorded; removing the settings deletes the key
+        const u = (await a.get('/api/assistant/settings')).json.usage;
+        assert.ok(u.questions >= 3 && u.cachedTokens > 0);
+        assert.equal((await a.del('/api/assistant/settings')).status, 200);
+        assert.equal(stored.size, 0);
+        assert.equal((await a.get('/api/assistant')).json.enabled, false);
     } finally {
-        chat.setAssistantClient(null);
+        prov.setKeyStore(null); prov.setAnthropicFactory(null); prov.setOpenAIFetch(null);
     }
 });

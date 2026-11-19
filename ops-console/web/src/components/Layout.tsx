@@ -170,10 +170,11 @@ function NavGroup({ label, items, badge, itemBadge }: { label: string; items: Ta
 export function Layout() {
   const { user, site, refresh } = useAuth();
   const [wss, setWss] = useState<Workspace[]>([]);
-  // "Ask Ops Console": shown when the assistant is set up (never in the demo: every question costs money)
+  // "Ask Ops Console" (never in the demo)
   const [askOn, setAskOn] = useState(false);
   const [askOpen, setAskOpen] = useState(false);
-  useEffect(() => { if (user && !user.isDemo) api.assistant().then((s) => setAskOn(s.enabled)).catch(() => setAskOn(false)); }, [user]);
+  // shown once the workspace has a provider key, and to admins (who can set one up from the panel)
+  useEffect(() => { if (user && !user.isDemo) api.assistant().then((s) => setAskOn(s.enabled || !!s.canConfigure)).catch(() => setAskOn(false)); }, [user]);
   const [resent, setResent] = useState(false);
   useEffect(() => { if (user && site.multiTenant && user.workspaceId != null) api.workspaces().then((r) => setWss(r.workspaces)).catch(() => undefined); }, [user, site.multiTenant]);
   // Setup mode (multi-customer): until the workspace has a server, show the onboarding screen without the app's
