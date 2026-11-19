@@ -15,7 +15,7 @@ tokens.get('/', async (c) => {
     return c.json({
         url: `${config.publicUrl.replace(/\/$/, '')}/mcp`,
         oauth: true,
-        tools: mcpTools().map((t) => ({ name: t.name, description: t.description })),
+        tools: mcpTools().map((t) => ({ name: t.name, title: t.title, description: t.description, proposes: !t.annotations.readOnlyHint })),
         tokens: await listTokens(all ? null : user.id),
         canSeeAll: user.role === 'admin',
     });

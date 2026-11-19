@@ -361,7 +361,7 @@ export async function askAssistant(question: string, conversationId: string | nu
 }
 
 export interface McpToken { id: number; kind: 'pat' | 'oauth'; name: string; prefix: string; userId: number; username: string; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; lastUsedIp: string | null }
-export interface McpView { url: string; tools: { name: string; description: string }[]; tokens: McpToken[]; canSeeAll: boolean }
+export interface McpView { url: string; tools: { name: string; title: string; description: string; proposes: boolean }[]; tokens: McpToken[]; canSeeAll: boolean }
 
 export const api = {
   assistant: () => call<AssistantStatus>('GET', '/api/assistant'),

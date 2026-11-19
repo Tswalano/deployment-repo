@@ -48,7 +48,7 @@ export function AskButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?: number; onClose: () => void }) {
+export function AskPanel({ open, signal = 0, onOpen, onClose }: { open: boolean; signal?: number; onOpen: () => void; onClose: () => void }) {
   const [status, setStatus] = useState<AssistantStatus | null>(null);
   const [convId, setConvId] = useState<string | null>(null);
   const [turns, setTurns] = useState<AssistantTurn[]>([]);
@@ -131,12 +131,12 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(input); } };
 
-  if (!open) return null;
   const place = wide ? { right: pos.right, bottom: pos.bottom } : undefined;
-  if (minimised) {
+  // closed or minimised: the floating button is always there (above the phone navigation bar)
+  if (!open || minimised) {
     return (
-      <button style={place} onClick={() => setMinimised(false)} aria-label="Open Ask Ops Console"
-              className="fixed bottom-3 right-3 z-40 flex items-center gap-2 rounded-full border border-ink-600 bg-ink-900 px-3.5 py-2 text-sm text-slate-200 shadow-xl shadow-black/40 hover:border-ink-500">
+      <button style={place} onClick={() => { if (!open) onOpen(); setMinimised(false); }} aria-label="Open Ask Ops Console"
+              className="ask-window fixed bottom-20 right-3 z-40 flex items-center gap-2 rounded-full border border-ink-500 px-3.5 py-2 text-sm font-medium text-slate-100 shadow-xl shadow-black/40 hover:border-indigo-400 md:bottom-3">
         <SparkIcon className="h-4 w-4 text-indigo-300" />Ask Ops Console
         {busy && <span className="h-2 w-2 animate-pulse rounded-full bg-indigo-400 motion-reduce:animate-none" aria-label="answering" />}
       </button>
@@ -145,7 +145,7 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
   const size = wide ? (large ? 'w-[min(44rem,calc(100vw-2.5rem))] h-[min(52rem,calc(100vh-5rem))]' : 'w-[26rem] h-[min(38rem,calc(100vh-5rem))]') : 'inset-x-2 bottom-2 h-[82vh]';
   return (
     <aside role="dialog" aria-label="Ask Ops Console" style={place} onKeyDown={(e) => { if (e.key === 'Escape') setMinimised(true); }}
-           className={`fixed z-40 flex flex-col overflow-hidden rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl shadow-black/50 ${size}`}>
+           className={`ask-window fixed z-40 flex flex-col overflow-hidden rounded-2xl border border-ink-500 shadow-2xl shadow-black/60 ${size}`}>
         <header onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
                 className={`flex select-none items-center gap-2 border-b border-ink-700 px-4 py-3 ${wide ? 'cursor-move' : ''}`}>
           <span className="grid h-7 w-7 place-items-center rounded-lg border border-indigo-400/40 bg-indigo-500/15 text-indigo-300"><SparkIcon /></span>
@@ -163,7 +163,7 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
           {status && !status.enabled ? (
             <div className="text-slate-400">
               <p>Ask Ops Console isn&rsquo;t set up for this workspace yet. It uses the workspace&rsquo;s own Claude (Anthropic) or ChatGPT (OpenAI) API key.</p>
-              <p className="mt-2">{status.canConfigure ? <a className="text-indigo-300 hover:text-indigo-200" href="/ai/assistant" onClick={onClose}>Set it up on the AI page →</a> : 'A workspace admin can set it up on the AI page.'}</p>
+              <p className="mt-2">{status.canConfigure ? <a className="text-indigo-300 hover:text-indigo-200" href="/ai/assistant" onClick={onClose}>Set it up on the AI Console →</a> : 'A workspace admin can set it up on the AI Console.'}</p>
             </div>
           ) : turns.length === 0 ? (
             <div>
@@ -202,7 +202,7 @@ export function AskPanel({ open, signal = 0, onClose }: { open: boolean; signal?
 
         <footer className="border-t border-ink-700 p-3">
           <div className="flex items-end gap-2">
-            <textarea ref={box} rows={2} className="input min-h-[2.75rem] flex-1 resize-none" placeholder="Ask about this workspace…" value={input} maxLength={2000}
+            <textarea ref={box} rows={2} className="input ask-field min-h-[2.75rem] flex-1 resize-none" placeholder="Ask about this workspace…" value={input} maxLength={2000}
                       onChange={(e) => setInput(e.target.value)} onKeyDown={onKey} disabled={busy || (!!status && !status.enabled)} />
             <button className="btn-primary" disabled={busy || !input.trim() || (!!status && !status.enabled)} onClick={() => void send(input)}>{busy ? '…' : 'Ask'}</button>
           </div>

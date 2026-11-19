@@ -27,6 +27,8 @@
 
   .input { @apply block w-full rounded-lg border border-ink-600 bg-ink-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500
                   focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/25; }
+  .ask-window { background-color: rgb(var(--ask-bg)); }
+  .ask-field { background-color: rgb(var(--ask-field)); }
   .label { @apply mb-1.5 block text-xs font-medium text-slate-400; }
 
   .pill { @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-2xs font-semibold; }

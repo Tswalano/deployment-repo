@@ -140,7 +140,7 @@ mcp.post('/', async (c) => {
     if (origin && !originAllowed(origin)) return c.json(rpcError(null, -32000, 'Origin not allowed'), 403);
     const auth = c.req.header('authorization') ?? '';
     const token = /^Bearer\s+(.+)$/i.exec(auth)?.[1]?.trim() ?? '';
-    if (!token) return unauthorized(c, 'Sign in (OAuth), or use an access token from AI → MCP server.', false);
+    if (!token) return unauthorized(c, 'Sign in (OAuth), or use an access token from AI Console → MCP server.', false);
     const caller = await tokenCaller(token);
     if (!caller) return unauthorized(c, 'This access token is not valid (revoked, expired, or the account no longer has access).', true);
     if (limited(caller.tokenId)) return c.json(rpcError(null, -32000, 'Too many requests: try again in a minute.'), 429);

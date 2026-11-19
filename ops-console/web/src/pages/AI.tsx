@@ -8,7 +8,7 @@ import { McpTokens } from '../components/McpTokens';
 import { Alert, PageHeader } from '../components/ui';
 
 /**
- * AI: everything about AI in one place.
+ * AI Console: everything about AI in one place.
  *   /ai/assistant  Ask Ops Console: open the chat; admins choose the provider, key and model
  *   /ai/mcp        the workspace MCP server: address, connectors, personal tokens, connected apps
  *   /ai/proposals  deploys, rollbacks and server actions proposed by AI, waiting for confirmation (and history)
@@ -71,8 +71,8 @@ export function AI() {
   if (!TABS.some((t) => t.slug === tab)) return <Navigate to="/ai/assistant" replace />;
   return (
     <div>
-      <PageHeader title="AI" subtitle="Ask Ops Console, the workspace MCP server, and changes AI has proposed" />
-      <nav className="mb-5 flex gap-1 border-b border-ink-700" aria-label="AI">
+      <PageHeader title="AI Console" subtitle="Ask Ops Console, the workspace MCP server, and changes AI has proposed" />
+      <nav className="mb-5 flex gap-1 border-b border-ink-700" aria-label="AI Console">
         {TABS.map((t) => (
           <NavLink key={t.slug} to={`/ai/${t.slug}`}
                    className={({ isActive }) => `-mb-px border-b-2 px-3 py-2 text-sm ${isActive ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>

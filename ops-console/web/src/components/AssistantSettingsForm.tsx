@@ -4,7 +4,7 @@ import { useDialog } from './Dialog';
 import { Alert } from './ui';
 
 /**
- * AI → Ask Ops Console: the workspace's own AI provider. An admin chooses Claude (Anthropic) or ChatGPT (OpenAI),
+ * AI Console → Ask Ops Console: the workspace's own AI provider. An admin chooses Claude (Anthropic) or ChatGPT (OpenAI),
  * pastes an API key (checked with the provider, stored in the workspace's AWS account, never shown again) and picks a model.
  */
 const KEY_HELP: Record<AssistantProvider, { url: string; label: string; placeholder: string }> = {
