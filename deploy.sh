@@ -66,6 +66,8 @@ for v in FORCE SKIP_DB_BACKUP NO_AUTO_ROLLBACK HEALTH_TIMEOUT DEPLOY_ACTOR DEPLO
 done
 ARGS="$(printf '%q ' "$@")"
 SYNC_DIRS=(server projects systemd ops-dashboard ops-console templates)
+# never shipped: dependencies, build output, and local test databases (ops-console/.local*, git-ignored)
+SYNC_EXCLUDES=(--exclude node_modules --exclude dist --exclude ".local*")
 
 # ---------------------------------------------------------------------------- transport: SSH, or SSM over HTTPS
 VIA="${DEPLOY_VIA:-auto}"
@@ -86,7 +88,7 @@ deploy_via_ssm() {
   local work key url cid status=""
   work="$(mktemp -d)"; key="deploy-bundles/$(date +%Y%m%d-%H%M%S)-$$.tgz"
   trap 'aws s3 rm --quiet "s3://'"$bucket"'/'"$key"'" 2>/dev/null || true; rm -rf "'"$work"'" "'"$(dirname "${TMPKEY:-/nonexistent/x}")"'"' EXIT
-  tar -czf "$work/bundle.tgz" --exclude node_modules --exclude dist "${SYNC_DIRS[@]}"
+  tar -czf "$work/bundle.tgz" "${SYNC_EXCLUDES[@]}" "${SYNC_DIRS[@]}"
   echo "→ uploading the pipeline ($(du -h "$work/bundle.tgz" | cut -f1)) for $EC2_INSTANCE_ID"
   aws s3 cp --quiet "$work/bundle.tgz" "s3://$bucket/$key"
   url="$(aws s3 presign "s3://$bucket/$key" --region "$AWS_REGION" --expires-in 900)"
@@ -97,7 +99,7 @@ d=\$(mktemp -d); trap 'rm -rf "\$d"' EXIT
 curl -fsS -o "\$d/bundle.tgz" '$url'
 mkdir "\$d/x"; tar -xzf "\$d/bundle.tgz" -C "\$d/x"
 mkdir -p '$REMOTE_DIR'
-rsync -a --delete --exclude node_modules --exclude dist $dirs '$REMOTE_DIR/'
+rsync -a --delete --exclude node_modules --exclude dist --exclude '.local*' $dirs '$REMOTE_DIR/'
 chown -R '$DEPLOY_USER' '$REMOTE_DIR'
 cd /
 sudo -u '$DEPLOY_USER' -H env ${ENV_FWD}bash '$REMOTE_DIR/server/pipeline.sh' $ARGS
@@ -124,7 +126,7 @@ echo "→ syncing pipeline to $TARGET:$REMOTE_DIR"
 push_key
 ssh "${SSH_OPTS[@]}" "$TARGET" "sudo mkdir -p '$REMOTE_DIR' && sudo chown \$(id -un) '$REMOTE_DIR'"
 push_key
-rsync -az --delete --exclude node_modules --exclude dist -e "ssh ${SSH_OPTS[*]}" "${SYNC_DIRS[@]}" "$TARGET:$REMOTE_DIR/"
+rsync -az --delete "${SYNC_EXCLUDES[@]}" -e "ssh ${SSH_OPTS[*]}" "${SYNC_DIRS[@]}" "$TARGET:$REMOTE_DIR/"
 
 echo "→ running: pipeline.sh $*"
 push_key
