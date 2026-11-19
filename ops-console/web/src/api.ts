@@ -22,7 +22,7 @@ export interface BillingView {
   plans: { id: 'starter' | 'pro'; name: string; price: number; limits: { servers: number; apps: number; members: number; approvals: boolean } }[];
 }
 export interface Invoice { id: number; number: string; reference: string; issuedAt: string; plan: string; description: string; amount: number; currency: string; periodStart: string | null; periodEnd: string | null; billedTo: string; billedEmail: string | null; card: string | null; status: string; creditApplied?: number }
-export interface SiteConfig { multiTenant: boolean; productName: string; trialDays: number; legalEntity?: string; supportEmail?: string | null; demo?: boolean }
+export interface SiteConfig { multiTenant: boolean; productName: string; trialDays: number; legalEntity?: string; supportEmail?: string | null; demo?: boolean; envLabel?: string | null }
 export interface Workspace { id: number; name: string; slug: string; plan: 'trial' | 'starter' | 'pro' | 'internal'; trialEndsAt: string | null; role: Role }
 export interface TeamMember { id: number; username: string; displayName: string; email: string | null; role: Role; joinedAt: string; lastLoginAt: string | null; emailVerified: boolean }
 export interface TeamInvite { id: number; email: string; role: Role; createdAt: string; expiresAt: string }
