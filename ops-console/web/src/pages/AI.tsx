@@ -3,6 +3,7 @@ import { Navigate, NavLink, useParams } from 'react-router-dom';
 import { api, AssistantAction, AssistantStatus } from '../api';
 import { useAuth } from '../auth';
 import { ActionCard } from '../components/ActionCard';
+import { ProposalHistory } from '../components/ProposalHistory';
 import { AssistantSettingsForm } from '../components/AssistantSettingsForm';
 import { McpTokens } from '../components/McpTokens';
 import { Alert, PageHeader } from '../components/ui';
@@ -43,6 +44,7 @@ function AssistantTab() {
 }
 
 function ProposalsTab() {
+  const { user } = useAuth();
   const [list, setList] = useState<AssistantAction[] | null>(null);
   const load = () => api.actions().then(setList).catch(() => setList([]));
   useEffect(() => { void load(); const t = setInterval(load, 20_000); return () => clearInterval(t); }, []);
@@ -58,8 +60,11 @@ function ProposalsTab() {
       </section>
       {past.length > 0 && (
         <section className="card space-y-3">
-          <h2 className="font-medium text-slate-100">Recent</h2>
-          <div className="grid gap-3 md:grid-cols-2">{past.slice(0, 20).map((a) => <ActionCard key={a.id} action={a} />)}</div>
+          <div>
+            <h2 className="font-medium text-slate-100">History</h2>
+            <p className="mt-1 text-sm text-slate-400">Proposals that were confirmed, cancelled or expired. Select a row for the detail.</p>
+          </div>
+          <ProposalHistory items={past} isAdmin={user?.role === 'admin'} />
         </section>
       )}
     </div>
