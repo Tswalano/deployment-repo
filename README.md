@@ -566,6 +566,15 @@ Every run records `timestamp sha ref status action` in `/opt/deploy-state/<proje
 | `SKIP_DB_BACKUP=1` | Skip the pre-deploy `pg_dump` |
 | `NO_AUTO_ROLLBACK=1` | Leave a failed release running so you can debug it |
 | `HEALTH_TIMEOUT=180` | Override the health-check timeout |
+| `DEPLOY_VIA=ssm` | Go through AWS Systems Manager instead of SSH (`ssh` forces SSH; the default `auto` falls back to SSM when SSH can't connect) |
+
+**When SSH is blocked.** Some networks block outbound port 22. `deploy.sh` then uses AWS Systems Manager over HTTPS for the same steps:
+1. bundle the pipeline folders;
+2. upload the bundle to S3 (`DEPLOY_BUCKET`, or the console's `TRANSFER_BUCKET` parameter);
+3. have the server fetch it with a link valid for 15 minutes, sync it into `REMOTE_DIR` and run `pipeline.sh` as the deploy user;
+4. delete the bundle.
+
+This needs `EC2_INSTANCE_ID`. Output appears when the run ends rather than live, and SSM keeps the first 24,000 characters. `deploy-staging.sh set-admin` still needs SSH, because it sends a password, which must not end up in the SSM command history.
 
 ---
 

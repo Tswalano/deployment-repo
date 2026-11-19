@@ -555,7 +555,7 @@ test('billing (Paystack): trial, limits, checkout verified server-side, signed w
 
 test('invoices: one per payment (confirm + renewals via webhook, never twice), PDF per invoice, last 6 months as PDF/CSV, workspace-only', async () => {
     const crypto = require('crypto');
-    const { db } = dist('db');
+    const { db, asSystem } = dist('db');
     const secret = process.env.PAYSTACK_SECRET_KEY;
     const a = client();
     assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
@@ -569,8 +569,11 @@ test('invoices: one per payment (confirm + renewals via webhook, never twice), P
     const renewal = { event: 'charge.success', data: { id: 9001, status: 'success', reference: 'renew_001', amount: 59900, currency: 'ZAR', paid_at: new Date().toISOString(),
         customer: { customer_code: 'CUS_acme', email: 'alice@example.com' }, authorization: { brand: 'visa', last4: '4081' }, plan: { plan_code: 'PLN_59900', amount: 59900 } } };
     const hook = (e) => { const body = JSON.stringify(e); return app.request('/api/billing/paystack', { method: 'POST', headers: { 'content-type': 'application/json', 'x-paystack-signature': crypto.createHmac('sha512', secret).update(body).digest('hex') }, body }); };
+    // (only a workspace that had an Ops Console Paystack subscription takes such renewals)
+    await asSystem(() => db().query("UPDATE workspaces SET subscription_code = 'SUB_acme' WHERE id = $1", [wsA]));
     await hook(renewal); await hook(renewal);
     await hook({ ...renewal, data: { ...renewal.data, id: 9002 } });   // same payment reported as another event id: still one invoice
+    await asSystem(() => db().query('UPDATE workspaces SET subscription_code = NULL WHERE id = $1', [wsA]));
     list = (await a.get('/api/billing/invoices')).json.invoices;
     assert.equal(list.length, 2);
     assert.equal(list[0].card, 'Visa •••• 4081');
@@ -1398,4 +1401,52 @@ test('actions: AI proposes deploy/rollback/start/reboot; nothing runs until the 
     } finally {
         prov.setKeyStore(null); prov.setAnthropicFactory(null);
     }
+});
+
+test('billing: payments are tagged with the console; invoices and webhooks only take this console\'s payments for this workspace (a shared Paystack account and customer)', async () => {
+    const billing = dist('billing');
+    const { db, asSystem, withWorkspace } = dist('db');
+    const ours = billing.consoleTag();
+    const e1 = Date.now(), e2 = Date.now() + 1;
+    const b = client();
+    assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+    const ws = (await b.get('/api/auth/me')).json.user.workspaceId;
+    await asSystem(() => db().query("UPDATE workspaces SET paystack_customer = 'CUS_shared' WHERE id = $1", [ws]));
+    const tx = (reference, amount, metadata) => ({ status: 'success', reference, amount, currency: 'ZAR', paid_at: new Date().toISOString(), metadata, customer: { customer_code: 'CUS_shared', email: 'bob@example.com' } });
+    const txs = [
+        tx('other-console-1', 19900, { workspace_id: ws, console: 'ops.other.example', kind: 'subscribe', plan: 'starter' }),   // same workspace number, another console
+        tx('untagged-1', 19900, {}),                                                                                           // no metadata (another product on the account)
+        tx('card-check-1', 500, { workspace_id: ws, console: ours, kind: 'card' }),                                            // R5 card check: never an invoice by itself
+        tx('ours-1', 19900, { workspace_id: ws, console: ours, kind: 'subscribe', plan: 'starter' }),                         // ours
+    ];
+    billing.setPaystackFetch(async (url) => {
+        const u = new URL(url);
+        const ok = (data) => new Response(JSON.stringify({ status: true, message: 'ok', data }), { status: 200 });
+        if (u.pathname === '/customer/CUS_shared') return ok({ id: 77 });
+        if (u.pathname === '/transaction') return ok(txs);
+        return new Response(JSON.stringify({ status: false }), { status: 404 });
+    });
+    const before = (await withWorkspace(ws, () => db().query('SELECT reference FROM invoices'))).rows.map((r) => r.reference);
+    await billing.syncInvoices(ws);
+    const after = (await withWorkspace(ws, () => db().query('SELECT reference FROM invoices'))).rows.map((r) => r.reference).filter((r) => !before.includes(r));
+    assert.deepEqual(after, ['ours-1'], 'only this console\'s payment for this workspace becomes an invoice');
+
+    // webhook: another console's payment for "the same" workspace number is recorded but never applied
+    const plan = (await asSystem(() => db().query('SELECT plan FROM workspaces WHERE id = $1', [ws]))).rows[0].plan;
+    await billing.handlePaystackEvent({ event: 'charge.success', data: { id: e1, ...tx('other-console-2', 59900, { workspace_id: ws, console: 'ops.other.example', kind: 'subscribe', plan: 'pro' }) } });
+    const { rows: [ev] } = await asSystem(() => db().query("SELECT workspace_id FROM billing_events WHERE id = $1", [`charge.success:${e1}`]));
+    assert.equal(ev.workspace_id, null);
+    assert.equal((await asSystem(() => db().query('SELECT plan FROM workspaces WHERE id = $1', [ws]))).rows[0].plan, plan, 'plan unchanged');
+    assert.equal((await asSystem(() => db().query("SELECT 1 FROM invoices WHERE reference = 'other-console-2'"))).rows.length, 0);
+    // an untagged payment naming a workspace whose Paystack customer is someone else's is not applied either
+    await billing.handlePaystackEvent({ event: 'charge.success', data: { id: e2, ...tx('legacy-2', 59900, { workspace_id: ws, kind: 'subscribe', plan: 'pro' }), customer: { customer_code: 'CUS_someone_else' } } });
+    assert.equal((await asSystem(() => db().query("SELECT workspace_id FROM billing_events WHERE id = $1", [`charge.success:${e2}`]))).rows[0].workspace_id, null);
+    // another product's subscription renewal (same customer, same R199, no metadata) is not an invoice: this workspace never had a Paystack subscription
+    await asSystem(() => db().query('UPDATE workspaces SET subscription_code = NULL WHERE id = $1', [ws]));
+    await billing.handlePaystackEvent({ event: 'charge.success', data: { id: e2 + 1, ...tx('spaza-renewal-1', 19900, {}), plan: { plan_code: 'PLN_other', name: 'Another product', amount: 19900 } } });
+    assert.equal((await asSystem(() => db().query("SELECT 1 FROM invoices WHERE reference = 'spaza-renewal-1'"))).rows.length, 0);
+    // new payments started here carry the tag
+    assert.equal(billing.consoleTag(), new URL(process.env.PUBLIC_URL || 'https://ops.glenify.studio').host);
+    await asSystem(() => db().query("DELETE FROM invoices WHERE reference = 'ours-1'"));
+    billing.setPaystackFetch(null);
 });
