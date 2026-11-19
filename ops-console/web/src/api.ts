@@ -325,7 +325,36 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   return data as T;
 }
 
+// ------------------------------------------------------------------ "Ask Ops Console" (assistant)
+export interface AssistantStatus { enabled: boolean; model?: string; used?: number; limit?: number | null; remaining?: number | null; conversations?: { id: string; title: string; updatedAt: string }[] }
+export interface AssistantTurn { role: 'user' | 'assistant'; text: string; tools?: string[] }
+export type AssistantEvent = { type: 'conversation'; id: string } | { type: 'tool'; label: string } | { type: 'text'; delta: string } | { type: 'done'; remaining: number | null } | { type: 'error'; message: string };
+/** Ask a question; events stream in as the answer is written (server-sent events over a POST). */
+export async function askAssistant(question: string, conversationId: string | null, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void> {
+  const res = await fetch('/api/assistant/ask', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, conversationId }), signal });
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, (data as { error?: string }).error || `Request failed (${res.status})`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      const data = chunk.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n');
+      if (data) { try { onEvent(JSON.parse(data) as AssistantEvent); } catch { /* ignore a malformed event */ } }
+    }
+  }
+}
+
 export const api = {
+  assistant: () => call<AssistantStatus>('GET', '/api/assistant'),
+  assistantConversation: (id: string) => call<{ id: string; title: string; turns: AssistantTurn[] }>('GET', `/api/assistant/conversations/${encodeURIComponent(id)}`),
   site: () => call<SiteConfig>('GET', '/api/account/config'),
   signup: (b: { name: string; email: string; password: string; workspace: string; username?: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
   billing: () => call<BillingView>('GET', '/api/billing'),

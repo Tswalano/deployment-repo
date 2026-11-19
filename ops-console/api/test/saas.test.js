@@ -976,3 +976,89 @@ test("read-only demo in multi-company mode: one click, the demo account's worksp
     assert.equal((await d.get('/api/platform/overview')).status, 404);
     assert.equal((await d.post('/api/auth/login', { username: 'demo', password: 'anything-at-all' })).status, 401, 'no password sign-in for the demo account');
 });
+
+test('assistant: streams an answer from read-only tools in the asker\'s workspace only; history kept unchanged; private; not in the demo; monthly limit', async () => {
+    const chat = dist('assistant/chat');
+    const { db, asSystem, withWorkspace } = dist('db');
+    const calls = [];
+    let script = [];
+    chat.setAssistantClient({ beta: { messages: { stream: (params) => {
+        calls.push(JSON.parse(JSON.stringify(params)));
+        const msg = script.shift();
+        let textCb = null;
+        return {
+            on(evt, cb) { if (evt === 'text') textCb = cb; return this; },
+            async finalMessage() { for (const b of msg.content) if (b.type === 'text' && textCb) textCb(b.text); return msg; },
+        };
+    } } } });
+    const usage = { input_tokens: 1200, output_tokens: 80, cache_read_input_tokens: 3000, cache_creation_input_tokens: 0 };
+    const toolTurn = { stop_reason: 'tool_use', usage, content: [
+        { type: 'thinking', thinking: '', signature: 'sig-1' },
+        { type: 'tool_use', id: 'tu_1', name: 'list_servers', input: {} },
+    ] };
+    const answer = (text) => ({ stop_reason: 'end_turn', usage, content: [{ type: 'text', text }] });
+    const sse = async (cl, body) => {
+        const r = await app.request('/api/assistant/ask', { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: cl.cookieHeader() }, body: JSON.stringify(body) });
+        const raw = await r.text();
+        return raw.split('\n\n').filter(Boolean).map((chunk) => JSON.parse(chunk.split('\n').find((l) => l.startsWith('data:')).slice(5)));
+    };
+    try {
+        const a = client();
+        assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+        const wsA = (await a.get('/api/auth/me')).json.user.workspaceId;
+        const st = (await a.get('/api/assistant')).json;
+        assert.deepEqual([st.enabled, st.model, typeof st.remaining], [true, 'claude-opus-5-5', 'number']);
+
+        script = [toolTurn, answer('All **2** servers are running.')];
+        const ev = await sse(a, { question: 'Are my servers ok?' });
+        assert.deepEqual(ev.map((e) => e.type), ['conversation', 'tool', 'text', 'done']);
+        assert.equal(ev[1].label, 'Checked the servers');
+        const convId = ev[0].id;
+
+        // the request: Opus 5.5, low effort, server-side fallback, caching, strict read-only tools with eager input streaming
+        const first = calls[0];
+        assert.deepEqual([first.model, first.output_config.effort, first.fallbacks, first.cache_control.type], ['claude-opus-5-5', 'low', 'default', 'ephemeral']);
+        assert.ok(first.betas.includes('server-side-fallback-2026-07-01'));
+        assert.ok(first.tools.length >= 6 && first.tools.every((t) => t.strict === true && t.eager_input_streaming === true));
+        assert.ok(!first.tools.some((t) => /deploy_app|restart|delete/.test(t.name)), 'read-only tools only');
+        // the tool ran in Alice's workspace: her servers, never another workspace's
+        const result = JSON.parse(calls[1].messages.at(-1).content[0].content);
+        const mine = (await withWorkspace(wsA, () => db().query('SELECT name FROM instances'))).rows.map((r) => r.name).sort();
+        assert.deepEqual(result.result.map((s) => s.name).sort(), mine);
+        assert.ok(result.now);
+
+        // follow-up: the earlier turns go back unchanged (thinking block included), appended to
+        script = [answer('Nothing failed today.')];
+        const ev2 = await sse(a, { question: 'Anything failed?', conversationId: convId });
+        assert.equal(ev2.at(-1).type, 'done');
+        const sent = calls.at(-1).messages;
+        assert.deepEqual(sent.slice(0, 4).map((m) => m.role), ['user', 'assistant', 'user', 'assistant']);
+        assert.deepEqual(sent[1].content[0], { type: 'thinking', thinking: '', signature: 'sig-1' });
+        const conv = (await a.get(`/api/assistant/conversations/${convId}`)).json;
+        assert.deepEqual(conv.turns.map((t) => [t.role, t.text]), [['user', 'Are my servers ok?'], ['assistant', 'All **2** servers are running.'], ['user', 'Anything failed?'], ['assistant', 'Nothing failed today.']]);
+        assert.deepEqual(conv.turns[1].tools, ['Checked the servers']);
+
+        // private: another person (another workspace) can't read it; the demo can't ask at all
+        const b = client();
+        assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+        assert.equal((await b.get(`/api/assistant/conversations/${convId}`)).status, 404);
+        const d = client();
+        assert.equal((await d.post('/api/auth/demo')).status, 200);
+        assert.equal((await d.get('/api/assistant')).status, 403);
+
+        // bad tool input is refused before running (untrusted model output)
+        const bad = await dist('assistant/tools').runTool('get_server', { server_id: 'drop table' }, 'admin');
+        assert.equal(bad.isError, true);
+
+        // usage counted; the monthly allowance is enforced
+        const { rows: [u] } = await withWorkspace(wsA, () => db().query("SELECT questions, cached_tokens FROM assistant_usage WHERE month = date_trunc('month', now())::date"));
+        assert.ok(u.questions >= 2 && Number(u.cached_tokens) > 0);
+        await asSystem(() => db().query("UPDATE assistant_usage SET questions = 100000 WHERE workspace_id = $1", [wsA]));
+        const over = await sse(a, { question: 'One more?' });
+        assert.equal(over.at(-1).type, 'error');
+        assert.match(over.at(-1).message, /used its \d+ assistant questions/);
+        await asSystem(() => db().query("UPDATE assistant_usage SET questions = 0 WHERE workspace_id = $1", [wsA]));
+    } finally {
+        chat.setAssistantClient(null);
+    }
+});

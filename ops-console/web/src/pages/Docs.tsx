@@ -119,6 +119,17 @@ const ARTICLES: Article[] = [
       <H>Server snapshots</H>
       <P>Optional: switch on <b>Server snapshots</b> on the Backups page for nightly snapshots of every server&rsquo;s disks, kept 7 days, to bring back a whole server. AWS bills snapshots separately (changed data only).</P>
     </>) },
+  { slug: 'assistant', group: 'Operate', title: 'Ask Ops Console', summary: 'Questions about the workspace, answered from live data.',
+    body: () => (<>
+      <P>Select <b>Ask</b> in the header and ask in plain language, for example <C>Did any deploy fail this week?</C> or <C>Which server is closest to running out of disk?</C>. The assistant looks up the answer in the workspace (servers, apps, deploys, alerts, uptime, backups and AWS costs) and shows what it checked.</P>
+      <UL>
+        <li><b>Read-only:</b> it can&rsquo;t deploy, restart or change anything; it says where in the console to do that.</li>
+        <li><b>The person&rsquo;s own access:</b> it sees only this workspace, with the asker&rsquo;s role (for example, costs only for deployers and admins). Setting values and other secrets are never available to it.</li>
+        <li><b>Questions per month:</b> each plan includes a number of questions; the panel shows how many are left.</li>
+        <li><b>Answers can be wrong:</b> check the page before acting on one.</li>
+      </UL>
+      <P>Questions and the data looked up to answer them are processed by Anthropic (see the Privacy Policy). The assistant isn&rsquo;t available in the read-only demo.</P>
+    </>) },
   { slug: 'access', group: 'Operate', title: 'Terminal and SSH access', summary: 'Secure access to servers.',
     body: () => (<>
       <H>Browser terminal</H>

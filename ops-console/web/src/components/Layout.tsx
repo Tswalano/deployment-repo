@@ -7,6 +7,7 @@ import { useTheme } from '../theme';
 import { api, ROLE_INFO, Workspace } from '../api';
 import { useAuth } from '../auth';
 import { useDialog } from './Dialog';
+import { AskButton, AskPanel } from './AskPanel';
 
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
 const SETUP_PATHS = ['/', '/team', '/account', '/settings', '/github/callback', '/billing', '/billing/return'];
@@ -169,6 +170,10 @@ function NavGroup({ label, items, badge, itemBadge }: { label: string; items: Ta
 export function Layout() {
   const { user, site, refresh } = useAuth();
   const [wss, setWss] = useState<Workspace[]>([]);
+  // "Ask Ops Console": shown when the assistant is set up (never in the demo: every question costs money)
+  const [askOn, setAskOn] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
+  useEffect(() => { if (user && !user.isDemo) api.assistant().then((s) => setAskOn(s.enabled)).catch(() => setAskOn(false)); }, [user]);
   const [resent, setResent] = useState(false);
   useEffect(() => { if (user && site.multiTenant && user.workspaceId != null) api.workspaces().then((r) => setWss(r.workspaces)).catch(() => undefined); }, [user, site.multiTenant]);
   // Setup mode (multi-customer): until the workspace has a server, show the onboarding screen without the app's
@@ -253,6 +258,7 @@ export function Layout() {
           <div className="ml-auto flex items-center gap-2">
             {setup && <NavLink to="/team" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Team</NavLink>}
             {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden rounded-lg px-3 py-1.5 text-sm sm:inline ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Billing</NavLink>}
+            {askOn && !setup && <AskButton onClick={() => setAskOpen(true)} />}
             <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
           </div>
         </div>
@@ -275,6 +281,7 @@ export function Layout() {
         {setup && pathname === '/' ? <Onboarding /> : <Outlet />}
       </main>
       <Footer setup={setup} />
+      {askOn && <AskPanel open={askOpen} onClose={() => setAskOpen(false)} />}
 
       {/* Phones: only the views that make sense on a small screen */}
       {!setup && <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-ink-700 bg-ink-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">

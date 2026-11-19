@@ -14,6 +14,7 @@
     "test": "tsc -p . && node --test test/*.test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.10.0",
     "@aws-sdk/client-cost-explorer": "3.967.0",
     "@aws-sdk/client-dlm": "3.967.0",
     "@aws-sdk/client-ec2": "3.967.0",

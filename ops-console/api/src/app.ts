@@ -26,6 +26,7 @@ import users from './routes/users';
 import { account, teamRoutes, workspaces } from './routes/accounts';
 import platformRoutes from './routes/platform';
 import { requestMetrics } from './consolehealth';
+import assistantRoutes from './routes/assistant';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
@@ -70,6 +71,7 @@ export function createApp() {
     app.route('/api/aws-connection', connect);
     app.route('/api/billing', billingRoutes);
     app.route('/api/platform', platformRoutes);
+    app.route('/api/assistant', assistantRoutes);
     app.route('/api/alerts', alerts);
     app.route('/api/uptime', uptime);
     app.route('/api/backups', backups);
