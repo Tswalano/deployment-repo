@@ -4,6 +4,8 @@ import { api, ApiError, ConsoleHealth, PlatformDetail, PlatformOverview, Platfor
 import { useAuth } from '../auth';
 import { useDialog } from '../components/Dialog';
 import { ago, Alert, bytes, dur, Kpi, PageHeader, Skeleton } from '../components/ui';
+import { Building2, HeartPulse, ScrollText } from 'lucide-react';
+import { smallIcon } from '../components/icons';
 
 /** Platform owner portal: the business (customers, subscriptions, payments, credits, limits) and the console's own health. */
 const err = (e: unknown) => (e instanceof ApiError ? e.message : 'Something went wrong.');
@@ -33,14 +35,14 @@ function Guard({ children }: { children: ReactNode }) {
 }
 
 function PlatformNav() {
-  const item = ({ isActive }: { isActive: boolean }) => `rounded-md px-3 py-1 text-sm ${isActive ? 'bg-ink-800 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`;
+  const item = ({ isActive }: { isActive: boolean }) => `flex items-center gap-1.5 rounded-md px-3 py-1 text-sm ${isActive ? 'bg-ink-800 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`;
   return (
     <nav aria-label="Platform admin" className="mb-4 flex items-center gap-3">
       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Platform admin</span>
       <div className="flex gap-0.5 rounded-lg border border-ink-700 p-0.5">
-        <NavLink end to="/platform" className={item}>Customers</NavLink>
-        <NavLink to="/platform/console" className={item}>Console health</NavLink>
-        <NavLink to="/platform/audit" className={item}>Audit</NavLink>
+        <NavLink end to="/platform" className={item}>{smallIcon(Building2)}Customers</NavLink>
+        <NavLink to="/platform/console" className={item}>{smallIcon(HeartPulse)}Console health</NavLink>
+        <NavLink to="/platform/audit" className={item}>{smallIcon(ScrollText)}Audit</NavLink>
       </div>
     </nav>
   );

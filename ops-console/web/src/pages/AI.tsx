@@ -7,6 +7,8 @@ import { ProposalHistory } from '../components/ProposalHistory';
 import { AssistantSettingsForm } from '../components/AssistantSettingsForm';
 import { McpTokens } from '../components/McpTokens';
 import { Alert, PageHeader } from '../components/ui';
+import { ListChecks, MessageSquare, Plug } from 'lucide-react';
+import { smallIcon } from '../components/icons';
 
 /**
  * AI Console: everything about AI in one place.
@@ -15,9 +17,9 @@ import { Alert, PageHeader } from '../components/ui';
  *   /ai/proposals  deploys, rollbacks and server actions proposed by AI, waiting for confirmation (and history)
  */
 const TABS = [
-  { slug: 'assistant', label: 'Ask Ops Console' },
-  { slug: 'mcp', label: 'MCP server' },
-  { slug: 'proposals', label: 'Proposals' },
+  { slug: 'assistant', label: 'Ask Ops Console', icon: MessageSquare },
+  { slug: 'mcp', label: 'MCP server', icon: Plug },
+  { slug: 'proposals', label: 'Proposals', icon: ListChecks },
 ] as const;
 
 export function openAsk() { window.dispatchEvent(new CustomEvent('ops:open-ask')); }
@@ -80,8 +82,8 @@ export function AI() {
       <nav className="mb-5 flex gap-1 border-b border-ink-700" aria-label="AI Console">
         {TABS.map((t) => (
           <NavLink key={t.slug} to={`/ai/${t.slug}`}
-                   className={({ isActive }) => `-mb-px border-b-2 px-3 py-2 text-sm ${isActive ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
-            {t.label}
+                   className={({ isActive }) => `-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm ${isActive ? 'border-indigo-400 font-medium text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>
+            {smallIcon(t.icon)}{t.label}
           </NavLink>
         ))}
       </nav>
