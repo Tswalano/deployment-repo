@@ -9,7 +9,7 @@ import { useAuth } from '../auth';
 import { useDialog } from './Dialog';
 import { AskPanel } from './AskPanel';
 import { navIcon, smallIcon } from './icons';
-import { Activity, Bell, ChevronDown, CreditCard, DatabaseBackup, Gauge, LayoutDashboard, LogOut, Monitor, Moon, Plus, ScrollText, Server, Settings, Shield,
+import { Activity, Bell, Building2, Check, ChevronDown, CreditCard, DatabaseBackup, Gauge, LayoutDashboard, LogOut, Monitor, Moon, Plus, ScrollText, Server, Settings, Shield,
   ShieldCheck, Sparkles, Sun, UserRound, Users, Wallet, Wrench } from 'lucide-react';
 
 /** Pages reachable while a new workspace is being set up (multi-customer mode). */
@@ -31,7 +31,7 @@ const TABS: Tab[] = [
 ];
 const GROUP_ICON = { Monitoring: Gauge, Operations: Wrench, Administration: ShieldCheck } as const;
 
-function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; workspaces?: Workspace[]; onSwitched?: () => Promise<void> }) {
+function UserMenu({ pages }: { pages: Tab[] }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -44,7 +44,6 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
   }, []);
   const [theme, setTheme] = useTheme();
-  const dialog = useDialog();
   if (!user) return null;
   const initials = (user.displayName || user.username).split(/[\s._-]+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
   return (
@@ -60,27 +59,6 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
             <div className="truncate text-sm font-medium text-slate-100" title={user.username}>{user.displayName || user.username}</div>
             <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">@{user.username} <span className={ROLE_INFO[user.role].badge}>{ROLE_INFO[user.role].label}</span></div>
           </div>
-          {workspaces.length > 0 && (
-            <div className="border-b border-ink-700 py-1.5">
-              <div className="px-4 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-slate-500">Workspaces</div>
-              {workspaces.map((w) => (
-                <button key={w.id} role="menuitem" className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm ${w.id === user.workspaceId ? 'text-slate-100' : 'text-slate-300 hover:bg-ink-800'}`}
-                        disabled={w.id === user.workspaceId}
-                        onClick={async () => { setOpen(false); await api.switchWorkspace(w.id); await onSwitched?.(); }}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${w.id === user.workspaceId ? 'bg-indigo-400' : 'bg-transparent'}`} />
-                  <span className="min-w-0 flex-1 truncate">{w.name}</span><span className="text-2xs capitalize text-slate-500">{w.role}</span>
-                </button>
-              ))}
-              <button role="menuitem" className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm text-slate-400 hover:bg-ink-800" onClick={async () => {
-                setOpen(false);
-                const name = await dialog.prompt({ title: 'New workspace', body: 'A separate workspace with its own servers, team and billing (it starts on a free trial).',
-                  label: 'Workspace name', placeholder: 'e.g. Acme Ltd', minLength: 2, maxLength: 80, confirmLabel: 'Create workspace' });
-                if (!name) return;
-                try { await api.createWorkspace(name); await onSwitched?.(); }
-                catch (e) { await dialog.alert({ title: "The workspace wasn't created", body: e instanceof Error ? e.message : 'Something went wrong.' }); }
-              }}>{smallIcon(Plus, 'text-slate-500')}New workspace</button>
-            </div>
-          )}
           {user.platformAdmin && (
             <div className="border-b border-ink-700 py-1.5">
               <NavLink to="/platform" role="menuitem" onClick={() => setOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-sm text-slate-300 hover:bg-ink-800 hover:text-white">
@@ -124,6 +102,54 @@ function UserMenu({ pages, workspaces = [], onSwitched }: { pages: Tab[]; worksp
                   onClick={async () => { await logout(); navigate('/login'); }}>
             {smallIcon(LogOut, 'text-slate-500')}Sign out
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Workspace switcher next to the profile avatar (multi-customer mode): the current workspace, the others, a new one. */
+function WorkspaceMenu({ workspaces, current, onSwitched }: { workspaces: Workspace[]; current: number | null; onSwitched: () => Promise<void> }) {
+  const dialog = useDialog();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
+  }, []);
+  const me = workspaces.find((w) => w.id === current);
+  if (!me) return null;
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} title={`Workspace: ${me.name}`}
+              className="flex max-w-[14rem] items-center gap-2 rounded-lg border border-ink-600 px-2.5 py-1.5 text-sm text-slate-300 transition hover:border-ink-500 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
+        {smallIcon(Building2, 'text-slate-500')}
+        <span className="hidden min-w-0 truncate sm:inline">{me.name}</span>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} strokeWidth={2} aria-hidden />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-10 z-30 w-64 overflow-hidden rounded-xl border border-ink-600 bg-ink-850 py-1.5 shadow-2xl shadow-black/50">
+          <div className="px-4 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-slate-500">Workspaces</div>
+          {workspaces.map((w) => (
+            <button key={w.id} role="menuitem" disabled={w.id === current}
+                    className={`flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm ${w.id === current ? 'text-slate-100' : 'text-slate-300 hover:bg-ink-800'}`}
+                    onClick={async () => { setOpen(false); await api.switchWorkspace(w.id); await onSwitched(); }}>
+              <span className="w-4">{w.id === current && <Check className="h-4 w-4 text-indigo-300" strokeWidth={2} aria-hidden />}</span>
+              <span className="min-w-0 flex-1 truncate">{w.name}</span><span className="text-2xs capitalize text-slate-500">{w.role}</span>
+            </button>
+          ))}
+          <div className="my-1 border-t border-ink-700" />
+          <button role="menuitem" className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm text-slate-400 hover:bg-ink-800" onClick={async () => {
+            setOpen(false);
+            const name = await dialog.prompt({ title: 'New workspace', body: 'A separate workspace with its own servers, team and billing (it starts on a free trial).',
+              label: 'Workspace name', placeholder: 'e.g. Acme Ltd', minLength: 2, maxLength: 80, confirmLabel: 'Create workspace' });
+            if (!name) return;
+            try { await api.createWorkspace(name); await onSwitched(); }
+            catch (e) { await dialog.alert({ title: "The workspace wasn't created", body: e instanceof Error ? e.message : 'Something went wrong.' }); }
+          }}>{smallIcon(Plus, 'text-slate-500')}New workspace</button>
         </div>
       )}
     </div>
@@ -271,12 +297,12 @@ export function Layout() {
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M12 3 3 20h18L12 3z" /></svg>
             </span>
             <span className="text-sm font-semibold tracking-tight text-slate-100">{site.productName}</span>
-            {site.multiTenant && current && <span className="hidden max-w-[12rem] truncate rounded-md border border-ink-600 px-2 py-0.5 text-xs text-slate-400 sm:inline" title="Current workspace">{current.name}</span>}
           </NavLink>
           <div className="ml-auto flex items-center gap-2">
             {setup && <NavLink to="/team" className={({ isActive }) => `hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm sm:flex ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>{smallIcon(Users)}Team</NavLink>}
             {setup && user.role === 'admin' && <NavLink to="/billing" className={({ isActive }) => `hidden items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm sm:flex ${isActive ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>{smallIcon(CreditCard)}Billing</NavLink>}
-            <UserMenu pages={tabs} workspaces={site.multiTenant ? wss : []} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />
+            {site.multiTenant && <WorkspaceMenu workspaces={wss} current={user.workspaceId} onSwitched={async () => { await refresh(); window.location.assign('/'); }} />}
+            <UserMenu pages={tabs} />
           </div>
         </div>
         {!setup && <nav aria-label="Main" className="mx-auto hidden max-w-[1400px] gap-1 px-4 sm:px-6 md:flex">
