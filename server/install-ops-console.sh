@@ -4,16 +4,31 @@
 #   install-ops-console.sh install          build + DB + service (+ demo account)
 #   install-ops-console.sh expose <domain>  serve it publicly over HTTPS (replaces the old ops-dashboard vhost)
 #
-# Needs SSM /apps/ops-console/DATABASE_URL (postgresql://opsconsole:<pw>@127.0.0.1:5432/opsconsole),
+# Needs SSM /apps/<instance>/DATABASE_URL (postgresql://<db>:<pw>@127.0.0.1:5432/<db>),
 # created by scripts/setup-ops-console.sh on your laptop.
+#
+# A second, separate copy (e.g. staging) runs side by side with its own service, port, database, settings and vhost:
+#   INSTANCE=ops-console-staging OPS_PORT=9210 OPS_DB=opsconsole_staging OPS_ORIGIN=https://staging.glenify.studio
+# (scripts/deploy-staging.sh sets these). The defaults are the production console, unchanged.
 # =============================================================================
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP=/opt/ops-console
+NAME="${INSTANCE:-ops-console}"
+PORT="${OPS_PORT:-9200}"
+DB="${OPS_DB:-opsconsole}"
+ORIGIN="${OPS_ORIGIN:-https://ops.glenify.studio}"
+[[ "$NAME" =~ ^ops-console(-[a-z0-9]+)?$ && "$PORT" =~ ^[0-9]{4,5}$ && "$DB" =~ ^opsconsole(_[a-z0-9]+)?$ && "$ORIGIN" =~ ^https://[a-z0-9.-]+$ ]] \
+  || { echo "bad INSTANCE / OPS_PORT / OPS_DB / OPS_ORIGIN" >&2; exit 1; }
+APP="/opt/$NAME"
+ZONE="${DB}_auth"                     # nginx rate-limit zone: one per copy (opsconsole_auth for production, as before)
 REGION="${AWS_REGION:-af-south-1}"
-log() { printf '\e[36m[ops-console] %s\e[0m\n' "$*"; }
-ok()  { printf '\e[32m[ops-console] ✔ %s\e[0m\n' "$*"; }
-die() { printf '\e[31m[ops-console] ✘ %s\e[0m\n' "$*" >&2; exit 1; }
+log() { printf '\e[36m[%s] %s\e[0m\n' "$NAME" "$*"; }
+ok()  { printf '\e[32m[%s] ✔ %s\e[0m\n' "$NAME" "$*"; }
+die() { printf '\e[31m[%s] ✘ %s\e[0m\n' "$NAME" "$*" >&2; exit 1; }
+# the service unit for this copy: the production unit with its name, port, folder and origin swapped (identical for production)
+unit() { sed -e "s#/opt/ops-console#$APP#g" -e "s#app-secrets@ops-console#app-secrets@$NAME#g" -e "s#/run/app-secrets/ops-console.env#/run/app-secrets/$NAME.env#g" \
+             -e "s#/apps/ops-console/#/apps/$NAME/#g" -e "s#PORT=9200#PORT=$PORT#" -e "s#localhost:9200#localhost:$PORT#" \
+             -e "s#https://ops.glenify.studio#$ORIGIN#" "$ROOT/systemd/ops-console.service"; }
 cd /tmp
 
 install() {
@@ -32,41 +47,41 @@ install() {
   (cd "$APP/web" && npm ci --no-audit --no-fund >/dev/null && npm run build >/dev/null && rm -rf node_modules)
   ok "web built ($(du -sh "$APP/web/dist" | cut -f1))"
 
-  log "database opsconsole (own role, nobody else may connect)"
+  log "database $DB (own role, nobody else may connect)"
   local url pw
-  url="$(aws ssm get-parameter --region "$REGION" --name /apps/ops-console/DATABASE_URL --with-decryption --query Parameter.Value --output text)" \
-    || die "missing SSM /apps/ops-console/DATABASE_URL (run scripts/setup-ops-console.sh)"
+  url="$(aws ssm get-parameter --region "$REGION" --name "/apps/$NAME/DATABASE_URL" --with-decryption --query Parameter.Value --output text)" \
+    || die "missing SSM /apps/$NAME/DATABASE_URL (run scripts/setup-ops-console.sh)"
   pw="$(python3 -I -c 'import sys,urllib.parse as u; print(u.unquote(u.urlsplit(sys.argv[1]).password or ""))' "$url")"
   [[ "$pw" =~ ^[A-Za-z0-9]{24,}$ ]] || die "DATABASE_URL password must be 24+ alphanumerics"
   psql -X -q -h localhost -U postgres -w -d postgres -v ON_ERROR_STOP=1 <<SQL
 DO \$\$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opsconsole') THEN CREATE ROLE opsconsole LOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$DB') THEN CREATE ROLE $DB LOGIN; END IF;
 END \$\$;
-ALTER ROLE opsconsole WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$pw' CONNECTION LIMIT 10;
+ALTER ROLE $DB WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$pw' CONNECTION LIMIT 10;
 SQL
-  if ! psql -X -tA -h localhost -U postgres -w -d postgres -c "SELECT 1 FROM pg_database WHERE datname='opsconsole'" | grep -q 1; then
-    psql -X -q -h localhost -U postgres -w -d postgres -c "CREATE DATABASE opsconsole OWNER opsconsole"
+  if ! psql -X -tA -h localhost -U postgres -w -d postgres -c "SELECT 1 FROM pg_database WHERE datname='$DB'" | grep -q 1; then
+    psql -X -q -h localhost -U postgres -w -d postgres -c "CREATE DATABASE $DB OWNER $DB"
   fi
-  psql -X -q -h localhost -U postgres -w -d postgres -c "REVOKE CONNECT ON DATABASE opsconsole FROM PUBLIC" -c "GRANT CONNECT ON DATABASE opsconsole TO opsconsole"
+  psql -X -q -h localhost -U postgres -w -d postgres -c "REVOKE CONNECT ON DATABASE $DB FROM PUBLIC" -c "GRANT CONNECT ON DATABASE $DB TO $DB"
   ok "database ready"
   # the console's own database is in the nightly backups (and their off-site copies) like the apps' databases
-  { sudo cat /opt/deploy-state/backup-extra-dbs 2>/dev/null || true; echo opsconsole; } | grep -E '^[a-z0-9_]{1,40}$' | sort -u | sudo tee /opt/deploy-state/backup-extra-dbs.tmp >/dev/null
+  { sudo cat /opt/deploy-state/backup-extra-dbs 2>/dev/null || true; echo "$DB"; } | grep -E '^[a-z0-9_]{1,40}$' | sort -u | sudo tee /opt/deploy-state/backup-extra-dbs.tmp >/dev/null
   sudo install -m 0644 -o ec2-user -g ec2-user /opt/deploy-state/backup-extra-dbs.tmp /opt/deploy-state/backup-extra-dbs && sudo rm -f /opt/deploy-state/backup-extra-dbs.tmp
   ok "console database in the nightly backups"
 
   log "service"
   sudo install -m 0755 -o root -g root "$ROOT/server/load-app-secrets.sh" /usr/local/bin/load-app-secrets
   sudo install -m 0644 "$ROOT/systemd/app-secrets@.service" /etc/systemd/system/app-secrets@.service
-  sudo install -m 0644 "$ROOT/systemd/ops-console.service" /etc/systemd/system/ops-console.service
+  unit | sudo tee "/etc/systemd/system/$NAME.service" >/dev/null
   sudo systemctl daemon-reload
-  sudo systemctl enable --quiet ops-console
-  sudo systemctl restart ops-console        # runs migrations on start
-  for _ in $(seq 1 30); do curl -fsS -m 2 http://127.0.0.1:9200/api/health >/dev/null 2>&1 && break; sleep 1; done
-  curl -fsS -m 2 http://127.0.0.1:9200/api/health >/dev/null || { sudo journalctl -u ops-console -n 30 --no-pager; die "not healthy"; }
-  ok "running on 127.0.0.1:9200 ($(( $(systemctl show ops-console -p MemoryCurrent --value) / 1048576 )) MB)"
+  sudo systemctl enable --quiet "$NAME"
+  sudo systemctl restart "$NAME"        # runs migrations on start
+  for _ in $(seq 1 30); do curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break; sleep 1; done
+  curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null || { sudo journalctl -u "$NAME" -n 30 --no-pager; die "not healthy"; }
+  ok "running on 127.0.0.1:$PORT ($(( $(systemctl show "$NAME" -p MemoryCurrent --value) / 1048576 )) MB)"
 
   log "demo account"
-  sudo bash -c 'set -a; . /run/app-secrets/ops-console.env; set +a; cd /opt/ops-console/api && exec node dist/cli.js ensure-demo'
+  sudo bash -c "set -a; . /run/app-secrets/$NAME.env; set +a; cd $APP/api && exec node dist/cli.js ensure-demo"
 }
 
 expose() {
@@ -76,16 +91,17 @@ expose() {
   me="$(curl -fsS -m 3 https://checkip.amazonaws.com)"
   resolved="$(getent hosts "$domain" | awk '{print $1}' | head -1 || true)"
   [[ "$resolved" == "$me" ]] || die "$domain resolves to '${resolved:-nothing}', not this host. Add the DNS A record first."
-  curl -fsS -m 3 http://127.0.0.1:9200/api/health >/dev/null || die "the console isn't running; run 'install' first"
+  curl -fsS -m 3 "http://127.0.0.1:$PORT/api/health" >/dev/null || die "the console isn't running; run 'install' first"
 
-  log "nginx vhost → 127.0.0.1:9200"
+  log "nginx vhost → 127.0.0.1:$PORT"
   local retired=/etc/nginx/retired; sudo install -d -m 0755 "$retired"
-  local old; old="$(sudo grep -l "server_name $domain;" /etc/nginx/conf.d/*.conf 2>/dev/null | grep -v '/ops-console.conf$' || true)"
+  local old; old="$(sudo grep -l "server_name $domain;" /etc/nginx/conf.d/*.conf 2>/dev/null | grep -v "/$NAME.conf\$" || true)"
   for f in $old; do sudo mv "$f" "$retired/$(basename "$f").$(date +%Y%m%d%H%M%S)"; log "retired $f → $retired/"; done
-  sed "s/__OPS_DOMAIN__/$domain/" "$ROOT/templates/nginx-ops-console.conf" | sudo tee /etc/nginx/conf.d/ops-console.conf >/dev/null
+  sed -e "s/__OPS_DOMAIN__/$domain/" -e "s#127.0.0.1:9200#127.0.0.1:$PORT#g" -e "s/opsconsole_auth/$ZONE/g" "$ROOT/templates/nginx-ops-console.conf" \
+    | sudo tee "/etc/nginx/conf.d/$NAME.conf" >/dev/null
   if ! sudo nginx -t 2>/dev/null; then
     sudo nginx -t || true
-    sudo rm -f /etc/nginx/conf.d/ops-console.conf
+    sudo rm -f "/etc/nginx/conf.d/$NAME.conf"
     for f in $old; do sudo cp "$(ls -1t "$retired/$(basename "$f")".* | head -1)" "$f"; done
     die "nginx config test failed; previous vhost restored"
   fi

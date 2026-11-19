@@ -39,7 +39,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  return <AuthContext.Provider value={{ user, loading: loading || !siteLoaded, site, refresh, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, loading: loading || !siteLoaded, site, refresh, logout }}>
+      {site.envLabel && (   /* e.g. staging: a separate copy for testing features before they reach production */
+        <div className="border-b border-sky-500/30 bg-sky-500/10 px-4 py-1.5 text-center text-xs font-medium text-sky-200" role="note">
+          {site.envLabel}: a separate test copy of {site.productName}. Data, accounts and payments here are not production.
+        </div>
+      )}
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthState {
