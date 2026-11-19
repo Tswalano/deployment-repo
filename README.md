@@ -402,6 +402,20 @@ The full step-by-step cutover, with commands, checks and rollback, is in **[docs
 The console CLI helps: `cutover-check`, `cutover-prepare [region]`, `cutover-connect <roleArn>` and
 `set-email <username> <email>`.
 
+### Staging (staging.glenify.studio) and the `qa` branch
+Large features are tried by the team on **staging** before they reach production:
+1. Build the feature on its own branch and open the PR against **`qa`** (not `main`).
+2. Once merged into `qa`: `git checkout qa && git pull && ./scripts/deploy-staging.sh`.
+3. The team tests on https://staging.glenify.studio. When it's signed off, open a PR from `qa` (or the feature)
+   to `main` and deploy production as usual; if not, the feature simply never goes to `main`.
+
+Staging is a separate copy on the same server: service `ops-console-staging` (port 9210), database
+`opsconsole_staging`, settings `SSM /apps/ops-console-staging/*`, its own vhost and pipeline copy (`/opt/deploy-staging`).
+Its settings: `OPS_MULTI_TENANT=1`, `PUBLIC_URL`, `ENV_LABEL=Staging` (the bar on every page), the Paystack **test**
+key, `GITHUB_PARAM_PREFIX=/ops-console/staging/github` and `GITHUB_WEBHOOK_URL=https://staging.glenify.studio/api/github/webhook`
+(so its GitHub apps never mix with production's), plus the template/bundle URLs. First time: DNS A record, then
+`./scripts/deploy-staging.sh` and `./scripts/deploy-staging.sh expose`, and `set-admin <user>` for a staging admin.
+
 ## Repository layout
 
 ```

@@ -13,6 +13,7 @@
 #   ./deploy.sh ops-dashboard install          (read-only status page on 127.0.0.1:9100)
 #   ./deploy.sh ops-console install            (Ops Console app on 127.0.0.1:9200; see scripts/setup-ops-console.sh)
 #   ./deploy.sh ops-console expose ops.glenify.studio   (public HTTPS for the console; retires the old dashboard vhost)
+#   ./scripts/deploy-staging.sh                (the qa branch at staging.glenify.studio, a separate copy next to production)
 #   ./deploy.sh ops-dashboard expose ops.glenify.studio
 #
 # Connection (env vars, or put them in a git-ignored .deploy.env):
@@ -63,7 +64,7 @@ ENV_FWD=""
 # who/what triggered this run, shown on the ops dashboard
 DEPLOY_ACTOR="${DEPLOY_ACTOR:-$(git config user.name 2>/dev/null || id -un) (local)}"
 DEPLOY_TRIGGER="${DEPLOY_TRIGGER:-cli}"
-for v in FORCE SKIP_DB_BACKUP NO_AUTO_ROLLBACK HEALTH_TIMEOUT DEPLOY_ACTOR DEPLOY_TRIGGER DEPLOY_RUN_URL; do
+for v in FORCE SKIP_DB_BACKUP NO_AUTO_ROLLBACK HEALTH_TIMEOUT DEPLOY_ACTOR DEPLOY_TRIGGER DEPLOY_RUN_URL INSTANCE OPS_PORT OPS_DB OPS_ORIGIN; do
   [[ -n "${!v:-}" ]] && ENV_FWD+="$v=$(printf %q "${!v}") "
 done
 ARGS="$(printf '%q ' "$@")"

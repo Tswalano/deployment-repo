@@ -33,6 +33,8 @@ export const config = {
     multiTenant: bool(process.env.OPS_MULTI_TENANT, false),
     /** Product name shown on the landing page and in emails (placeholder until it is decided). */
     productName: process.env.PRODUCT_NAME || 'Ops Console',
+    /** Shown as a bar on every page when set (e.g. "Staging"); empty in production. */
+    envLabel: (process.env.ENV_LABEL || '').trim().slice(0, 40),
     /** Public address of this console (links in emails). */
     publicUrl: process.env.PUBLIC_URL || 'https://ops.glenify.studio',
     /** Free trial for new workspaces. */
