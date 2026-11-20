@@ -12,10 +12,10 @@ set -u
 export LC_ALL=C
 ACTION='{{ action }}'
 COMPONENT='{{ component }}'
-VERSION='{{ version }}'
+WANT_VERSION='{{ version }}'   # not VERSION: /etc/os-release defines that ("2023")
 [[ "$ACTION" =~ ^(list|install|start|stop|remove)$ ]] || { echo '{"ok":false,"error":"invalid action"}'; exit 2; }
 [[ "$COMPONENT" =~ ^(|postgresql|mariadb|valkey|sqlite|python)$ ]] || { echo '{"ok":false,"error":"invalid component"}'; exit 2; }
-[[ "$VERSION" =~ ^[0-9]{0,2}(\.[0-9]{1,2})?$ ]] || { echo '{"ok":false,"error":"invalid version"}'; exit 2; }
+[[ "$WANT_VERSION" =~ ^[0-9]{0,2}(\.[0-9]{1,2})?$ ]] || { echo '{"ok":false,"error":"invalid version"}'; exit 2; }
 [[ "$ACTION" == list || -n "$COMPONENT" ]] || { echo '{"ok":false,"error":"choose a component"}'; exit 2; }
 
 log()  { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -30,9 +30,10 @@ dnf_install() { log "installing $*"; dnf -y -q install "$@" >/tmp/opscomp-dnf.lo
 console_host() { systemctl is-active --quiet ops-console 2>/dev/null; }
 pg_pkg() { rpm -qa --qf '%{NAME}\n' | grep -E '^postgresql[0-9]+-server$' | head -1; }
 
-. /etc/os-release 2>/dev/null || true
-if [[ "${ID:-}" != amzn || "${VERSION_ID:-}" != 2023* ]]; then
-  fail "only Amazon Linux 2023 is supported for now (this is ${PRETTY_NAME:-unknown})"
+# read in a sub-shell: /etc/os-release sets VERSION, NAME, ID… and must not overwrite this script's variables
+OS="$( . /etc/os-release 2>/dev/null; printf '%s|%s|%s' "${ID:-}" "${VERSION_ID:-}" "${PRETTY_NAME:-unknown}" )"
+if [[ "${OS%%|*}" != amzn || "$(cut -d'|' -f2 <<<"$OS")" != 2023* ]]; then
+  fail "only Amazon Linux 2023 is supported for now (this is ${OS##*|})"
 fi
 
 # ------------------------------------------------------------------ actions
@@ -43,7 +44,7 @@ if [[ -z "$ERR" && "$ACTION" == install ]]; then
       cur="$(pg_pkg)"
       if [[ -n "$cur" ]]; then fail "PostgreSQL ${cur//[^0-9]/} is already installed (one version per server)"
       else
-        v="${VERSION:-}"; [[ -n "$v" ]] || for c in 17 16 15; do available "postgresql$c-server" && { v=$c; break; }; done
+        v="${WANT_VERSION:-}"; [[ -n "$v" ]] || for c in 17 16 15; do available "postgresql$c-server" && { v=$c; break; }; done
         [[ "$v" =~ ^1[5-9]$ ]] && available "postgresql$v-server" || fail "PostgreSQL ${v:-?} is not offered by this OS"
         [[ -z "$ERR" ]] && need_mb 150 && dnf_install "postgresql$v-server" "postgresql$v"
         if [[ -z "$ERR" ]]; then
@@ -74,8 +75,8 @@ if [[ -z "$ERR" && "$ACTION" == install ]]; then
     mariadb)
       if rpm -qa --qf '%{NAME}\n' | grep -qE '^mariadb[0-9]+-server$'; then log "MariaDB is already installed"
       else
-        pkg=""; for c in 1011 105; do [[ -n "$VERSION" && "$VERSION" != "${c:0:2}.${c:2}" ]] && continue; available "mariadb$c-server" && { pkg="mariadb$c-server"; break; }; done
-        [[ -n "$pkg" ]] || fail "MariaDB ${VERSION:-} is not offered by this OS"
+        pkg=""; for c in 1011 105; do [[ -n "$WANT_VERSION" && "$WANT_VERSION" != "${c:0:2}.${c:2}" ]] && continue; available "mariadb$c-server" && { pkg="mariadb$c-server"; break; }; done
+        [[ -n "$pkg" ]] || fail "MariaDB ${WANT_VERSION:-} is not offered by this OS"
         [[ -z "$ERR" ]] && need_mb 300 && dnf_install "$pkg"
         if [[ -z "$ERR" ]]; then
           MEM_MB=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 ))
@@ -106,11 +107,11 @@ if [[ -z "$ERR" && "$ACTION" == install ]]; then
     sqlite)
       installed sqlite && log "SQLite is already installed" || { dnf_install sqlite && log "✔ SQLite (the command-line tool, used for backups)"; } ;;
     python)
-      [[ "$VERSION" =~ ^3\.1[0-9]$ ]] || fail "choose a Python version (for example 3.12)"
+      [[ "$WANT_VERSION" =~ ^3\.1[0-9]$ ]] || fail "choose a Python version (for example 3.12)"
       if [[ -z "$ERR" ]]; then
-        if installed "python$VERSION"; then log "Python $VERSION is already installed"
-        else available "python$VERSION" || fail "Python $VERSION is not offered by this OS"
-             [[ -z "$ERR" ]] && dnf_install "python$VERSION" "python$VERSION-pip" && log "✔ Python $VERSION (python$VERSION; apps get their own virtual environments)"
+        if installed "python$WANT_VERSION"; then log "Python $WANT_VERSION is already installed"
+        else available "python$WANT_VERSION" || fail "Python $WANT_VERSION is not offered by this OS"
+             [[ -z "$ERR" ]] && dnf_install "python$WANT_VERSION" "python$WANT_VERSION-pip" && log "✔ Python $WANT_VERSION (python$WANT_VERSION; apps get their own virtual environments)"
         fi
       fi ;;
   esac
@@ -149,10 +150,10 @@ if [[ -z "$ERR" && "$ACTION" == remove ]]; then
     valkey) systemctl disable --quiet --now valkey 2>/dev/null; installed valkey && { dnf -y -q remove valkey >/dev/null 2>&1 || fail "could not remove valkey"; }; [[ -z "$ERR" ]] && log "✔ Valkey removed (/var/lib/valkey is kept)" ;;
     sqlite) installed sqlite && { dnf -y -q remove sqlite >/dev/null 2>&1 || fail "could not remove sqlite"; }; [[ -z "$ERR" ]] && log "✔ SQLite tool removed (database files are kept)" ;;
     python)
-      [[ "$VERSION" =~ ^3\.1[0-9]$ ]] || fail "choose the Python version to remove"
+      [[ "$WANT_VERSION" =~ ^3\.1[0-9]$ ]] || fail "choose the Python version to remove"
       if [[ -z "$ERR" ]]; then
-        installed "python$VERSION" && { dnf -y -q remove "python$VERSION" "python$VERSION-pip" >/dev/null 2>&1 || fail "could not remove python$VERSION"; }
-        [[ -z "$ERR" ]] && log "✔ Python $VERSION removed"
+        installed "python$WANT_VERSION" && { dnf -y -q remove "python$WANT_VERSION" "python$WANT_VERSION-pip" >/dev/null 2>&1 || fail "could not remove python$WANT_VERSION"; }
+        [[ -z "$ERR" ]] && log "✔ Python $WANT_VERSION removed"
       fi ;;
   esac
 fi
