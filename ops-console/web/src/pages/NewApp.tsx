@@ -95,6 +95,10 @@ export function NewApp() {
   }, [instanceId]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Is GitHub ready to pick a repository? If not, which step is missing (shown as its own screen). */
+  // app addresses must be possible before an app can be created (the platform's default domain, or the workspace's own)
+  const [addressesMissing, setAddressesMissing] = useState(false);
+  useEffect(() => { api.appAddresses().then((a) => setAddressesMissing(!a.current)).catch(() => setAddressesMissing(false)); }, []);
+
   async function checkGithub(fresh = false) {
     setGhChecking(true); setGhError(null);
     try {
@@ -187,11 +191,20 @@ export function NewApp() {
   return (
     <div>
       <div className="mb-2 text-xs text-slate-500"><Link to="/instances" className="hover:text-slate-300">Instances</Link> / <Link to={`/instances/${inst.id}`} className="hover:text-slate-300">{inst.name}</Link> / <span className="text-slate-400">New app</span></div>
-      <PageHeader title="New app from GitHub" subtitle={`On ${inst.name} (${inst.region}) · Node.js apps`} />
+      <PageHeader title="New app from GitHub" subtitle={`On ${inst.name} (${inst.region}) · Node.js and Python apps`} />
       <DesktopOnly title="Creating apps" />
       <div className="hidden md:block">
         {step === 0 && ghGap ? (
           <GithubNeeded gap={ghGap.gap} installUrl={ghGap.installUrl} backTo={`/instances/${inst.id}`} refreshing={ghChecking} onRefresh={() => void checkGithub(true)} />
+        ) : step === 0 && addressesMissing ? (
+          <section className="card max-w-2xl space-y-3">
+            <h2 className="font-medium text-slate-100">Choose how apps get their web address</h2>
+            <p className="text-sm text-slate-400">Every app gets an address with a free HTTPS certificate. This workspace hasn&rsquo;t chosen how yet: for example a domain of its own, with DNS in Route 53 or elsewhere. It takes a minute and is done once per workspace.</p>
+            <div className="flex flex-wrap gap-2">
+              <Link className="btn-primary" to="/settings#addresses">Set up app addresses</Link>
+              <Link className="btn-ghost" to={`/instances/${inst.id}`}>Back to {inst.name}</Link>
+            </div>
+          </section>
         ) : <>
         <Stepper step={step} />
         {ghError && <div className="mb-4"><Alert tone="warn">GitHub couldn&rsquo;t be read: {ghError}</Alert></div>}

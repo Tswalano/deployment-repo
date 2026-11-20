@@ -40,7 +40,7 @@ export function AppsDomainCard() {
   ];
 
   return (
-    <section className="card space-y-4">
+    <section id="addresses" className="card space-y-4">
       <div>
         <h2 className="font-medium text-slate-100">App addresses</h2>
         <p className="mt-1 text-sm text-slate-400">
