@@ -7,6 +7,7 @@ import { config } from '../config';
 import { connection, connectionView, consolePrincipal, disconnect, ensureConnection, REGION_RE, STACK_NAME, verifyConnection } from '../connections';
 import { db } from '../db';
 import { DeployError } from '../deploys';
+import { COMPONENTS_DOCUMENT } from '../components';
 import { addressTarget, AppsDomain, platformBase, platformDomainAvailable, workspaceAppsDomain } from '../newapp';
 import { checkLimit } from '../billing';
 import { denyDemo, Env, rateLimit, requireRole } from '../middleware';
@@ -26,6 +27,22 @@ export const REGIONS: [string, string][] = [
 ];
 const TEMPLATE = join(__dirname, '..', '..', 'assets', 'connect-aws.json');
 
+/**
+ * Whether the connected account has the console's newest commands. They arrive with the stack's template, so a
+ * connection made before a new command existed needs a one-time stack update (Replace template). Checked against the
+ * newest document; cached for 10 minutes per workspace.
+ */
+const NEWEST_DOCUMENT = COMPONENTS_DOCUMENT;
+const updateCache = new Map<number, { at: number; needed: boolean }>();
+async function updateNeeded(ws: number, region: string): Promise<boolean> {
+    const hit = updateCache.get(ws);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.needed;
+    const has = aws().documentExists ? await aws().documentExists!(region, NEWEST_DOCUMENT).catch(() => true) : true;
+    updateCache.set(ws, { at: Date.now(), needed: !has });
+    return !has;
+}
+export const forgetUpdateCheck = (ws: number) => updateCache.delete(ws);
+
 connect.get('/', requireRole('viewer'), async (c) => {
     const conn = await ensureConnection();
     const principal = await consolePrincipal().catch(() => null);
@@ -35,7 +52,14 @@ connect.get('/', requireRole('viewer'), async (c) => {
         : null;
     const isAdmin = c.get('user')!.role === 'admin';
     const v = connectionView(conn)!;
+    const ws = c.get('user')!.workspaceId!;
+    if (c.req.query('recheck') === '1') updateCache.delete(ws);
+    const update = conn.status === 'connected' && (await updateNeeded(ws, conn.region))
+        ? { needed: true, stackName: STACK_NAME, templateUrl: config.connectTemplateUrl || null,
+            stacksUrl: `https://${conn.region}.console.aws.amazon.com/cloudformation/home?region=${conn.region}#/stacks?filteringText=${encodeURIComponent(STACK_NAME)}` }
+        : { needed: false };
     return c.json({
+        update: isAdmin ? update : { needed: update.needed },
         connection: { ...v, externalId: isAdmin ? v.externalId : undefined },   // only admins set up the role
         principal: isAdmin ? principal : undefined,
         quickCreateUrl: isAdmin ? quickCreateUrl : null,

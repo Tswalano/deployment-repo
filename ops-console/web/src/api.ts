@@ -366,6 +366,19 @@ export async function askAssistant(question: string, conversationId: string | nu
 export interface McpToken { id: number; kind: 'pat' | 'oauth'; name: string; prefix: string; userId: number; username: string; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; lastUsedIp: string | null }
 export interface McpView { url: string; tools: { name: string; title: string; description: string; proposes: boolean }[]; tokens: McpToken[]; canSeeAll: boolean }
 
+// ------------------------------------------------------------------ server components
+export type ComponentId = 'postgresql' | 'mariadb' | 'valkey' | 'sqlite' | 'python' | 'nodejs' | 'nginx';
+export type ComponentAction = 'install' | 'start' | 'stop' | 'remove';
+export interface ServerComponent {
+  id: ComponentId; name: string; category: 'database' | 'service' | 'runtime'; installed: boolean; version: string | null; versions?: string[];
+  active: boolean | null; memoryMb: number; needMb: number; service: string | null; offered: string[]; note: string; readOnly?: boolean;
+}
+export interface ComponentsView {
+  components?: ServerComponent[]; host?: { memoryTotalMb: number; memoryAvailableMb: number; swapFreeMb: number; consoleHost: boolean };
+  at: string | null; available: boolean; changeable: Partial<Record<ComponentId, ComponentAction[]>>;
+  job: { id: number; status: string; ref: string; requestedBy: string | null; createdAt: string; finishedAt: string | null; output?: string | null } | null;
+}
+
 export const api = {
   assistant: () => call<AssistantStatus>('GET', '/api/assistant'),
   oauthCheck: (p: Record<string, string | undefined>) => call<{ client: { name: string; uri: string | null; redirectHost: string }; workspaces: { id: number; name: string; role: string }[]; current: number | null; scope: string }>('POST', '/api/oauth/check', p),
@@ -373,6 +386,8 @@ export const api = {
   actions: (open = false) => call<{ actions: AssistantAction[] }>('GET', `/api/actions${open ? '?open=1' : ''}`).then((r) => r.actions),
   confirmAction: (id: string) => call<{ action: AssistantAction }>('POST', `/api/actions/${id}/confirm`, {}).then((r) => r.action),
   cancelAction: (id: string) => call<{ action: AssistantAction }>('POST', `/api/actions/${id}/cancel`, {}).then((r) => r.action),
+  components: (id: number, fresh = false) => call<ComponentsView>('GET', `/api/instances/${id}/components${fresh ? '?fresh=1' : ''}`),
+  changeComponent: (id: number, b: { action: ComponentAction; component: ComponentId; version?: string }) => call<{ job: ComponentsView['job'] }>('POST', `/api/instances/${id}/components`, b),
   mcpTokens: (all = false) => call<McpView>('GET', `/api/mcp-tokens${all ? '?all=1' : ''}`),
   createMcpToken: (name: string, days: number | null) => call<{ token: string; row: McpToken }>('POST', '/api/mcp-tokens', { name, days }),
   revokeMcpToken: (id: number) => call<{ ok: true }>('DELETE', `/api/mcp-tokens/${id}`),

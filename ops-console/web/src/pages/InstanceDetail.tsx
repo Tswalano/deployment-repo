@@ -10,6 +10,7 @@ import { PrepareServer } from '../components/PrepareServer';
 import { ScheduleCard } from '../components/ScheduleCard';
 import { appTone } from '../health';
 import { usePoll } from '../usePoll';
+import { ComponentsCard } from '../components/ComponentsCard';
 
 
 function AppRow({ a, instanceId }: { a: AppStatus; instanceId: number }) {
@@ -228,6 +229,8 @@ export function InstanceDetail() {
               </table>
             )}
           </section>
+
+          {s.source === 'agent' && !stopped && <div className="mt-5 hidden md:block"><ComponentsCard instanceId={i.id} /></div>}
 
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
             <div className={`hidden min-w-0 space-y-5 md:block ${stale}`}>
