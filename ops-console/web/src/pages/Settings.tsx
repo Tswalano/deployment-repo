@@ -85,7 +85,7 @@ export function Settings() {
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     const id = window.location.hash.slice(1);
-    if (!['alerts', 'policy', 'github'].includes(id)) return;
+    if (!['alerts', 'policy', 'github', 'addresses'].includes(id)) return;
     const t = setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }), 400);
     return () => clearTimeout(t);
   }, []);
