@@ -10,7 +10,6 @@ import { ago, Alert } from './ui';
  * AI Console → Ask Ops Console:
  *  - Models: what people can chat with (admins add models, choose the default, remove them)
  *  - API keys: one per provider (admins add, change or remove; checked with the provider, kept in the workspace's AWS account)
- *  - This month's usage (admins)
  *  - Your chat history: open, delete, clear all (everyone, their own chats only)
  */
 const PROVIDERS: AssistantProvider[] = ['anthropic', 'openai'];
@@ -19,7 +18,6 @@ const KEY_HELP: Record<AssistantProvider, { url: string; label: string; placehol
   anthropic: { url: 'https://console.anthropic.com/settings/keys', label: 'console.anthropic.com', placeholder: 'sk-ant-…' },
   openai: { url: 'https://platform.openai.com/api-keys', label: 'platform.openai.com', placeholder: 'sk-…' },
 };
-const fmt = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 const th = 'px-4 py-2.5 text-left text-2xs font-semibold uppercase tracking-wider text-slate-500';
 const td = 'px-4 py-3 align-middle';
 export const openChat = (id: string) => window.dispatchEvent(new CustomEvent('ops:open-conversation', { detail: id }));
@@ -172,15 +170,6 @@ export function AssistantSettingsForm() {
             </table>
           </div>
         </Card>
-      )}
-
-      {/* usage */}
-      {admin && cfg && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="card"><div className="text-2xs uppercase tracking-wider text-slate-500">Questions this month</div><div className="mt-1 text-xl font-semibold text-slate-100">{cfg.usage.questions}</div></div>
-          <div className="card"><div className="text-2xs uppercase tracking-wider text-slate-500">Input tokens</div><div className="mt-1 text-xl font-semibold text-slate-100">{fmt(cfg.usage.inputTokens + cfg.usage.cachedTokens)}</div><div className="text-2xs text-slate-500">{fmt(cfg.usage.cachedTokens)} from the cache</div></div>
-          <div className="card"><div className="text-2xs uppercase tracking-wider text-slate-500">Output tokens</div><div className="mt-1 text-xl font-semibold text-slate-100">{fmt(cfg.usage.outputTokens)}</div></div>
-        </div>
       )}
 
       {/* chat history */}
