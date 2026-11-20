@@ -169,13 +169,14 @@ export function NewApp() {
     try { return line ? JSON.parse(line) as { ok: boolean; step: string; error: string | null; port: number | null; tls: boolean; database: string | null; domain: string } : null; } catch { return null; }
   }, [job]);
 
-  if (error && !inst) return <Alert>{error}</Alert>;
-  if (!inst) return <Skeleton className="h-64" />;
-
+  // every hook above this line: the early returns below would otherwise change how many hooks run (React error #310)
   useEffect(() => {
     if (step !== 1 || mariadb !== undefined) return;
     api.components(instanceId).then((v) => { const m = v.components?.find((c) => c.id === 'mariadb'); setMariadb(m ? { installed: m.installed, active: m.active } : null); }).catch(() => setMariadb(null));
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (error && !inst) return <Alert>{error}</Alert>;
+  if (!inst) return <Skeleton className="h-64" />;
+
   const EXTERNAL_RE = /^(postgres|postgresql|mysql|mariadb)(\+[a-z0-9]+)?:\/\/\S+$/i;
   const dbOk = db !== 'external' ? !(db === 'mariadb' && mariadb && (!mariadb.installed || mariadb.active === false)) : EXTERNAL_RE.test(externalUrl.trim());
   const MODULE_RE = /^[A-Za-z_][A-Za-z0-9_.]{0,80}:[A-Za-z_][A-Za-z0-9_]{0,60}(\(\))?$/;
