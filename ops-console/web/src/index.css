@@ -27,6 +27,20 @@
 
   .input { @apply block w-full rounded-lg border border-ink-600 bg-ink-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500
                   focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/25; }
+  /* Native dropdowns, styled like the workspace menu: the same chevron, border, radius and focus ring, with option
+     lists in the theme's colours (dark and light). The chevron is a fixed mid-grey that reads on both themes. */
+  select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 0.65rem center; background-size: 14px 14px;
+    padding-right: 2.1rem; cursor: pointer;
+  }
+  select.input { padding-right: 2.1rem; }
+  select.input:hover:not(:disabled) { @apply border-ink-500; }
+  select:disabled { cursor: not-allowed; opacity: 0.6; }
+  select option, select optgroup { background-color: rgb(var(--ink-900)); color: rgb(var(--slate-200)); }
+  .select-sm { @apply rounded-lg border border-ink-600 bg-ink-950 py-1 pl-2.5 text-xs text-slate-200 hover:border-ink-500 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/25;
+               padding-right: 1.75rem; background-position: right 0.45rem center; background-size: 12px 12px; }
   .ask-window { background-color: rgb(var(--ask-bg)); }
   .ask-field { background-color: rgb(var(--ask-field)); }
   .label { @apply mb-1.5 block text-xs font-medium text-slate-400; }

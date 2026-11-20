@@ -228,7 +228,7 @@ export function AskPanel({ open, signal = 0, onOpen, onClose }: { open: boolean;
           </div>
           <div className="mt-2 flex items-center gap-2 text-2xs text-slate-500">
             {!convId && (status?.models?.length ?? 0) > 1 && (
-              <select className="rounded border border-ink-600 bg-transparent px-1.5 py-0.5 text-2xs text-slate-300" value={modelId ?? status?.defaultModelId ?? ''}
+              <select className="select-sm py-0.5 text-2xs" value={modelId ?? status?.defaultModelId ?? ''}
                       onChange={(e) => setModelId(e.target.value)} aria-label="Model for this chat">
                 {status!.models!.map((m) => <option key={m.id} value={m.id}>{m.model}{m.isDefault ? ' (default)' : ''}</option>)}
               </select>
