@@ -18,6 +18,8 @@ export interface AwsProvider {
     documentsReady?(region: string): Promise<boolean>;
     /** Whether one of the console's SSM documents exists in a region (newer ones arrive with a connection update). */
     documentExists?(region: string, name: string): Promise<boolean>;
+    /** A document's parameter names (null: the document doesn't exist), to tell which version an account has. */
+    documentParameters?(region: string, name: string): Promise<string[] | null>;
     /** Run one of the console's fixed SSM documents (no free-form commands) and return stdout. */
     runDocument(region: string, id: string, document: string, parameters?: Record<string, string[]>, timeoutMs?: number): Promise<string>;
     /** Start a fixed document without waiting (long jobs such as deploys); returns the command id. */
@@ -364,6 +366,15 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
                 return true;
             } catch (err) {
                 if ((err as { name?: string }).name === 'InvalidDocument') return false;
+                throw new Error(awsErrorMessage(err, region));
+            }
+        },
+        async documentParameters(region, name) {
+            try {
+                const r = await ssmc(region).send(new DescribeDocumentCommand({ Name: name }));
+                return (r.Document?.Parameters ?? []).map((p) => p.Name ?? '').filter(Boolean);
+            } catch (err) {
+                if ((err as { name?: string }).name === 'InvalidDocument') return null;
                 throw new Error(awsErrorMessage(err, region));
             }
         },
