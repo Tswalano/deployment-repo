@@ -1,5 +1,8 @@
 #!/bin/bash
-# OpsConsole-CreateApp: set up a NEW Node.js app on this instance from a GitHub repository, then deploy it.
+# OpsConsole-CreateApp: set up a NEW Node.js or Python app on this instance from a GitHub repository, then deploy it.
+#   Python: the chosen version (installed from the OS repositories if missing), a virtual environment in
+#   /opt/venvs/<project>, dependencies from requirements.txt or pyproject.toml, uvicorn (FastAPI) or gunicorn
+#   (Flask, Django) started on the app's module, migrations with Alembic or manage.py migrate.
 #   clone (as ec2-user, private repos through a short-lived token the console leaves in SSM) → pick a free port →
 #   project conf in /opt/deploy-state/projects (survives deploy.sh's rsync) → SSM /apps/<p>/{PORT,NODE_ENV}
 #   → optional Postgres role + database (password generated here, DATABASE_URL straight to SSM)
@@ -21,6 +24,10 @@ DOMAIN='{{ domain }}'
 DB='{{ db }}'
 MEM='{{ memoryMb }}'
 ACTOR='{{ actor }}'
+RUNTIME='{{ runtime }}'
+PYVER='{{ pythonVersion }}'
+FRAMEWORK='{{ framework }}'
+APPMODULE='{{ appModule }}'
 
 LOG="$(mktemp /tmp/opsconsole-create.XXXXXX)"
 exec 3>&1 >"$LOG" 2>&1
@@ -51,6 +58,7 @@ undo() {
       ssm)    for k in PORT NODE_ENV DATABASE_URL; do aws ssm delete-parameter --region "$REGION" --name "/apps/$PROJECT/$k" 2>/dev/null; done ;;
       conf)   rm -f "$STATE_PROJ/$PROJECT.conf"; rm -rf "/opt/deploy-state/$PROJECT" ;;   # the pipeline's history/backups dir for this new app
       clone)  rm -rf "/opt/apps/$PROJECT" ;;
+      venv)   rm -rf "/opt/venvs/$PROJECT" ;;
     esac
   done
 }
@@ -72,6 +80,14 @@ asec2() { runuser -u ec2-user -- env -i HOME=/home/ec2-user USER=ec2-user LANG=C
 [[ "$DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$ ]] || fail "invalid domain"
 [[ "$MEM" =~ ^[0-9]{2,4}$ ]] && (( MEM >= 64 && MEM <= 2048 )) || fail "memory must be 64-2048 MB"
 [[ "$ACTOR" =~ ^[A-Za-z0-9._@:-]{1,64}$ ]] || fail "invalid actor"
+[[ "$RUNTIME" == node || "$RUNTIME" == python ]] || fail "invalid runtime"
+if [[ "$RUNTIME" == python ]]; then
+  [[ "$PYVER" =~ ^3\.1[0-9]$ ]] || fail "choose a Python version"
+  [[ "$FRAMEWORK" =~ ^(fastapi|flask|django)$ ]] || fail "choose the framework (FastAPI, Flask or Django)"
+  [[ "$APPMODULE" =~ ^[A-Za-z_][A-Za-z0-9_.]{0,80}:[A-Za-z_][A-Za-z0-9_]{0,60}(\(\))?$ ]] || fail "invalid app module (e.g. app.main:app)"
+  [[ -z "$MIGRATE" || "$MIGRATE" == alembic || "$MIGRATE" == django ]] || fail "Python migrations are alembic or django"
+fi
+VENV="/opt/venvs/$PROJECT"
 
 STEP=checks
 [[ -e "/opt/deploy/projects/$PROJECT.conf" || -e "$STATE_PROJ/$PROJECT.conf" ]] && fail "a project called $PROJECT already exists"
@@ -121,8 +137,28 @@ install -d -m 0755 -o ec2-user -g ec2-user /opt/apps
 CREATED+=(clone)
 asec2 git clone --quiet --branch "$BRANCH" "https://github.com/$REPO.git" "/opt/apps/$PROJECT" || fail "git clone failed (does the GitHub App have access to $REPO?)"
 APPDIR="/opt/apps/$PROJECT${SUBDIR:+/$SUBDIR}"
-[[ -f "$APPDIR/package.json" ]] || fail "no package.json in ${SUBDIR:-the repository root}"
+if [[ "$RUNTIME" == node ]]; then
+  [[ -f "$APPDIR/package.json" ]] || fail "no package.json in ${SUBDIR:-the repository root}"
+else
+  [[ -f "$APPDIR/requirements.txt" || -f "$APPDIR/pyproject.toml" ]] || fail "no requirements.txt or pyproject.toml in ${SUBDIR:-the repository root}"
+  [[ "$FRAMEWORK" != django || -f "$APPDIR/manage.py" ]] || fail "no manage.py in ${SUBDIR:-the repository root} (Django)"
+fi
 log "cloned $REPO@$BRANCH ($(asec2 git -C "/opt/apps/$PROJECT" rev-parse --short HEAD))"
+
+# ------------------------------------------------------------------ Python: interpreter and virtual environment
+if [[ "$RUNTIME" == python ]]; then
+  STEP=python
+  if [[ ! -x "/usr/bin/python$PYVER" ]]; then
+    log "installing Python $PYVER (OS packages)"
+    dnf -y -q install "python$PYVER" "python$PYVER-pip" >/tmp/opscreate-dnf.log 2>&1 || { tail -3 /tmp/opscreate-dnf.log; fail "could not install Python $PYVER"; }
+  fi
+  install -d -m 0755 -o ec2-user -g ec2-user /opt/venvs
+  [[ -e "$VENV" ]] && fail "$VENV already exists"
+  CREATED+=(venv)
+  asec2 "/usr/bin/python$PYVER" -m venv "$VENV" || fail "could not create the virtual environment"
+  asec2 "$VENV/bin/pip" install -q --disable-pip-version-check --upgrade pip >/dev/null 2>&1 || log "⚠ could not upgrade pip (continuing)"
+  log "Python $("$VENV/bin/python" -V 2>&1 | cut -d' ' -f2) in $VENV"
+fi
 
 # ------------------------------------------------------------------ database (optional)
 if [[ "$DB" == yes ]]; then
@@ -147,12 +183,30 @@ fi
 STEP=settings
 [[ " ${CREATED[*]} " == *" ssm "* ]] || CREATED+=(ssm)
 aws ssm put-parameter --region "$REGION" --name "/apps/$PROJECT/PORT" --type String --value "$PORT" --overwrite >/dev/null || fail "could not save PORT"
-aws ssm put-parameter --region "$REGION" --name "/apps/$PROJECT/NODE_ENV" --type String --value production --overwrite >/dev/null || fail "could not save NODE_ENV"
+if [[ "$RUNTIME" == node ]]; then
+  aws ssm put-parameter --region "$REGION" --name "/apps/$PROJECT/NODE_ENV" --type String --value production --overwrite >/dev/null || fail "could not save NODE_ENV"
+fi
 
 # ------------------------------------------------------------------ project conf (pipeline + ops agent)
 STEP=conf
 install -d -m 0755 -o ec2-user -g ec2-user "$STATE_PROJ"
-INSTALL="npm ci --no-audit --no-fund"; [[ -f "$APPDIR/package-lock.json" ]] || INSTALL="npm install --no-audit --no-fund"
+PIPQ="-q --disable-pip-version-check"
+if [[ "$RUNTIME" == node ]]; then
+  INSTALL="npm ci --no-audit --no-fund"; [[ -f "$APPDIR/package-lock.json" ]] || INSTALL="npm install --no-audit --no-fund"
+  BUILDC="$([[ "$BUILD" == yes ]] && echo "npm run build")"
+  MIGRATEC="$([[ -n "$MIGRATE" ]] && echo "npm run $MIGRATE")"
+else
+  # dependencies on every deploy (a rollback installs the old commit's); the server package is added if the app doesn't list it
+  if [[ "$FRAMEWORK" == fastapi ]]; then SRV=uvicorn; SRVPKG="'uvicorn[standard]'"; else SRV=gunicorn; SRVPKG=gunicorn; fi
+  if [[ -f "$APPDIR/requirements.txt" ]]; then DEPS="$VENV/bin/pip install $PIPQ -r requirements.txt"; else DEPS="$VENV/bin/pip install $PIPQ ."; fi
+  INSTALL="$DEPS && { $VENV/bin/python -c 'import $SRV' 2>/dev/null || $VENV/bin/pip install $PIPQ $SRVPKG; }"
+  BUILDC="$([[ "$BUILD" == yes && "$FRAMEWORK" == django ]] && echo "$VENV/bin/python manage.py collectstatic --noinput")"
+  case "$MIGRATE" in
+    alembic) MIGRATEC="$VENV/bin/alembic upgrade head" ;;
+    django)  MIGRATEC="$VENV/bin/python manage.py migrate --noinput" ;;
+    *)       MIGRATEC="" ;;
+  esac
+fi
 CREATED+=(conf)
 cat > "$STATE_PROJ/$PROJECT.conf" <<CONF
 # Created by the Ops Console (OpsConsole-CreateApp) for $REPO; kept in the state dir so deploy.sh never removes it.
@@ -161,8 +215,9 @@ SOURCE_DIR="/opt/apps/$PROJECT"
 BRANCH="$BRANCH"
 APP_SUBDIR="${SUBDIR:-.}"
 INSTALL_CMD="$INSTALL"
-BUILD_CMD="$([[ "$BUILD" == yes ]] && echo "npm run build")"
-MIGRATE_CMD="$([[ -n "$MIGRATE" ]] && echo "npm run $MIGRATE")"
+BUILD_CMD="$BUILDC"
+MIGRATE_CMD="$MIGRATEC"
+RUNTIME="$RUNTIME"
 DB_NAME="$DBNAME"
 HEALTH_URL="http://127.0.0.1:$PORT$HEALTH"
 DOMAIN="$DOMAIN"
@@ -171,7 +226,18 @@ chown ec2-user: "$STATE_PROJ/$PROJECT.conf"; chmod 0644 "$STATE_PROJ/$PROJECT.co
 
 # ------------------------------------------------------------------ systemd unit
 STEP=service
-EXEC="/usr/bin/npm run $START"; [[ "$START" == start ]] && EXEC="/usr/bin/npm start"
+if [[ "$RUNTIME" == node ]]; then
+  EXEC="/usr/bin/npm run $START"; [[ "$START" == start ]] && EXEC="/usr/bin/npm start"
+  ENVLINE="NODE_ENV=production PORT=$PORT"
+else
+  # two worker processes; only this server talks to the app (nginx in front), so trust its forwarded headers only
+  if [[ "$FRAMEWORK" == fastapi ]]; then
+    EXEC="$VENV/bin/uvicorn \"$APPMODULE\" --host 127.0.0.1 --port $PORT --workers 2 --proxy-headers --forwarded-allow-ips=127.0.0.1"
+  else
+    EXEC="$VENV/bin/gunicorn \"$APPMODULE\" --bind 127.0.0.1:$PORT --workers 2 --access-logfile - --forwarded-allow-ips=127.0.0.1"
+  fi
+  ENVLINE="PYTHONUNBUFFERED=1 PORT=$PORT"
+fi
 CREATED+=(unit)
 cat > "/etc/systemd/system/$PROJECT.service" <<UNIT
 # Created by the Ops Console for $REPO. Secrets: SSM /apps/$PROJECT/* loaded by app-secrets@$PROJECT.
@@ -186,7 +252,7 @@ Type=simple
 User=ec2-user
 WorkingDirectory=$APPDIR
 EnvironmentFile=/run/app-secrets/$PROJECT.env
-Environment=NODE_ENV=production PORT=$PORT
+Environment=$ENVLINE
 ExecStart=$EXEC
 Restart=on-failure
 RestartSec=5

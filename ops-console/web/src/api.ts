@@ -163,7 +163,10 @@ export interface AppAddresses {
   platform?: { base: string | null } | null;
 }
 export interface AppAddress { domain: string; kind: string | null; tls: boolean; expected: string | null; resolves: string[] }
-export interface Detection { found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
+export type AppRuntime = 'node' | 'python';
+export type PyFramework = 'fastapi' | 'flask' | 'django';
+export interface PythonDetection { framework: PyFramework | null; module: string | null; version: string; migrate: 'alembic' | 'django' | null; deps: string; hasServer: boolean; warnings: string[] }
+export interface Detection { runtime?: AppRuntime | null; python?: PythonDetection | null; found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
 export interface NewAppCheck {
   project: { ok: boolean; reason?: string }; domain: { status: 'free' | 'ours' | 'taken' | 'invalid' | 'external'; name: string; reason?: string };
   memoryMb: number | null; memoryWarning: string | null; publicIp: string | null; appsDomain: string;
@@ -171,6 +174,7 @@ export interface NewAppCheck {
 export interface NewAppBody {
   project: string; repo: string; branch: string; subdir: string; start: string; build: boolean; migrate: string; healthPath: string;
   subdomain: string; db: boolean; memoryMb: number; confirmLowMemory?: boolean; override?: string;
+  runtime?: AppRuntime; pythonVersion?: string; framework?: PyFramework | ''; appModule?: string;
 }
 export interface GithubRepo { fullName: string; private: boolean; defaultBranch: string; pushedAt: string | null; description: string | null }
 export interface EnvVar { key: string; kind: 'db' | 'jwt' | 'provider' | 'secret' | 'config'; version: number; lastModified: string | null; lastModifiedBy: string | null; generated: boolean }

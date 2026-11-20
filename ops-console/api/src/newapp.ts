@@ -62,16 +62,68 @@ const RESERVED = new Set(['ops-console', 'ops-dashboard', 'postgres', 'postgresq
 const LOW_MEMORY_MB = 120, WARN_MEMORY_MB = 250;
 
 // ------------------------------------------------------------------ detect from package.json
+export type Runtime = 'node' | 'python';
+export type Framework = 'fastapi' | 'flask' | 'django';
+export interface PythonDetection {
+    framework: Framework | null; module: string | null; version: string; migrate: 'alembic' | 'django' | null;
+    deps: 'requirements.txt' | 'pyproject.toml'; hasServer: boolean; warnings: string[];
+}
+export const PYTHON_VERSIONS = ['3.11', '3.12', '3.13'];
+export const MODULE_RE = /^[A-Za-z_][A-Za-z0-9_.]{0,80}:[A-Za-z_][A-Za-z0-9_]{0,60}(\(\))?$/;
 export interface Detection {
+    /** The runtime suggested for the repository; the other one, when present too, can still be chosen. */
+    runtime: Runtime | null; python: PythonDetection | null;
     found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null;
     healthPath: string; node: string | null; warnings: string[];
     /** Builds static files only (Vite/CRA/…) with no server framework: nothing would answer the health check. */
     frontend: boolean;
 }
+/** Python: framework, the app's module (what uvicorn/gunicorn load), version and migrations, from a few repository files. */
+export async function detectPython(repo: string, branch: string, subdir = ''): Promise<PythonDetection | null> {
+    const base = subdir ? `${subdir.replace(/\/+$/, '')}/` : '';
+    const get = (f: string) => repoFile(repo, `${base}${f}`, branch).catch(() => null);
+    const [req, pyproject, manage, alembic, pyver] = await Promise.all([get('requirements.txt'), get('pyproject.toml'), get('manage.py'), get('alembic.ini'), get('.python-version')]);
+    if (!req && !pyproject) return null;
+    const deps = `${req ?? ''}\n${pyproject ?? ''}`.toLowerCase();
+    const has = (pkg: string) => new RegExp(`(^|[\\s"'\\[,])${pkg}([\\s"'<>=~!\\[;,]|$)`, 'm').test(deps);
+    const framework: Framework | null = manage || has('django') ? 'django' : has('fastapi') ? 'fastapi' : has('flask') ? 'flask' : null;
+    const warnings: string[] = [];
+    let module: string | null = null;
+    const toModule = (file: string, name: string) => `${file.replace(/\.py$/, '').replace(/\/__init__$/, '').replace(/\//g, '.')}:${name}`;
+    if (framework === 'django') {
+        const settings = /DJANGO_SETTINGS_MODULE['"]\s*,\s*['"]([A-Za-z_][A-Za-z0-9_.]*)\.settings/.exec(manage ?? '')?.[1];
+        if (settings) module = `${settings}.wsgi:application`;
+        warnings.push('Django: add the app\'s domain to ALLOWED_HOSTS (and CSRF_TRUSTED_ORIGINS with https://) in its settings, or read them from an environment variable set under the app\'s settings.');
+    } else if (framework) {
+        const cands = framework === 'fastapi' ? ['main.py', 'app/main.py', 'app.py', 'src/main.py', 'api/main.py', 'app/__init__.py'] : ['app.py', 'wsgi.py', 'main.py', 'app/__init__.py', 'run.py', 'src/app.py'];
+        const cls = framework === 'fastapi' ? 'FastAPI' : 'Flask';
+        for (const f of cands) {
+            const src = await get(f);
+            if (!src) continue;
+            const v = new RegExp(`^([A-Za-z_][A-Za-z0-9_]*)\\s*(?::[^=]+)?=\\s*${cls}\\(`, 'm').exec(src)?.[1];
+            if (v) { module = toModule(f, v); break; }
+            if (framework === 'flask' && /^def create_app\(/m.test(src)) { module = toModule(f, 'create_app()'); break; }
+        }
+    }
+    if (framework && !module) warnings.push(`Couldn't find the ${framework === 'django' ? 'WSGI application' : `${framework === 'fastapi' ? 'FastAPI' : 'Flask'} app object`}: enter its module, for example ${framework === 'django' ? 'mysite.wsgi:application' : 'app.main:app'}.`);
+    if (!framework) warnings.push('No FastAPI, Flask or Django dependency found: choose the framework and the app\'s module.');
+    const hasServer = framework === 'fastapi' ? has('uvicorn') : has('gunicorn');
+    if (framework && !hasServer) warnings.push(`${framework === 'fastapi' ? 'uvicorn' : 'gunicorn'} isn't in the dependencies: it is installed for the app automatically.`);
+    // version: .python-version, else requires-python's lower bound, else 3.12
+    const wanted = (pyver?.trim().match(/^3\.(\d{1,2})/) ?? /requires-python\s*=\s*["'][^"']*?3\.(\d{1,2})/.exec(pyproject ?? ''))?.[1];
+    let version = wanted ? `3.${wanted}` : '3.12';
+    if (!PYTHON_VERSIONS.includes(version)) {
+        warnings.push(`The repository asks for Python ${version}; the server offers ${PYTHON_VERSIONS.join(', ')}.`);
+        version = PYTHON_VERSIONS.find((v) => Number(v.split('.')[1]) >= Number(version.split('.')[1])) ?? '3.12';
+    }
+    return { framework, module, version, migrate: alembic ? 'alembic' : framework === 'django' ? 'django' : null, deps: req ? 'requirements.txt' : 'pyproject.toml', hasServer, warnings };
+}
+
 export async function detect(repo: string, branch: string, subdir = ''): Promise<Detection> {
     if (!REPO_RE.test(repo) || !BRANCH_RE.test(branch) || (subdir && (!SUBDIR_RE.test(subdir) || subdir.includes('..')))) throw new DeployError('Invalid repository, branch or folder.');
-    const raw = await repoFile(repo, `${subdir ? `${subdir.replace(/\/+$/, '')}/` : ''}package.json`, branch);
-    if (!raw) return { found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, frontend: false, warnings: [`No package.json in ${subdir || 'the repository root'} on ${branch}. Only Node.js apps are supported for now; if the app lives in a folder (e.g. backend), set the folder.`] };
+    const [raw, python] = await Promise.all([repoFile(repo, `${subdir ? `${subdir.replace(/\/+$/, '')}/` : ''}package.json`, branch), detectPython(repo, branch, subdir)]);
+    if (!raw && python) return { runtime: 'python', python, found: true, name: null, scripts: [], start: null, build: false, migrate: python.migrate, healthPath: '/', node: null, frontend: false, warnings: python.warnings };
+    if (!raw) return { runtime: null, python: null, found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, frontend: false, warnings: [`No package.json, requirements.txt or pyproject.toml in ${subdir || 'the repository root'} on ${branch}. Node.js and Python apps are supported; if the app lives in a folder (e.g. backend), set the folder.`] };
     let pkg: { name?: string; scripts?: Record<string, string>; engines?: { node?: string }; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     try { pkg = JSON.parse(raw); } catch { throw new DeployError('package.json is not valid JSON.'); }
     const scripts = Object.keys(pkg.scripts ?? {}).filter((s) => SCRIPT_RE.test(s));
@@ -90,7 +142,10 @@ export async function detect(repo: string, branch: string, subdir = ''): Promise
     if (frontend) {
         warnings.unshift(`This looks like a front-end app (${FRONTEND.filter((d) => d in deps).join(', ')}): its build makes static files and it has no server to start, so the first deploy's health check would fail. The console runs Node.js servers; hosting static front-ends isn't supported yet.`);
     }
-    return { found: true, name: pkg.name ?? null, scripts, start, build: scripts.includes('build'), migrate: pick(['db:migrate', 'migrate:deploy', 'migrate', 'prisma:deploy']),
+    // a front-end-only package.json next to a Python project (e.g. a Django app's asset tooling): the app is the Python one
+    const runtime: Runtime = frontend && python ? 'python' : 'node';
+    if (runtime === 'python') return { runtime, python, found: true, name: pkg.name ?? null, scripts: [], start: null, build: false, migrate: python!.migrate, healthPath: '/', node: null, frontend: false, warnings: python!.warnings };
+    return { runtime, python, found: true, name: pkg.name ?? null, scripts, start, build: scripts.includes('build'), migrate: pick(['db:migrate', 'migrate:deploy', 'migrate', 'prisma:deploy']),
         healthPath: '/', node, warnings, frontend };
 }
 
@@ -142,6 +197,7 @@ export async function check(inst: InstanceRow, project: string, subdomain: strin
 export interface NewApp {
     project: string; repo: string; branch: string; subdir: string; start: string; build: boolean; migrate: string;
     healthPath: string; subdomain: string; db: boolean; memoryMb: number; confirmLowMemory?: boolean; override?: string;
+    runtime: Runtime; pythonVersion: string; framework: Framework | ''; appModule: string;
 }
 
 export function validate(b: Record<string, unknown>): NewApp {
@@ -151,7 +207,20 @@ export function validate(b: Record<string, unknown>): NewApp {
         build: b.build === true, migrate: s('migrate'), healthPath: s('healthPath', '/') || '/', subdomain: s('subdomain').toLowerCase(),
         db: b.db === true, memoryMb: Math.round(Number(b.memoryMb ?? 256)), confirmLowMemory: b.confirmLowMemory === true,
         override: typeof b.override === 'string' ? b.override.trim().slice(0, 300) : undefined,
+        runtime: b.runtime === 'python' ? 'python' : 'node', pythonVersion: s('pythonVersion'), framework: (['fastapi', 'flask', 'django'].includes(s('framework')) ? s('framework') : '') as Framework | '',
+        appModule: s('appModule'),
     };
+    if (v.runtime === 'python') {
+        v.start = 'start';   // not used for Python: the start command is built from the framework and module
+        if (!PYTHON_VERSIONS.includes(v.pythonVersion)) throw new DeployError(`Choose a Python version (${PYTHON_VERSIONS.join(', ')}).`);
+        if (!v.framework) throw new DeployError('Choose the framework: FastAPI, Flask or Django.');
+        if (!MODULE_RE.test(v.appModule)) throw new DeployError('Enter the app\'s module, for example app.main:app (FastAPI), app:app (Flask) or mysite.wsgi:application (Django).');
+        if (v.migrate && v.migrate !== 'alembic' && v.migrate !== 'django') throw new DeployError('Python migrations are Alembic or Django.');
+        if (v.migrate === 'django' && v.framework !== 'django') throw new DeployError('manage.py migrate is for Django apps.');
+        if (v.build && v.framework !== 'django') v.build = false;   // collectstatic is the only Python build step
+    } else {
+        v.pythonVersion = ''; v.framework = ''; v.appModule = '';
+    }
     if (!PROJECT_NEW_RE.test(v.project)) throw new DeployError('Invalid app name.');
     if (!REPO_RE.test(v.repo)) throw new DeployError('Invalid repository.');
     if (!BRANCH_RE.test(v.branch) || v.branch.includes('..')) throw new DeployError('Invalid branch.');
@@ -174,6 +243,10 @@ export async function createApp(inst: InstanceRow, v: NewApp, user: Requester): 
     const freeze = activeFreeze(policy, inst.environment);
     if (freeze && (!v.override || v.override.length < 10)) {
         throw new DeployError(`Deploys to ${inst.environment} are frozen (“${freeze.name}”). Give an override reason to create the app anyway.`, 409, 'frozen');
+    }
+    if (v.runtime === 'python' && aws().documentParameters) {
+        const params = await aws().documentParameters!(inst.region, CREATE_DOCUMENT).catch(() => null);
+        if (params && !params.includes('runtime')) throw new DeployError('This AWS account needs a connection update before Python apps can be created (see the notice on the server page\'s Components card).', 409, 'connection_update_needed');
     }
     await repoToken(v.repo);   // throws a clear error if the GitHub App can't see the repository
     // DNS first, and wait until Route 53 reports it live (capped so the request stays well under proxy timeouts)
@@ -207,10 +280,11 @@ export async function createApp(inst: InstanceRow, v: NewApp, user: Requester): 
             project: [v.project], repo: [v.repo], branch: [v.branch], appSubdir: [v.subdir], startScript: [v.start], build: [v.build ? 'yes' : 'no'],
             migrateScript: [v.migrate], healthPath: [v.healthPath], domain: [c.domain.name], db: [v.db ? 'yes' : 'no'], memoryMb: [String(v.memoryMb)],
             actor: [actorFor(user.username)],
+            runtime: [v.runtime], pythonVersion: [v.pythonVersion], framework: [v.framework], appModule: [v.appModule],
         });
         const { rows } = await db().query<DeploymentRow>('UPDATE deployments SET command_id = $2 WHERE id = $1 RETURNING *', [row.id, commandId]);
         await announce(`[NEW APP] ${user.username} is creating ${v.project} on ${inst.name}`,
-            `${v.repo}@${v.branch} → https://${c.domain.name}${v.db ? ' with a Postgres database' : ''}${dryRun ? ' (dry run)' : ''}.`, 'new-app');
+            `${v.repo}@${v.branch} (${v.runtime === 'python' ? `Python ${v.pythonVersion}, ${v.framework}` : 'Node.js'}) → https://${c.domain.name}${v.db ? ' with a Postgres database' : ''}${dryRun ? ' (dry run)' : ''}.`, 'new-app');
         return rows[0];
     } catch (err) {
         const msg = `Couldn't start via SSM: ${(err as Error).message.slice(0, 200)}`;

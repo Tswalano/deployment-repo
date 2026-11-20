@@ -139,13 +139,29 @@ global.fetch = async (url, init = {}) => {
     const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
     if (u.endsWith('/app/installations')) return json([{ id: 77, account: { login: 'Tswalano' }, repository_selection: 'selected' }]);
     if (u.includes('/app/installations/77/access_tokens')) return json({ token: 'ghs_SECRET_installation_token' });
-    if (u.includes('/installation/repositories')) return json({ total_count: 2, repositories: [
+    if (u.includes('/installation/repositories')) return json({ total_count: 5, repositories: [
         { full_name: 'Tswalano/shop', private: true, default_branch: 'main', pushed_at: null, description: null },
-        { full_name: 'Tswalano/alpha', private: true, default_branch: 'main', pushed_at: null, description: null }] });
+        { full_name: 'Tswalano/alpha', private: true, default_branch: 'main', pushed_at: null, description: null },
+        ...['pyapi', 'site', 'flasky'].map((n) => ({ full_name: `Tswalano/${n}`, private: true, default_branch: 'main', pushed_at: null, description: null }))] });
     if (u.includes('/repos/Tswalano/shop/contents/package.json')) return json({ content: Buffer.from(JSON.stringify(PKG)).toString('base64'), encoding: 'base64' });
     if (u.includes('/repos/Tswalano/shop/contents/backend/package.json')) return json({ message: 'Not Found' }, 404);
     if (u.includes('/repos/Tswalano/shop/contents/spa/package.json')) return json({ content: Buffer.from(JSON.stringify({ name: 'spa', scripts: { dev: 'vite', build: 'tsc && vite build', preview: 'vite preview' }, devDependencies: { vite: '^5', typescript: '^5' }, dependencies: { react: '^18' } })).toString('base64'), encoding: 'base64' });
+    const py = PY_FILES[decodeURI(u.replace(/^https:\/\/api\.github\.com\/repos\//, '').replace(/\?.*$/, '')).replace('/contents/', ':')];
+    if (py !== undefined) return py === null ? json({ message: 'Not Found' }, 404) : json({ content: Buffer.from(py).toString('base64'), encoding: 'base64' });
+    if (/\/repos\/Tswalano\/(pyapi|site|flasky)\/contents\//.test(u) || /\/contents\/(backend|spa)\/(requirements\.txt|pyproject\.toml|manage\.py|alembic\.ini|\.python-version)/.test(u)
+        || /\/repos\/Tswalano\/shop\/contents\/(requirements\.txt|pyproject\.toml|manage\.py|alembic\.ini|\.python-version)/.test(u)) return json({ message: 'Not Found' }, 404);
     return json({ message: 'unexpected ' + u }, 500);
+};
+// Python repositories: FastAPI with Alembic, Django, and a Flask app factory
+const PY_FILES = {
+    'Tswalano/pyapi:requirements.txt': 'fastapi==0.115.0\nsqlalchemy>=2\nalembic\npsycopg2-binary\n',
+    'Tswalano/pyapi:alembic.ini': '[alembic]\nscript_location = migrations\n',
+    'Tswalano/pyapi:.python-version': '3.11\n',
+    'Tswalano/pyapi:app/main.py': 'from fastapi import FastAPI\n\napp = FastAPI(title="api")\n',
+    'Tswalano/site:requirements.txt': 'Django>=5.0\ngunicorn\n',
+    'Tswalano/site:manage.py': "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+    'Tswalano/flasky:pyproject.toml': '[project]\nname = "flasky"\nrequires-python = ">=3.12"\ndependencies = ["flask>=3"]\n',
+    'Tswalano/flasky:app/__init__.py': 'from flask import Flask\n\ndef create_app():\n    return Flask(__name__)\n',
 };
 
 let id;
@@ -230,7 +246,8 @@ test('create: DNS record, repo-scoped token left in SSM, fixed document with val
     const [doc, params] = fake.sent.at(-1);
     assert.equal(doc, 'OpsConsole-CreateApp');
     assert.deepEqual(params, { project: ['shop'], repo: ['Tswalano/shop'], branch: ['main'], appSubdir: [''], startScript: ['start'], build: ['yes'],
-        migrateScript: ['db:migrate'], healthPath: ['/health'], domain: ['shop.glenify.studio'], db: ['yes'], memoryMb: ['256'], actor: ['admin@ops-console'] });
+        migrateScript: ['db:migrate'], healthPath: ['/health'], domain: ['shop.glenify.studio'], db: ['yes'], memoryMb: ['256'], actor: ['admin@ops-console'],
+        runtime: ['node'], pythonVersion: [''], framework: [''], appModule: [''] });
     assert.ok(!JSON.stringify(params).includes('ghs_'), 'the token never travels in the command');
     assert.equal((await a.post(`/api/instances/${id}/new-app`, base)).status, 409, 'one creation at a time');
 
@@ -285,4 +302,41 @@ test('local test mode simulates CreateApp and DNS without touching AWS', () => {
             console.log(cid.startsWith('dryrun-') ? 'simulated' : 'REAL');
         })().catch((e) => { console.log('ERR', e.message); process.exit(1); });`], { env: { ...process.env, OPS_DRY_RUN: '1', AWS_ACCESS_KEY_ID: 'none', AWS_SECRET_ACCESS_KEY: 'none', AWS_EC2_METADATA_DISABLED: 'true' }, encoding: 'utf8' });
     assert.equal(out.trim(), 'simulated');
+});
+
+test('python: detection of FastAPI, Django and Flask projects (framework, module, version, migrations)', async () => {
+    const a = await signedIn('admin');
+    const d = async (repo) => (await a.get(`/api/github/detect?repo=Tswalano/${repo}&branch=main`)).json;
+    const api = await d('pyapi');
+    assert.equal(api.runtime, 'python');
+    assert.deepEqual([api.python.framework, api.python.module, api.python.version, api.python.migrate, api.python.deps], ['fastapi', 'app.main:app', '3.11', 'alembic', 'requirements.txt']);
+    assert.ok(api.warnings.some((w) => /uvicorn isn't in the dependencies/.test(w)), 'uvicorn will be added');
+    const site = await d('site');
+    assert.deepEqual([site.python.framework, site.python.module, site.python.migrate, site.python.hasServer], ['django', 'mysite.wsgi:application', 'django', true]);
+    assert.ok(site.warnings.some((w) => /ALLOWED_HOSTS/.test(w)));
+    const flask = await d('flasky');
+    assert.deepEqual([flask.python.framework, flask.python.module, flask.python.version, flask.python.deps], ['flask', 'app:create_app()', '3.12', 'pyproject.toml']);
+    // a Node project is still Node
+    assert.equal((await d('shop')).runtime, 'node');
+});
+
+test('python: create validates the framework, module, version and migrations, and sends exactly the Python parameters', async () => {
+    const a = await signedIn('admin');
+    fake.memAvailable = 600 * 1048576;
+    await a.get(`/api/instances/${id}?refresh=1`);
+    const py = { project: 'pyapi', repo: 'Tswalano/pyapi', branch: 'main', subdir: '', healthPath: '/health', subdomain: 'pyapi', db: true, memoryMb: 256,
+        runtime: 'python', pythonVersion: '3.11', framework: 'fastapi', appModule: 'app.main:app', migrate: 'alembic' };
+    const n = fake.sent.length;
+    for (const bad of [{ appModule: 'app.main:app; curl evil' }, { appModule: 'x' }, { pythonVersion: '3.9' }, { framework: 'rails' }, { migrate: 'django' }, { migrate: 'npm run x' }]) {
+        assert.equal((await a.post(`/api/instances/${id}/new-app`, { ...py, ...bad })).status, 400, JSON.stringify(bad));
+    }
+    assert.equal(fake.sent.length, n, 'nothing reached SSM');
+    const r = await a.post(`/api/instances/${id}/new-app`, py);
+    assert.equal(r.status, 202, JSON.stringify(r.json));
+    const [doc, params] = fake.sent.at(-1);
+    assert.equal(doc, 'OpsConsole-CreateApp');
+    assert.deepEqual([params.runtime, params.pythonVersion, params.framework, params.appModule, params.migrateScript, params.startScript, params.build],
+        [['python'], ['3.11'], ['fastapi'], ['app.main:app'], ['alembic'], ['start'], ['no']]);
+    finish(`cmd-${fake.sent.length}`, true, { database: 'pyapi', domain: 'pyapi.glenify.studio' });
+    assert.equal((await a.get(`/api/deployments/${r.json.deployment.id}`)).json.deployment.status, 'success');
 });

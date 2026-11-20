@@ -89,9 +89,13 @@ CREATE_PARAMS='{
   "domain":         {"type": "String", "allowedPattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,24}$"},
   "db":             {"type": "String", "allowedValues": ["yes", "no"]},
   "memoryMb":      {"type": "String", "default": "256", "allowedPattern": "^[0-9]{2,4}$"},
-  "actor":          {"type": "String", "allowedPattern": "^[A-Za-z0-9._@:-]{1,64}$"}
+  "actor":          {"type": "String", "allowedPattern": "^[A-Za-z0-9._@:-]{1,64}$"},
+  "runtime":        {"type": "String", "default": "node", "allowedValues": ["node", "python"]},
+  "pythonVersion": {"type": "String", "default": "", "allowedPattern": "^$|^3[.]1[0-9]$"},
+  "framework":      {"type": "String", "default": "", "allowedValues": ["", "fastapi", "flask", "django"]},
+  "appModule":     {"type": "String", "default": "", "allowedPattern": "^$|^[A-Za-z_][A-Za-z0-9_.]{0,80}:[A-Za-z_][A-Za-z0-9_]{0,60}([(][)])?$"}
 }'
-upsert OpsConsole-CreateApp create-app.sh "Ops Console: set up a new Node.js app from a GitHub repository and deploy it (rolls back on failure)" 1800 "$CREATE_PARAMS"
+upsert OpsConsole-CreateApp create-app.sh "Ops Console: set up a new Node.js or Python app from a GitHub repository and deploy it (rolls back on failure)" 1800 "$CREATE_PARAMS"
 upsert OpsConsole-AppDetail app-detail.sh "Ops Console: read-only detail of one project (unit, health, git, deploys, database)" 60 "$DETAIL_PARAMS"
 upsert OpsConsole-Security security-status.sh "Ops Console: read-only security snapshot (keys, SSH logins, sshd settings, OS updates; no parameters)" 180
 KEYS_PARAMS='{

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, Deployment, Detection, GithubRepo, Instance, NewAppCheck, NewAppCreation } from '../api';
+import { api, ApiError, AppRuntime, PyFramework, Deployment, Detection, GithubRepo, Instance, NewAppCheck, NewAppCreation } from '../api';
 import { ago, Alert, DesktopOnly, PageHeader, Skeleton } from '../components/ui';
 import { GithubGap, GithubNeeded } from '../components/GithubNeeded';
 
@@ -57,6 +57,11 @@ export function NewApp() {
   const [migrate, setMigrate] = useState('');
   const [healthPath, setHealthPath] = useState('/');
   const [frontendAck, setFrontendAck] = useState(false);
+  // Python apps
+  const [runtime, setRuntime] = useState<AppRuntime>('node');
+  const [framework, setFramework] = useState<PyFramework | ''>('');
+  const [appModule, setAppModule] = useState('');
+  const [pyVersion, setPyVersion] = useState('3.12');
   // step 2
   const [project, setProject] = useState(search.get('project') ?? '');
   const [subdomain, setSubdomain] = useState(search.get('subdomain') ?? '');
@@ -118,6 +123,9 @@ export function NewApp() {
         setDet(d); setFrontendAck(false);
         setStart(d.start ?? '');   // no start script: make the person choose one, never guess silently
         setBuild(d.build); setMigrate(d.migrate ?? ''); setHealthPath(d.healthPath || '/');
+        setRuntime(d.runtime === 'python' ? 'python' : 'node');
+        if (d.python) { setFramework(d.python.framework ?? ''); setAppModule(d.python.module ?? ''); setPyVersion(d.python.version); }
+        if (d.runtime === 'python') { setMigrate(d.python?.migrate ?? ''); setBuild(false); }
       }).catch((e) => setDet({ found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, warnings: [err(e)] }))
         .finally(() => setDetecting(false));
     }, 400);
@@ -148,7 +156,16 @@ export function NewApp() {
   if (error && !inst) return <Alert>{error}</Alert>;
   if (!inst) return <Skeleton className="h-64" />;
 
-  const step1Ok = !!repo && !!branch && !!det?.found && !!start && (!det?.frontend || frontendAck);
+  const MODULE_RE = /^[A-Za-z_][A-Za-z0-9_.]{0,80}:[A-Za-z_][A-Za-z0-9_]{0,60}(\(\))?$/;
+  const pyServer = framework === 'fastapi' ? 'uvicorn' : 'gunicorn';
+  const step1Ok = !!repo && !!branch && !!det?.found && (runtime === 'python'
+    ? !!framework && MODULE_RE.test(appModule) && !!pyVersion
+    : !!start && (!det?.frontend || frontendAck));
+  // switching runtime (a repository with both): each runtime's own migration choices
+  const switchRuntime = (r: AppRuntime) => {
+    setRuntime(r);
+    if (r === 'python') { setMigrate(det?.python?.migrate ?? ''); setBuild(false); } else { setMigrate(det?.migrate ?? ''); setBuild(!!det?.build); }
+  };
   const step2Ok = !!chk && chk.project.ok && (chk.domain.status === 'free' || chk.domain.status === 'ours' || chk.domain.status === 'external') && (chk.memoryMb == null || chk.memoryMb >= 120 || confirmLow);
   const domain = chk?.domain.name ?? `${subdomain}.${chk?.appsDomain ?? '…'}`;
   const scripts = det?.scripts ?? [];
@@ -157,7 +174,8 @@ export function NewApp() {
     setBusy(true); setError(null);
     try {
       const d = await api.createApp(instanceId, { project, repo, branch, subdir, start, build, migrate, healthPath, subdomain, db, memoryMb,
-        confirmLowMemory: confirmLow, override: needOverride ? override : undefined });
+        confirmLowMemory: confirmLow, override: needOverride ? override : undefined,
+        runtime, ...(runtime === 'python' ? { pythonVersion: pyVersion, framework, appModule } : {}) });
       started.current = Date.now(); setJob(d); setStep(3);
       setSearch({ job: String(d.id) }, { replace: true });   // a refresh comes back to this progress view
     } catch (e) {
@@ -199,10 +217,42 @@ export function NewApp() {
             {repo && (
               <div className="rounded-lg border border-ink-700 p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm font-medium text-slate-200">Detected from package.json</span>
-                  {detecting ? <span className="text-xs text-slate-500">reading…</span> : det?.found ? <span className="pill-ok">{det.name ?? 'Node.js app'}</span> : det ? <span className="pill-bad">not found</span> : null}
+                  <span className="text-sm font-medium text-slate-200">Detected from {runtime === 'python' ? (det?.python?.deps ?? 'the repository') : 'package.json'}</span>
+                  <span className="flex items-center gap-2">
+                    {det?.found && det.python && det.scripts.length > 0 && (
+                      <span className="flex rounded-lg border border-ink-600 p-0.5 text-xs" role="radiogroup" aria-label="Runtime">
+                        {(['node', 'python'] as const).map((r) => <button key={r} type="button" role="radio" aria-checked={runtime === r} onClick={() => switchRuntime(r)}
+                          className={`rounded-md px-2 py-0.5 ${runtime === r ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:text-slate-200'}`}>{r === 'node' ? 'Node.js' : 'Python'}</button>)}
+                      </span>
+                    )}
+                    {detecting ? <span className="text-xs text-slate-500">reading…</span> : det?.found ? <span className="pill-ok">{runtime === 'python' ? `Python${framework ? ` · ${{ fastapi: 'FastAPI', flask: 'Flask', django: 'Django' }[framework]}` : ''}` : det.name ?? 'Node.js app'}</span> : det ? <span className="pill-bad">not found</span> : null}
+                  </span>
                 </div>
-                {det?.found && (
+                {det?.found && runtime === 'python' && (
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <Field label="Framework" hint={framework ? `Runs with ${pyServer}` : 'How the app is served'}>
+                      <select className={`input ${framework ? '' : 'border-amber-500/60'}`} value={framework} onChange={(e) => { const f = e.target.value as PyFramework | ''; setFramework(f); if (f !== 'django') { setBuild(false); if (migrate === 'django') setMigrate(''); } }}>
+                        <option value="">Choose…</option><option value="fastapi">FastAPI (uvicorn)</option><option value="flask">Flask (gunicorn)</option><option value="django">Django (gunicorn)</option>
+                      </select>
+                    </Field>
+                    <Field label="App module" hint={framework === 'django' ? 'e.g. mysite.wsgi:application' : framework === 'flask' ? 'e.g. app:app or app:create_app()' : 'e.g. app.main:app'}>
+                      <input className={`input font-mono ${appModule && !MODULE_RE.test(appModule) ? 'border-rose-500/60' : !appModule ? 'border-amber-500/60' : ''}`} value={appModule} spellCheck={false} onChange={(e) => setAppModule(e.target.value.trim())} placeholder="package.module:app" />
+                    </Field>
+                    <Field label="Python version" hint="Installed on the server if missing">
+                      <select className="input" value={pyVersion} onChange={(e) => setPyVersion(e.target.value)}>{['3.11', '3.12', '3.13'].map((v) => <option key={v}>{v}</option>)}</select>
+                    </Field>
+                    <Field label="Database migrations" hint="Run on every deploy">
+                      <select className="input" value={migrate} onChange={(e) => setMigrate(e.target.value)}>
+                        <option value="">none</option><option value="alembic">Alembic (alembic upgrade head)</option>{framework === 'django' && <option value="django">Django (manage.py migrate)</option>}
+                      </select>
+                    </Field>
+                    {framework === 'django' && <Field label="Static files"><label className="mt-2 flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" className="accent-indigo-400" checked={build} onChange={(e) => setBuild(e.target.checked)} /> manage.py collectstatic</label></Field>}
+                    <Field label="Health check path" hint="Must answer 200 once the app is up">
+                      <input className="input font-mono" value={healthPath} onChange={(e) => setHealthPath(e.target.value.startsWith('/') ? e.target.value : `/${e.target.value}`)} />
+                    </Field>
+                  </div>
+                )}
+                {det?.found && runtime === 'node' && (
                   <div className="grid gap-4 md:grid-cols-4">
                     <Field label="Start with" hint={!start ? 'Pick the script that starts the server' : start === 'start' ? 'npm start' : `npm run ${start}`}>
                       <select className={`input ${start ? '' : 'border-amber-500/60'}`} value={start} onChange={(e) => setStart(e.target.value)}><option value="">Choose a script…</option>{scripts.map((s) => <option key={s}>{s}</option>)}</select>
@@ -217,7 +267,7 @@ export function NewApp() {
                   </div>
                 )}
                 {det?.warnings.map((w) => <p key={w} className="mt-3 text-sm text-amber-300">{w}</p>)}
-                {det?.frontend && (
+                {runtime === 'node' && det?.frontend && (
                   <label className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-3 text-sm text-amber-100">
                     <input type="checkbox" className="mt-0.5 accent-amber-400" checked={frontendAck} onChange={(e) => setFrontendAck(e.target.checked)} />
                     <span>I know this app has its own server (or I picked a script that serves it) and want to continue anyway.</span>
@@ -265,8 +315,9 @@ export function NewApp() {
         {step === 2 && (
           <section className="card space-y-5">
             <table className="tbl"><tbody>
-              {([['Repository', `${repo} · ${branch}${subdir ? ` · ${subdir}/` : ''}`], ['Runs', `${start === 'start' ? 'npm start' : `npm run ${start}`}${build ? ' after npm run build' : ''}`],
-                ['Migrations', migrate ? `npm run ${migrate} on every deploy` : 'none'], ['Address', `https://${domain}`], ['Database', db ? `Postgres database ${project.replace(/-/g, '_')}` : 'none'],
+              {([['Repository', `${repo} · ${branch}${subdir ? ` · ${subdir}/` : ''}`],
+                ['Runs', runtime === 'python' ? `${pyServer} ${appModule} (Python ${pyVersion}, its own virtual environment)${build ? ' after collectstatic' : ''}` : `${start === 'start' ? 'npm start' : `npm run ${start}`}${build ? ' after npm run build' : ''}`],
+                ['Migrations', !migrate ? 'none' : runtime === 'python' ? `${migrate === 'alembic' ? 'alembic upgrade head' : 'manage.py migrate'} on every deploy` : `npm run ${migrate} on every deploy`], ['Address', `https://${domain}`], ['Database', db ? `Postgres database ${project.replace(/-/g, '_')}` : 'none'],
                 ['Memory limit', `${memoryMb} MB`], ['Deploys', `automatically on every push to ${branch}`], ['Instance', `${inst.name} (${inst.region}, ${inst.environment})`]] as [string, string][]).map(([k, v]) => (
                 <tr key={k}><td className="w-[22%] text-slate-500">{k}</td><td className="text-slate-200" title={v}>{v}</td></tr>
               ))}

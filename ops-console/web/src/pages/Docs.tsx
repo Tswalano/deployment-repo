@@ -23,7 +23,7 @@ const ARTICLES: Article[] = [
       <UL>
         <li>An AWS account with permission to create a CloudFormation stack (once).</li>
         <li>A Linux server in that account: Amazon Linux 2023, <C>t4g.small</C> or larger is recommended.</li>
-        <li>Code on GitHub (private repositories are supported). Node.js web apps are supported today.</li>
+        <li>Code on GitHub (private repositories are supported). Back-end apps in Node.js (Express, Hono, Fastify, NestJS, …) or Python (FastAPI, Flask, Django) are supported.</li>
         <li>Optional: a domain whose DNS is hosted in Route 53 in the same account, for app addresses.</li>
       </UL>
       <H>Three steps</H>
@@ -78,11 +78,18 @@ const ARTICLES: Article[] = [
       <H>Creating an app</H>
       <OL>
         <li>On a prepared server, select <b>New app</b>, then a repository and branch.</li>
-        <li>The console reads <C>package.json</C>: a <C>start</C> script is required (or another script can be chosen), and a build script is used if present.</li>
+        <li>The console reads the repository. <b>Node.js:</b> <C>package.json</C> needs a <C>start</C> script (or another script can be chosen); a build script is used if present. <b>Python:</b> <C>requirements.txt</C> or <C>pyproject.toml</C>; the framework, the app&rsquo;s module (for example <C>app.main:app</C>), the Python version and migrations (Alembic, or Django&rsquo;s <C>manage.py migrate</C>) are filled in and can be changed.</li>
         <li>Choose a name and subdomain. Optionally add a PostgreSQL database; its connection string is provided as <C>DATABASE_URL</C>.</li>
         <li>Create the app. Creation usually takes 2 to 5 minutes, and the page can be closed meanwhile.</li>
       </OL>
-      <Note>The app must listen on the port in <C>process.env.PORT</C> and answer its health path (default <C>/</C>) with HTTP 200, for example <C>app.listen(process.env.PORT)</C>.</Note>
+      <Note>A Node.js app must listen on the port in <C>process.env.PORT</C> (for example <C>app.listen(process.env.PORT)</C>). A Python app is started by the console: <C>uvicorn</C> for FastAPI and <C>gunicorn</C> for Flask and Django, with two workers on the app&rsquo;s port, so it only needs its app object. Either way the app must answer its health path (default <C>/</C>) with HTTP 200.</Note>
+      <H>Python apps</H>
+      <UL>
+        <li>Each app gets its own virtual environment (<C>/opt/venvs/&lt;app&gt;</C>) with the chosen Python version, installed from the OS packages if the server doesn&rsquo;t have it yet.</li>
+        <li>Dependencies are installed on every deploy (a rollback installs the old commit&rsquo;s). <C>uvicorn</C> or <C>gunicorn</C> is added if the app doesn&rsquo;t list it.</li>
+        <li>Django: put the app&rsquo;s domain in <C>ALLOWED_HOSTS</C> (and <C>CSRF_TRUSTED_ORIGINS</C> with <C>https://</C>), and tick <b>collectstatic</b> if it serves static files (for example with WhiteNoise).</li>
+        <li>With a database, <C>DATABASE_URL</C> is a PostgreSQL URL; SQLAlchemy and Django (with <C>dj-database-url</C>) need a driver such as <C>psycopg</C> in the dependencies.</li>
+      </UL>
       <H>Automatic deploys</H>
       <P>Every push to the linked branch deploys that commit. If the new version fails its health check, the previous version is restored. Deploys, retries and rollbacks are on each app's <b>Deploy</b> tab; failures that were not fixed by a later deploy are listed under <b>Activity → Failed deployments</b>.</P>
     </>) },

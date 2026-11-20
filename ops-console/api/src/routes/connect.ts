@@ -38,8 +38,11 @@ async function updateNeeded(ws: number, region: string): Promise<boolean> {
     const hit = updateCache.get(ws);
     if (hit && Date.now() - hit.at < 10 * 60_000) return hit.needed;
     const has = aws().documentExists ? await aws().documentExists!(region, NEWEST_DOCUMENT).catch(() => true) : true;
-    updateCache.set(ws, { at: Date.now(), needed: !has });
-    return !has;
+    // CreateApp learned Python (its "runtime" parameter) after the first accounts connected
+    const create = has && aws().documentParameters ? await aws().documentParameters!(region, 'OpsConsole-CreateApp').catch(() => null) : null;
+    const needed = !has || (create !== null && !create.includes('runtime'));
+    updateCache.set(ws, { at: Date.now(), needed });
+    return needed;
 }
 export const forgetUpdateCheck = (ws: number) => updateCache.delete(ws);
 
