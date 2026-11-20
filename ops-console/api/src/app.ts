@@ -31,6 +31,7 @@ import { mcp } from './mcp';
 import mcpTokenRoutes from './routes/mcptokens';
 import { oauth, oauthConsent, wellKnown } from './oauth';
 import actionRoutes from './routes/actions';
+import componentRoutes from './routes/components';
 
 /** The API, without the HTTP server or static files (so tests can call it directly). */
 export function createApp() {
@@ -71,6 +72,7 @@ export function createApp() {
     app.route('/api', newapp);
     app.route('/api/instances', access);
     app.route('/api/instances', prepare);
+    app.route('/api/instances', componentRoutes);
     app.route('/api/ssh-keys', myKeys);
     app.route('/api/instances', apps);
     app.route('/api/instances', instances);

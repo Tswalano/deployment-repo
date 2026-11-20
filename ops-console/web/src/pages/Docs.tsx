@@ -119,6 +119,22 @@ const ARTICLES: Article[] = [
       <H>Server snapshots</H>
       <P>Optional: switch on <b>Server snapshots</b> on the Backups page for nightly snapshots of every server&rsquo;s disks, kept 7 days, to bring back a whole server. AWS bills snapshots separately (changed data only).</P>
     </>) },
+  { slug: 'components', group: 'Operate', title: 'Server components', summary: 'Databases, services and runtimes on a server.',
+    body: () => (<>
+      <P>A prepared server&rsquo;s page has a <b>Components</b> card. It lists what runs on the server besides the apps, with versions, whether each is running and how much memory it uses. Everything comes from Amazon Linux&rsquo;s own package repositories, so the versions offered are the ones the OS supports and updates.</P>
+      <UL>
+        <li><b>Databases:</b> PostgreSQL (one version per server; installed by Prepare server), MariaDB (works with MySQL clients and drivers) and SQLite (a database in a file; the tool is used for backups).</li>
+        <li><b>Services:</b> Valkey, the open-source, Redis-compatible store for caches, sessions and job queues (BullMQ, Celery, RQ), and nginx, in front of the apps.</li>
+        <li><b>Runtimes:</b> Python (several versions side by side; each app gets its own virtual environment) and Node.js.</li>
+      </UL>
+      <P>Admins can install, start, stop or remove a component. Each change runs in the background, one at a time per server (deploys wait for it), and shows in Activity. A few safeguards:</P>
+      <UL>
+        <li>Installs check free memory first: MariaDB needs about 300 MB, PostgreSQL about 150 MB and Valkey about 64 MB.</li>
+        <li>Databases and Valkey only listen on the server itself. On small servers MariaDB is set up to use little memory, and Valkey refuses new writes when full instead of silently dropping data.</li>
+        <li>PostgreSQL is never removed from the console, and isn&rsquo;t stopped on the server the console itself runs on. MariaDB is only removed when it holds no databases. Removing a component always keeps its data folder.</li>
+      </UL>
+      <P>An AWS account connected before components existed shows a one-time <b>connection update</b> on the card: update the CloudFormation stack with the current template (Replace template), then select Check now.</P>
+    </>) },
   { slug: 'assistant', group: 'Operate', title: 'Ask Ops Console', summary: 'Questions about the workspace, answered from live data.',
     body: () => (<>
       <P>Select <b>Ask</b> in the header (or open the <b>AI</b> page) and ask in plain language, for example <C>Did any deploy fail this week?</C> or <C>Which server is closest to running out of disk?</C>. The assistant looks up the answer in the workspace (servers, apps, deploys, alerts, uptime, backups and AWS costs) and shows what it checked.</P>

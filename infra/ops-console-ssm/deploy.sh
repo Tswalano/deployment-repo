@@ -113,3 +113,9 @@ HTTPS_PARAMS='{
   "project": {"type": "String", "allowedPattern": "^[a-z0-9][a-z0-9-]{0,31}$"}
 }'
 upsert OpsConsole-EnableHttps enable-https.sh "Ops Console: issue the HTTPS certificate of one console-created app once its domain points at this server" 300 "$HTTPS_PARAMS"
+COMPONENTS_PARAMS='{
+  "action":    {"type": "String", "allowedValues": ["list", "install", "start", "stop", "remove"], "default": "list"},
+  "component": {"type": "String", "allowedValues": ["", "postgresql", "mariadb", "valkey", "sqlite", "python"], "default": ""},
+  "version":   {"type": "String", "allowedPattern": "^[0-9]{0,2}([.][0-9]{1,2})?$", "default": ""}
+}'
+upsert OpsConsole-Components components.sh "Ops Console: list, install, start, stop or remove server components (PostgreSQL, MariaDB, Valkey, SQLite, Python) from the OS repositories" 1200 "$COMPONENTS_PARAMS"

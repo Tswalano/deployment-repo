@@ -16,6 +16,8 @@ export interface AwsProvider {
     ssmOnline(region: string, id: string): Promise<boolean>;
     /** Whether the console's SSM documents are installed in a region (documents are regional). Optional for fakes. */
     documentsReady?(region: string): Promise<boolean>;
+    /** Whether one of the console's SSM documents exists in a region (newer ones arrive with a connection update). */
+    documentExists?(region: string, name: string): Promise<boolean>;
     /** Run one of the console's fixed SSM documents (no free-form commands) and return stdout. */
     runDocument(region: string, id: string, document: string, parameters?: Record<string, string[]>, timeoutMs?: number): Promise<string>;
     /** Start a fixed document without waiting (long jobs such as deploys); returns the command id. */
@@ -356,6 +358,15 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
                 throw new Error(awsErrorMessage(err, region));
             }
         },
+        async documentExists(region, name) {
+            try {
+                await ssmc(region).send(new DescribeDocumentCommand({ Name: name }));
+                return true;
+            } catch (err) {
+                if ((err as { name?: string }).name === 'InvalidDocument') return false;
+                throw new Error(awsErrorMessage(err, region));
+            }
+        },
         async sendDocument(region, id, document, parameters) {
             const sent = await ssmc(region).send(new SendCommandCommand({
                 InstanceIds: [id], DocumentName: document, Parameters: parameters, TimeoutSeconds: 60, Comment: 'ops-console',
@@ -526,10 +537,12 @@ export function makeAws(credentials?: AwsCredentialIdentityProvider, dry = false
     const dryAware: AwsProvider = {
         ...realAws,
         async sendDocument(region, id, document, parameters) {
-            if (!['OpsConsole-Deploy', 'OpsConsole-CreateApp', 'OpsConsole-PrepareServer'].includes(document)) return real.sendDocument(region, id, document, parameters);
+            if (!['OpsConsole-Deploy', 'OpsConsole-CreateApp', 'OpsConsole-PrepareServer', 'OpsConsole-Components'].includes(document)) return real.sendDocument(region, id, document, parameters);
             const cid = `dryrun-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             const p = (k: string) => parameters[k]?.[0] ?? '';
-            simulated.set(cid, { at: Date.now(), text: document === 'OpsConsole-PrepareServer'
+            simulated.set(cid, { at: Date.now(), text: document === 'OpsConsole-Components'
+                ? `DRY RUN (local test mode): nothing was changed.\nWould ${p('action')} ${p('component')}${p('version') ? ` ${p('version')}` : ''}.\n${JSON.stringify({ ok: true, action: p('action'), component: p('component'), error: null, dryRun: true })}`
+                : document === 'OpsConsole-PrepareServer'
                 ? `DRY RUN (local test mode): nothing was installed.\nWould install nginx, git, certbot, PostgreSQL 15, Node.js, the console's server files, the status agent and backups.\n${JSON.stringify({ ok: true, step: 'done', error: null, node: 'v22 (simulated)', steps: ['packages (simulated)', 'PostgreSQL 15 (simulated)', 'server files (simulated)', 'status agent (simulated)', 'nightly database backups (simulated)', 'nginx running (simulated)'] })}`
                 : document === 'OpsConsole-CreateApp'
                 ? `DRY RUN (local test mode): nothing was changed.\nWould clone ${p('repo')}@${p('branch')} into /opt/apps/${p('project')}, create the service, ${p('db') === 'yes' ? 'a database, ' : ''}nginx + HTTPS for ${p('domain')} and run the first deploy.\n${JSON.stringify({ ok: true, step: 'done', error: null, port: 5000, tls: true, database: p('db') === 'yes' ? p('project').replace(/-/g, '_') : null, domain: p('domain'), dryRun: true })}`
