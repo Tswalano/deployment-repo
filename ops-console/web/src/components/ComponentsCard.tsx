@@ -135,7 +135,7 @@ export function ComponentsCard({ instanceId }: { instanceId: number }) {
                         {Object.keys(v.changeable).length > 0 && (
                           <td className={`${td} whitespace-nowrap text-right`}>
                             {installable && <span className="inline-flex items-center gap-1.5">
-                              {choices.length > 1 && <select className="rounded border border-ink-600 bg-transparent px-1.5 py-1 text-xs text-slate-300" value={pick[c.id] ?? choices[0]} onChange={(e) => setPick((p) => ({ ...p, [c.id]: e.target.value }))} aria-label={`${c.name} version`}>
+                              {choices.length > 1 && <select className="select-sm" value={pick[c.id] ?? choices[0]} onChange={(e) => setPick((p) => ({ ...p, [c.id]: e.target.value }))} aria-label={`${c.name} version`}>
                                 {choices.map((o) => <option key={o} value={o}>{o}</option>)}</select>}
                               <button className="btn-primary px-2.5 py-1 text-xs" onClick={() => void change(c, 'install')}>{smallIcon(Plus, 'h-3.5 w-3.5')}Install</button>
                             </span>}
