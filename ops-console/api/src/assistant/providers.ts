@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { randomBytes } from 'crypto';
 import { aws } from '../aws';
 import { config } from '../config';
 import { connection } from '../connections';
@@ -8,15 +9,20 @@ import { ActionCtx } from './actions';
 import { Role, runTool, toolDefs, toolLabel } from './tools';
 
 /**
- * The AI provider behind "Ask Ops Console" is the workspace's own: an admin picks Anthropic (Claude) or OpenAI and
- * pastes their API key, which is billed by that provider. The key is kept encrypted in the workspace's own AWS account
- * (SSM Parameter Store, SecureString), never in the console's database; the database only records the provider, the
- * model and the key's last four characters.
+ * The AI behind "Ask Ops Console" is the workspace's own: admins add an API key per provider (Anthropic for Claude,
+ * OpenAI for ChatGPT), billed by that provider, and pick the models people can use (one is the default). Keys are kept
+ * encrypted in the workspace's own AWS account (SSM Parameter Store, SecureString), never in the console's database;
+ * the database only records which keys exist (last four characters, who set them) and the models.
  */
 export type Provider = 'anthropic' | 'openai';
-export interface AssistantSettings { provider: Provider; model: string; keyLast4: string; updatedBy: string; updatedAt: string }
+export const PROVIDERS: Provider[] = ['anthropic', 'openai'];
 export const PROVIDER_NAMES: Record<Provider, string> = { anthropic: 'Claude (Anthropic)', openai: 'ChatGPT (OpenAI)' };
-const KEY_PARAM = '/apps/ops-console-assistant/API_KEY';   // in the workspace's AWS account (the connect role may write /apps/*)
+export interface KeyInfo { last4: string; updatedBy: string; updatedAt: string }
+export interface ModelEntry { id: string; provider: Provider; model: string; addedBy: string; addedAt: string }
+export interface AssistantConfig { keys: Partial<Record<Provider, KeyInfo>>; models: ModelEntry[]; defaultModelId: string | null; legacy?: Provider }
+// in the workspace's AWS account (the connect role may write /apps/*); one parameter per provider
+const keyParam = (p: Provider) => `/apps/ops-console-assistant/${p === 'anthropic' ? 'ANTHROPIC' : 'OPENAI'}_API_KEY`;
+const LEGACY_KEY_PARAM = '/apps/ops-console-assistant/API_KEY';   // the single key of the first version
 
 // Claude models offered (current generation; each supports the request below: adaptive thinking, effort, fallbacks)
 export const CLAUDE_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
@@ -30,7 +36,7 @@ let anthropicFactory: (apiKey: string) => Pick<Anthropic, 'beta' | 'models'> = (
 export function setAnthropicFactory(f: ((apiKey: string) => Pick<Anthropic, 'beta' | 'models'>) | null): void {
     anthropicFactory = f ?? ((apiKey) => new Anthropic({ apiKey }));
 }
-const keyCache = new Map<number, { at: number; key: string }>();
+const keyCache = new Map<string, { at: number; key: string }>();
 interface KeyStore { get(region: string, name: string): Promise<string | null>; put(region: string, name: string, v: string): Promise<void>; del(region: string, name: string): Promise<void> }
 const awsStore: KeyStore = { get: (r, n) => aws().getParameter!(r, n), put: (r, n, v) => aws().putParameter!(r, n, v), del: (r, n) => aws().deleteParameter!(r, n) };
 let store: KeyStore = awsStore;
@@ -38,43 +44,110 @@ export function setKeyStore(s: KeyStore | null): void { store = s ?? awsStore; k
 let openaiFetch: typeof fetch = (...a) => fetch(...a);
 export function setOpenAIFetch(f: typeof fetch | null): void { openaiFetch = f ?? ((...a) => fetch(...a)); }
 
-// ------------------------------------------------------------------ settings and the key (in the workspace's own AWS account)
-export async function getSettings(): Promise<AssistantSettings | null> {
-    const { rows } = await db().query<{ value: AssistantSettings }>("SELECT value FROM settings WHERE key = 'assistant'");
-    return rows[0]?.value ?? null;
+// ------------------------------------------------------------------ the configuration (keys in the workspace's own AWS account)
+type LegacySettings = { provider: Provider; model: string; keyLast4: string; updatedBy: string; updatedAt: string };
+/** The workspace's configuration; the first version's single key/model is read as one key and one (default) model. */
+export async function getConfig(): Promise<AssistantConfig> {
+    const { rows } = await db().query<{ value: AssistantConfig | LegacySettings }>("SELECT value FROM settings WHERE key = 'assistant'");
+    const v = rows[0]?.value;
+    if (!v) return { keys: {}, models: [], defaultModelId: null };
+    if ('provider' in v) {
+        return { keys: { [v.provider]: { last4: v.keyLast4, updatedBy: v.updatedBy, updatedAt: v.updatedAt } }, legacy: v.provider,
+            models: [{ id: 'm-first', provider: v.provider, model: v.model, addedBy: v.updatedBy, addedAt: v.updatedAt }], defaultModelId: 'm-first' };
+    }
+    return { keys: v.keys ?? {}, models: v.models ?? [], defaultModelId: v.defaultModelId ?? null };
 }
+async function saveConfig(c: AssistantConfig, by: string): Promise<AssistantConfig> {
+    if (!c.models.some((m) => m.id === c.defaultModelId)) c.defaultModelId = c.models[0]?.id ?? null;
+    const value = { keys: c.keys, models: c.models, defaultModelId: c.defaultModelId };
+    if (!Object.keys(c.keys).length && !c.models.length) await db().query("DELETE FROM settings WHERE key = 'assistant'");
+    else await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('assistant', $1, $2)
+                           ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`, [JSON.stringify(value), by]);
+    return { ...value };
+}
+/** Models people can use now: those whose provider has a key. */
+export const usableModels = (c: AssistantConfig) => c.models.filter((m) => c.keys[m.provider]);
+export function pickModel(c: AssistantConfig, id?: string | null): ModelEntry | null {
+    const usable = usableModels(c);
+    return (id ? usable.find((m) => m.id === id) : null) ?? usable.find((m) => m.id === c.defaultModelId) ?? usable[0] ?? null;
+}
+
 async function keyRegion(): Promise<string> {
     if (!config.multiTenant) return process.env.AWS_REGION || 'af-south-1';
     const c = await connection();
-    if (!c || c.status !== 'connected') throw new DeployError('Connect the AWS account first: the API key is stored in it.', 409);
+    if (!c || c.status !== 'connected') throw new DeployError('Connect the AWS account first: API keys are stored in it.', 409);
     return c.region;
 }
-export async function getKey(workspaceId: number): Promise<string | null> {
-    const hit = keyCache.get(workspaceId);
+export async function getKey(workspaceId: number, provider: Provider): Promise<string | null> {
+    const cacheKey = `${workspaceId}:${provider}`;
+    const hit = keyCache.get(cacheKey);
     if (hit && Date.now() - hit.at < 5 * 60_000) return hit.key;
-    const key = await store.get(await keyRegion(), KEY_PARAM);
-    if (key) keyCache.set(workspaceId, { at: Date.now(), key });
+    const region = await keyRegion();
+    let key = await store.get(region, keyParam(provider));
+    if (!key && (await getConfig()).legacy === provider) key = await store.get(region, LEGACY_KEY_PARAM);
+    if (key) keyCache.set(cacheKey, { at: Date.now(), key });
     return key;
 }
-export async function saveSettings(workspaceId: number, s: { provider: Provider; model: string; apiKey?: string | null }, by: string): Promise<AssistantSettings> {
-    const current = await getSettings();
+/** Add or replace a provider's key (the caller has checked it with the provider). */
+export async function setKey(workspaceId: number, provider: Provider, apiKey: string, by: string): Promise<AssistantConfig> {
+    const c = await getConfig();
     const region = await keyRegion();
-    let last4 = current?.keyLast4 ?? '';
-    if (s.apiKey) {
-        await store.put(region, KEY_PARAM, s.apiKey);
-        last4 = s.apiKey.slice(-4);
-        keyCache.delete(workspaceId);
-    } else if (!current || current.provider !== s.provider) {
-        throw new DeployError(`Paste the ${PROVIDER_NAMES[s.provider]} API key.`);
+    await store.put(region, keyParam(provider), apiKey);
+    if (c.legacy) await store.del(region, LEGACY_KEY_PARAM).catch(() => undefined);   // moved to its provider's parameter
+    if (c.legacy && c.legacy !== provider) {   // keep the other provider's first-version key too
+        const old = await store.get(region, LEGACY_KEY_PARAM).catch(() => null);
+        if (old) await store.put(region, keyParam(c.legacy), old);
     }
-    const value: AssistantSettings = { provider: s.provider, model: s.model, keyLast4: last4, updatedBy: by, updatedAt: new Date().toISOString() };
-    await db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('assistant', $1, $2)
-                      ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`, [JSON.stringify(value), by]);
-    return value;
+    keyCache.delete(`${workspaceId}:${provider}`);
+    c.keys[provider] = { last4: apiKey.slice(-4), updatedBy: by, updatedAt: new Date().toISOString() };
+    delete c.legacy;
+    return saveConfig(c, by);
 }
+/** Remove a provider's key and its models. */
+export async function removeKey(workspaceId: number, provider: Provider, by: string): Promise<AssistantConfig> {
+    const c = await getConfig();
+    const region = await keyRegion();
+    await store.del(region, keyParam(provider)).catch(() => undefined);
+    if (c.legacy === provider) await store.del(region, LEGACY_KEY_PARAM).catch(() => undefined);
+    keyCache.delete(`${workspaceId}:${provider}`);
+    delete c.keys[provider];
+    c.models = c.models.filter((m) => m.provider !== provider);
+    if (c.legacy === provider) delete c.legacy;
+    return saveConfig(c, by);
+}
+export async function addModel(provider: Provider, model: string, by: string): Promise<AssistantConfig> {
+    const c = await getConfig();
+    if (!c.keys[provider]) throw new DeployError(`Add the ${PROVIDER_NAMES[provider]} API key first.`, 409);
+    if (c.models.some((m) => m.provider === provider && m.model === model)) throw new DeployError(`${model} is already added.`, 409);
+    if (c.models.length >= 10) throw new DeployError('Up to 10 models can be added.', 409);
+    c.models.push({ id: `m-${randomBytes(6).toString('hex')}`, provider, model, addedBy: by, addedAt: new Date().toISOString() });
+    return saveConfig(c, by);
+}
+export async function removeModel(id: string, by: string): Promise<AssistantConfig> {
+    const c = await getConfig();
+    if (!c.models.some((m) => m.id === id)) throw new DeployError('Model not found.', 404);
+    c.models = c.models.filter((m) => m.id !== id);
+    return saveConfig(c, by);
+}
+export async function setDefaultModel(id: string, by: string): Promise<AssistantConfig> {
+    const c = await getConfig();
+    if (!c.models.some((m) => m.id === id)) throw new DeployError('Model not found.', 404);
+    c.defaultModelId = id;
+    return saveConfig(c, by);
+}
+/** Set up in one step (a key, if given, a model, made the default). */
+export async function saveSettings(workspaceId: number, s: { provider: Provider; model: string; apiKey?: string | null }, by: string): Promise<AssistantConfig> {
+    if (s.apiKey) await setKey(workspaceId, s.provider, s.apiKey, by);
+    else if (!(await getConfig()).keys[s.provider]) throw new DeployError(`Paste the ${PROVIDER_NAMES[s.provider]} API key.`);
+    let c = await getConfig();
+    if (!c.models.some((m) => m.provider === s.provider && m.model === s.model)) c = await addModel(s.provider, s.model, by);
+    return setDefaultModel(c.models.find((m) => m.provider === s.provider && m.model === s.model)!.id, by);
+}
+/** Turn it off: every key deleted from the AWS account, every model removed. */
 export async function removeSettings(workspaceId: number): Promise<void> {
-    await store.del(await keyRegion(), KEY_PARAM).catch(() => undefined);
-    keyCache.delete(workspaceId);
+    const region = await keyRegion();
+    for (const p of PROVIDERS) { await store.del(region, keyParam(p)).catch(() => undefined); keyCache.delete(`${workspaceId}:${p}`); }
+    await store.del(region, LEGACY_KEY_PARAM).catch(() => undefined);
     await db().query("DELETE FROM settings WHERE key = 'assistant'");
 }
 

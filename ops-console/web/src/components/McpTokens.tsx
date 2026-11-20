@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, Copy as CopyIcon, KeyRound, Link2, Plus, Plug, Wrench } from 'lucide-react';
+import { ChevronDown, Copy as CopyIcon, Plus } from 'lucide-react';
 import { api, ApiError, McpToken, McpView } from '../api';
 import { useDialog } from './Dialog';
 import { smallIcon } from './icons';
@@ -77,34 +77,14 @@ export function McpTokens() {
     <div className="space-y-5">
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
 
-      {/* how to connect */}
-      <section className="card overflow-hidden p-0">
-        <div className="px-5 py-4">
-          <h2 className="font-medium text-slate-100">Connection</h2>
-          <p className="mt-0.5 text-sm text-slate-400">AI tools read this workspace with the connecting person&rsquo;s role, and can propose changes that person confirms under Proposals.</p>
+      {/* the address */}
+      <section className="card">
+        <h2 className="font-medium text-slate-100">MCP server address</h2>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 font-mono text-sm text-slate-100">{url || '…'}</code>
+          {url && <Copy text={url} label="Copy address" />}
         </div>
-        <div className="overflow-x-auto border-t border-ink-700">
-          <table className="w-full min-w-[40rem] text-sm">
-            <tbody className="divide-y divide-ink-700">
-              <tr>
-                <th className={`${th} w-48`}>{smallIcon(Link2, 'mr-1.5 inline h-3.5 w-3.5')}Server address</th>
-                <td className={td}><div className="flex flex-wrap items-center gap-2"><code className="rounded bg-ink-950 px-2 py-1 font-mono text-xs text-slate-200">{url || '…'}</code>{url && <Copy text={url} />}</div></td>
-              </tr>
-              <tr>
-                <th className={th}>{smallIcon(Plug, 'mr-1.5 inline h-3.5 w-3.5')}ChatGPT, claude.ai, Claude Desktop</th>
-                <td className={`${td} text-slate-300`}>Add a <b>custom connector</b> with the address. The app sends you here to sign in and approve; no token is needed. It appears below as a connected app.</td>
-              </tr>
-              <tr>
-                <th className={th}>{smallIcon(KeyRound, 'mr-1.5 inline h-3.5 w-3.5')}Claude Code, Cursor, VS Code, scripts</th>
-                <td className={`${td} text-slate-300`}>Create a <b>personal token</b> below; ready-to-paste setup is shown with it.</td>
-              </tr>
-              <tr>
-                <th className={th}>{smallIcon(Wrench, 'mr-1.5 inline h-3.5 w-3.5')}What it can do</th>
-                <td className={`${td} text-slate-300`}>{lookups} read-only lookups and {proposals} proposals (deploy, roll back, start or reboot a server) that wait for confirmation. See Tools below.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <p className="mt-2 text-xs text-slate-500">Paste it as a custom connector in ChatGPT, claude.ai or Claude Desktop (they sign in here), or use it with a personal token below in Claude Code, Cursor or VS Code.</p>
       </section>
 
       {/* the new token, shown once */}
