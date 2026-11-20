@@ -1041,7 +1041,7 @@ test('assistant: the workspace\'s own key (Claude or ChatGPT); streamed answers 
         const saved = await a.put('/api/assistant/settings', { provider: 'anthropic', model: 'claude-opus-5-5', apiKey: claudeKey });
         assert.equal(saved.status, 200);
         assert.equal(saved.json.settings.keyLast4, 'xxxx');
-        assert.equal(stored.get('/apps/ops-console-assistant/API_KEY'), claudeKey);
+        assert.equal(stored.get('/apps/ops-console-assistant/ANTHROPIC_API_KEY'), claudeKey);
         const rawSettings = JSON.stringify((await a.get('/api/assistant/settings')).json);
         assert.ok(!rawSettings.includes(claudeKey), 'the key is never sent back');
         const { rows: dbRows } = await withWorkspace(wsA, () => db().query("SELECT value::text AS v FROM settings WHERE key = 'assistant'"));
@@ -1089,8 +1089,12 @@ test('assistant: the workspace\'s own key (Claude or ChatGPT); streamed answers 
         assert.deepEqual(om.models, ['gpt-test-1']);
         assert.equal((await a.put('/api/assistant/settings', { provider: 'openai', model: 'gpt-test-1' })).status, 400, 'a new provider needs its key');
         assert.equal((await a.put('/api/assistant/settings', { provider: 'openai', model: 'gpt-test-1', apiKey: 'sk-proj-test-openai-key-123456789' })).status, 200);
-        // the Claude chat can't be continued with ChatGPT
-        assert.match((await sse(a, { question: 'More?', conversationId: convId })).at(-1).message, /Start a new chat/);
+        // ChatGPT is now the default, but the Claude chat carries on with Claude (its key is still there; its history is Claude's)
+        script = [answer('Still Claude here.')];
+        const cont = await sse(a, { question: 'More?', conversationId: convId });
+        assert.equal(cont.at(-1).type, 'done');
+        assert.equal(cont[0].model, 'claude-opus-5-5');
+        assert.equal(anthropicKeys.at(-1), claudeKey);
 
         const reasoning = { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'enc-1' };
         const fcall = { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'list_servers', arguments: '{}' };
@@ -1449,4 +1453,90 @@ test('billing: payments are tagged with the console; invoices and webhooks only 
     assert.equal(billing.consoleTag(), new URL(process.env.PUBLIC_URL || 'https://ops.glenify.studio').host);
     await asSystem(() => db().query("DELETE FROM invoices WHERE reference = 'ours-1'"));
     billing.setPaystackFetch(null);
+});
+
+test('assistant config: one key per provider, several models with a default, model chosen per chat; the first version\'s setup still works; chat history and clearing chats', async () => {
+    const prov = dist('assistant/providers');
+    const { db, withWorkspace } = dist('db');
+    const stored = new Map();
+    prov.setKeyStore({ get: async (r, n) => stored.get(n) ?? null, put: async (r, n, v) => { stored.set(n, v); }, del: async (r, n) => { stored.delete(n); } });
+    const used = [];
+    let script = [];
+    prov.setAnthropicFactory((apiKey) => ({
+        models: { list: async function* () { yield { id: 'claude-opus-5-5' }; yield { id: 'claude-haiku-5-5' }; } },
+        beta: { messages: { stream: (params) => { used.push(params.model); const msg = script.shift(); let cb = null; return { on(e, f) { if (e === 'text') cb = f; return this; }, async finalMessage() { for (const bl of msg.content) if (bl.type === 'text' && cb) cb(bl.text); return msg; } }; } } },
+    }));
+    const answer = (text) => ({ stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text }] });
+    const sse = async (cl, body) => {
+        const raw = await (await app.request('/api/assistant/ask', { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN, cookie: cl.cookieHeader() }, body: JSON.stringify(body) })).text();
+        return raw.split('\n\n').filter(Boolean).map((c) => JSON.parse(c.split('\n').find((l) => l.startsWith('data:')).slice(5)));
+    };
+    const key = 'sk-ant-api03-' + 'k'.repeat(40);
+    try {
+        const a = client();
+        assert.equal((await a.post('/api/auth/login', { username: 'alice', password: 'correct-horse-1' })).status, 200);
+        const ws = (await a.get('/api/auth/me')).json.user.workspaceId;
+
+        // the first version's setup (one key, one model) is read as one key + one default model, and keeps answering
+        await withWorkspace(ws, () => db().query(`INSERT INTO settings (key, value, updated_by) VALUES ('assistant', $1, 'alice')
+            ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify({ provider: 'anthropic', model: 'claude-opus-5-5', keyLast4: 'kkkk', updatedBy: 'alice', updatedAt: new Date().toISOString() })]));
+        stored.set('/apps/ops-console-assistant/API_KEY', key);
+        let st = (await a.get('/api/assistant/settings')).json;
+        assert.deepEqual([st.keys.anthropic.last4, st.keys.openai, st.models.length, st.models[0].isDefault], ['kkkk', null, 1, true]);
+        script = [answer('Hello from the first setup.')];
+        assert.equal((await sse(a, { question: 'Hi' })).at(-1).type, 'done');
+
+        // changing the key moves it to its provider's own parameter
+        assert.equal((await a.put('/api/assistant/keys/anthropic', { apiKey: 'nope' })).status, 400);
+        assert.equal((await a.put('/api/assistant/keys/anthropic', { apiKey: key })).status, 200);
+        assert.equal(stored.get('/apps/ops-console-assistant/ANTHROPIC_API_KEY'), key);
+        assert.equal(stored.has('/apps/ops-console-assistant/API_KEY'), false);
+
+        // add a second model; adding one the key can't use, or twice, is refused; a model needs its provider's key
+        assert.equal((await a.post('/api/assistant/configured-models', { provider: 'anthropic', model: 'claude-3-old' })).status, 400);
+        st = (await a.post('/api/assistant/configured-models', { provider: 'anthropic', model: 'claude-haiku-5-5' })).json;
+        assert.equal(st.models.length, 2);
+        assert.equal((await a.post('/api/assistant/configured-models', { provider: 'anthropic', model: 'claude-haiku-5-5' })).status, 409);
+        assert.equal((await a.post('/api/assistant/configured-models', { provider: 'openai', model: 'gpt-x' })).status, 400, 'no OpenAI key yet');
+        const haiku = st.models.find((m) => m.model === 'claude-haiku-5-5');
+        const status = (await a.get('/api/assistant')).json;
+        assert.deepEqual(status.models.map((m) => [m.model, m.isDefault]), [['claude-opus-5-5', true], ['claude-haiku-5-5', false]]);
+
+        // a chat started with Haiku answers with Haiku and keeps it; the default answers otherwise; making Haiku the default
+        script = [answer('Haiku here.')];
+        const h = await sse(a, { question: 'Quick one', modelId: haiku.id });
+        assert.equal(h[0].model, 'claude-haiku-5-5');
+        script = [answer('Still Haiku.')];
+        await sse(a, { question: 'And again', conversationId: h[0].id });
+        assert.deepEqual(used.slice(-2), ['claude-haiku-5-5', 'claude-haiku-5-5']);
+        script = [answer('Default.')];
+        await sse(a, { question: 'Default please' });
+        assert.equal(used.at(-1), 'claude-opus-5-5');
+        st = (await a.post(`/api/assistant/configured-models/${haiku.id}/default`)).json;
+        assert.equal(st.defaultModelId, haiku.id);
+
+        // someone in another workspace sees none of this workspace's chats
+        const b = client();
+        assert.equal((await b.post('/api/auth/login', { username: 'bob@example.com', password: 'brand-new-pass-9' })).status, 200);
+
+        // chat history: the person's own chats with the model and number of questions; delete one; clear all
+        let list = (await a.get('/api/assistant/conversations')).json.conversations;
+        assert.ok(list.length >= 3);
+        const hc = list.find((c) => c.id === h[0].id);
+        assert.deepEqual([hc.model, hc.questions], ['claude-haiku-5-5', 2]);
+        assert.equal((await b.del(`/api/assistant/conversations/${h[0].id}`)).status, 404, "not someone else's");
+        assert.equal((await a.del(`/api/assistant/conversations/${h[0].id}`)).status, 200);
+        assert.equal((await a.get(`/api/assistant/conversations/${h[0].id}`)).status, 404);
+        const cleared = (await a.del('/api/assistant/conversations')).json;
+        assert.ok(cleared.deleted >= 2);
+        assert.equal((await a.get('/api/assistant/conversations')).json.conversations.length, 0);
+
+        // removing the provider's key removes its models: the assistant is off again
+        st = (await a.del('/api/assistant/keys/anthropic')).json;
+        assert.deepEqual([st.keys.anthropic, st.models.length], [null, 0]);
+        assert.equal((await a.get('/api/assistant')).json.enabled, false);
+        assert.equal(stored.size, 0);
+    } finally {
+        prov.setKeyStore(null); prov.setAnthropicFactory(null);
+    }
 });

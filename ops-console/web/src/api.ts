@@ -327,19 +327,22 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 
 // ------------------------------------------------------------------ "Ask Ops Console" (assistant)
 export type AssistantProvider = 'anthropic' | 'openai';
-export interface AssistantStatus { enabled: boolean; provider?: AssistantProvider | null; providerName?: string | null; model?: string | null; canConfigure?: boolean; conversations?: { id: string; title: string; provider: AssistantProvider; updatedAt: string }[] }
-export interface AssistantSettings { provider: AssistantProvider; model: string; keyLast4: string; updatedBy: string; updatedAt: string }
-export interface AssistantSettingsView { settings: AssistantSettings | null; usage: { questions: number; inputTokens: number; cachedTokens: number; outputTokens: number }; providers: Record<AssistantProvider, string> }
+export interface AssistantModel { id: string; provider: AssistantProvider; providerName: string; model: string; isDefault: boolean; addedBy: string; addedAt: string; usable?: boolean }
+export interface AssistantChat { id: string; title: string; provider: AssistantProvider; model: string | null; createdAt: string; updatedAt: string; questions?: number }
+export interface AssistantStatus { enabled: boolean; provider?: AssistantProvider | null; providerName?: string | null; model?: string | null; models?: AssistantModel[]; defaultModelId?: string | null; canConfigure?: boolean; conversations?: AssistantChat[] }
+export interface AssistantKey { last4: string; updatedBy: string; updatedAt: string }
+export interface AssistantConfig { keys: Record<AssistantProvider, AssistantKey | null>; models: AssistantModel[]; defaultModelId: string | null }
+export interface AssistantSettingsView extends AssistantConfig { usage: { questions: number; inputTokens: number; cachedTokens: number; outputTokens: number }; providers: Record<AssistantProvider, string> }
 export interface AssistantTurn { role: 'user' | 'assistant'; text: string; tools?: string[]; actions?: string[] }
 export interface AssistantAction {
   id: string; kind: 'deploy' | 'rollback' | 'start' | 'reboot'; summary: string; note: string | null; server: { id: number; name: string; environment: string }; app: string | null; ref: string;
   status: 'proposed' | 'running' | 'done' | 'failed' | 'cancelled' | 'expired'; source: 'chat' | 'mcp'; via: string; createdAt: string; expiresAt: string; decidedAt: string | null;
   result: { message?: string; error?: string; deploymentId?: number; deploymentStatus?: string } | null; link: string;
 }
-export type AssistantEvent = { type: 'conversation'; id: string } | { type: 'action'; action: AssistantAction } | { type: 'tool'; label: string } | { type: 'text'; delta: string } | { type: 'done' } | { type: 'error'; message: string };
+export type AssistantEvent = { type: 'conversation'; id: string; model?: string; provider?: AssistantProvider } | { type: 'action'; action: AssistantAction } | { type: 'tool'; label: string } | { type: 'text'; delta: string } | { type: 'done' } | { type: 'error'; message: string };
 /** Ask a question; events stream in as the answer is written (server-sent events over a POST). */
-export async function askAssistant(question: string, conversationId: string | null, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal): Promise<void> {
-  const res = await fetch('/api/assistant/ask', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, conversationId }), signal });
+export async function askAssistant(question: string, conversationId: string | null, onEvent: (e: AssistantEvent) => void, signal?: AbortSignal, modelId?: string | null): Promise<void> {
+  const res = await fetch('/api/assistant/ask', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, conversationId, modelId }), signal });
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));
     throw new ApiError(res.status, (data as { error?: string }).error || `Request failed (${res.status})`);
@@ -375,9 +378,16 @@ export const api = {
   revokeMcpToken: (id: number) => call<{ ok: true }>('DELETE', `/api/mcp-tokens/${id}`),
   assistantSettings: () => call<AssistantSettingsView>('GET', '/api/assistant/settings'),
   assistantModels: (provider: AssistantProvider, apiKey?: string) => call<{ models: string[]; suggested: string | null }>('POST', '/api/assistant/models', { provider, apiKey }),
-  saveAssistantSettings: (b: { provider: AssistantProvider; model: string; apiKey?: string }) => call<{ settings: AssistantSettings }>('PUT', '/api/assistant/settings', b).then((r) => r.settings),
+  setAssistantKey: (provider: AssistantProvider, apiKey: string) => call<AssistantConfig>('PUT', `/api/assistant/keys/${provider}`, { apiKey }),
+  removeAssistantKey: (provider: AssistantProvider) => call<AssistantConfig>('DELETE', `/api/assistant/keys/${provider}`),
+  addAssistantModel: (provider: AssistantProvider, model: string) => call<AssistantConfig>('POST', '/api/assistant/configured-models', { provider, model }),
+  removeAssistantModel: (id: string) => call<AssistantConfig>('DELETE', `/api/assistant/configured-models/${encodeURIComponent(id)}`),
+  defaultAssistantModel: (id: string) => call<AssistantConfig>('POST', `/api/assistant/configured-models/${encodeURIComponent(id)}/default`, {}),
+  assistantChats: () => call<{ conversations: AssistantChat[] }>('GET', '/api/assistant/conversations?limit=100').then((r) => r.conversations),
+  deleteAssistantChat: (id: string) => call<{ ok: true }>('DELETE', `/api/assistant/conversations/${encodeURIComponent(id)}`),
+  clearAssistantChats: () => call<{ ok: true; deleted: number }>('DELETE', '/api/assistant/conversations'),
   removeAssistantSettings: () => call<{ ok: true }>('DELETE', '/api/assistant/settings'),
-  assistantConversation: (id: string) => call<{ id: string; title: string; turns: AssistantTurn[]; actions: AssistantAction[] }>('GET', `/api/assistant/conversations/${encodeURIComponent(id)}`),
+  assistantConversation: (id: string) => call<{ id: string; title: string; model: string | null; turns: AssistantTurn[]; actions: AssistantAction[] }>('GET', `/api/assistant/conversations/${encodeURIComponent(id)}`),
   site: () => call<SiteConfig>('GET', '/api/account/config'),
   signup: (b: { name: string; email: string; password: string; workspace: string; username?: string }) => call<{ ok: true; workspace: { id: number; name: string } }>('POST', '/api/account/signup', b),
   billing: () => call<BillingView>('GET', '/api/billing'),
