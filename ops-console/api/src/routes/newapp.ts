@@ -47,7 +47,7 @@ newapp.post('/instances/:id/new-app', requireRole('admin'), denyDemo, rateLimit(
 /** Recent creations (for the wizard's history and the instance page). */
 newapp.get('/instances/:id/new-app', requireRole('deployer'), denyDemo, async (c) => {
     const { rows } = await db().query(
-        `SELECT id, deployment_id AS "deploymentId", project, repo, branch, domain, with_db AS "withDb", port, tls, status, created_by AS "createdBy",
+        `SELECT id, deployment_id AS "deploymentId", project, repo, branch, domain, with_db AS "withDb", db_engine AS "dbEngine", port, tls, status, created_by AS "createdBy",
                 created_at AS "createdAt", finished_at AS "finishedAt" FROM app_creations WHERE instance_id = $1 ORDER BY created_at DESC LIMIT 20`,
         [Number(c.req.param('id'))]);
     return c.json({ creations: rows });

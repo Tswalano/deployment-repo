@@ -22,6 +22,7 @@ MIGRATE='{{ migrateScript }}'
 HEALTH='{{ healthPath }}'
 DOMAIN='{{ domain }}'
 DB='{{ db }}'
+DATABASE='{{ database }}'
 MEM='{{ memoryMb }}'
 ACTOR='{{ actor }}'
 RUNTIME='{{ runtime }}'
@@ -33,7 +34,7 @@ LOG="$(mktemp /tmp/opsconsole-create.XXXXXX)"
 exec 3>&1 >"$LOG" 2>&1
 STEP=validate
 CREATED=()          # what to undo on failure, in order
-PORT=""; TLS=false; DBNAME=""; DBROLE=""
+PORT=""; TLS=false; DBNAME=""; DBROLE=""; DBFILE=""
 TOKDIR=/run/ops-console/git
 STATE_PROJ=/opt/deploy-state/projects
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -55,7 +56,9 @@ undo() {
       vhost)  rm -f "/etc/nginx/conf.d/$PROJECT.conf"; nginx -t 2>/dev/null && systemctl reload nginx ;;
       cert)   certbot delete --cert-name "$DOMAIN" --non-interactive 2>/dev/null ;;
       db)     printf 'DROP DATABASE IF EXISTS "%s" WITH (FORCE);\nDROP ROLE IF EXISTS "%s";\n' "$DBNAME" "$DBROLE" | pgsu >/dev/null 2>&1 ;;
-      ssm)    for k in PORT NODE_ENV DATABASE_URL; do aws ssm delete-parameter --region "$REGION" --name "/apps/$PROJECT/$k" 2>/dev/null; done ;;
+      mdb)    mariadb -e "DROP DATABASE IF EXISTS \`$DBNAME\`; DROP USER IF EXISTS '$DBROLE'@'localhost', '$DBROLE'@'127.0.0.1';" 2>/dev/null ;;
+      sqlite) rm -rf "/var/lib/apps/$PROJECT" ;;
+      ssm)    for k in PORT NODE_ENV DATABASE_URL DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD; do aws ssm delete-parameter --region "$REGION" --name "/apps/$PROJECT/$k" 2>/dev/null; done ;;
       conf)   rm -f "$STATE_PROJ/$PROJECT.conf"; rm -rf "/opt/deploy-state/$PROJECT" ;;   # the pipeline's history/backups dir for this new app
       clone)  rm -rf "/opt/apps/$PROJECT" ;;
       venv)   rm -rf "/opt/venvs/$PROJECT" ;;
@@ -76,6 +79,9 @@ asec2() { runuser -u ec2-user -- env -i HOME=/home/ec2-user USER=ec2-user LANG=C
 [[ -z "$MIGRATE" || "$MIGRATE" =~ ^[a-z0-9:_-]{1,40}$ ]] || fail "invalid migrate script"
 [[ "$BUILD" == yes || "$BUILD" == no ]] || fail "invalid build flag"
 [[ "$DB" == yes || "$DB" == no ]] || fail "invalid db flag"
+[[ "$DATABASE" =~ ^(|none|postgresql|mariadb|sqlite|external)$ ]] || fail "invalid database choice"
+# the database choice; consoles from before it send only db=yes|no (yes: PostgreSQL)
+if [[ -n "$DATABASE" ]]; then DB="$DATABASE"; [[ "$DB" == none ]] && DB=no; elif [[ "$DB" == yes ]]; then DB=postgresql; fi
 [[ "$HEALTH" =~ ^/[A-Za-z0-9._~/-]{0,100}$ ]] || fail "invalid health path"
 [[ "$DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$ ]] || fail "invalid domain"
 [[ "$MEM" =~ ^[0-9]{2,4}$ ]] && (( MEM >= 64 && MEM <= 2048 )) || fail "memory must be 64-2048 MB"
@@ -161,22 +167,77 @@ if [[ "$RUNTIME" == python ]]; then
 fi
 
 # ------------------------------------------------------------------ database (optional)
-if [[ "$DB" == yes ]]; then
+putsec() { # putsec <name> <value>: an app setting straight to SSM (never printed)
+  python3 -I -c 'import json,sys; print(json.dumps({"Name": sys.argv[1], "Value": sys.argv[2], "Type": "SecureString", "Overwrite": True}))' \
+    "/apps/$PROJECT/$1" "$2" | aws ssm put-parameter --region "$REGION" --cli-input-json file:///dev/stdin >/dev/null
+}
+genpw() { python3 -I -c 'import secrets; print("".join(c if c.isalnum() else "x" for c in secrets.token_urlsafe(32)))'; }
+if [[ "$DB" == postgresql ]]; then
   STEP=database
   DBNAME="${PROJECT//-/_}"; DBROLE="${DBNAME}_user"
   if printf "SELECT 1 FROM pg_database WHERE datname='%s' UNION SELECT 1 FROM pg_roles WHERE rolname='%s';\n" "$DBNAME" "$DBROLE" | runuser -u ec2-user -- env -i HOME=/home/ec2-user PATH=/usr/bin:/bin psql -X -tA -h localhost -U postgres -w -d postgres | grep -q 1; then
     DBNAME=""; fail "a database or role for $PROJECT already exists"
   fi
-  PW="$(python3 -I -c 'import secrets; print("".join(c if c.isalnum() else "x" for c in secrets.token_urlsafe(32)))')"
+  PW="$(genpw)"
   CREATED+=(db)
   printf 'CREATE ROLE "%s" LOGIN PASSWORD '"'"'%s'"'"' CONNECTION LIMIT 20;\nCREATE DATABASE "%s" OWNER "%s";\nREVOKE CONNECT ON DATABASE "%s" FROM PUBLIC;\nGRANT CONNECT ON DATABASE "%s" TO "%s";\n' \
     "$DBROLE" "$PW" "$DBNAME" "$DBROLE" "$DBNAME" "$DBNAME" "$DBROLE" | pgsu >/dev/null || fail "could not create the database"
   CREATED+=(ssm)
-  python3 -I -c 'import json,sys; print(json.dumps({"Name": sys.argv[1], "Value": sys.argv[2], "Type": "SecureString", "Overwrite": True}))' \
-    "/apps/$PROJECT/DATABASE_URL" "postgresql://$DBROLE:$PW@127.0.0.1:5432/$DBNAME" \
-    | aws ssm put-parameter --region "$REGION" --cli-input-json file:///dev/stdin >/dev/null || fail "could not save DATABASE_URL"
+  putsec DATABASE_URL "postgresql://$DBROLE:$PW@127.0.0.1:5432/$DBNAME" || fail "could not save DATABASE_URL"
   unset PW
-  log "database $DBNAME (role $DBROLE); DATABASE_URL saved to SSM"
+  log "PostgreSQL database $DBNAME (role $DBROLE); DATABASE_URL saved to SSM"
+elif [[ "$DB" == mariadb ]]; then
+  STEP=database
+  rpm -qa --qf '%{NAME}\n' | grep -qE '^mariadb[0-9]+-server$' || fail "MariaDB isn't installed on this server: install it from the server's Components card first"
+  systemctl is-active --quiet mariadb || fail "MariaDB is installed but not running: start it from the server's Components card"
+  DBNAME="${PROJECT//-/_}"; DBROLE="${DBNAME:0:28}_u"
+  if [[ -n "$(mariadb -N -e "SELECT 1 FROM information_schema.schemata WHERE schema_name='$DBNAME' UNION SELECT 1 FROM mysql.user WHERE user='$DBROLE'" 2>/dev/null)" ]]; then
+    DBNAME=""; fail "a MariaDB database or user for $PROJECT already exists"
+  fi
+  PW="$(genpw)"
+  CREATED+=(mdb)
+  mariadb -e "CREATE DATABASE \`$DBNAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+              CREATE USER '$DBROLE'@'localhost' IDENTIFIED BY '$PW'; CREATE USER '$DBROLE'@'127.0.0.1' IDENTIFIED BY '$PW';
+              GRANT ALL PRIVILEGES ON \`$DBNAME\`.* TO '$DBROLE'@'localhost', '$DBROLE'@'127.0.0.1';" >/dev/null || fail "could not create the MariaDB database"
+  CREATED+=(ssm)
+  # one URL (mysql://; SQLAlchemy apps add their driver, e.g. mysql+pymysql://) and the parts, for apps that build their own
+  putsec DATABASE_URL "mysql://$DBROLE:$PW@127.0.0.1:3306/$DBNAME" && putsec DB_HOST 127.0.0.1 && putsec DB_PORT 3306 \
+    && putsec DB_NAME "$DBNAME" && putsec DB_USER "$DBROLE" && putsec DB_PASSWORD "$PW" || fail "could not save the database settings"
+  unset PW
+  log "MariaDB database $DBNAME (user $DBROLE); DATABASE_URL and DB_HOST/PORT/NAME/USER/PASSWORD saved to SSM"
+elif [[ "$DB" == sqlite ]]; then
+  STEP=database
+  if ! rpm -q sqlite >/dev/null 2>&1; then
+    log "installing the sqlite tool (used for backups)"; dnf -y -q install sqlite >/dev/null 2>&1 || fail "could not install sqlite"
+  fi
+  DBNAME="${PROJECT//-/_}"; DBFILE="/var/lib/apps/$PROJECT/$DBNAME.db"
+  CREATED+=(sqlite)
+  install -d -m 0750 -o ec2-user -g ec2-user /var/lib/apps "/var/lib/apps/$PROJECT"
+  CREATED+=(ssm)
+  putsec DATABASE_URL "sqlite:///$DBFILE" || fail "could not save DATABASE_URL"
+  log "SQLite database file $DBFILE (created by the app on first use); DATABASE_URL saved to SSM"
+elif [[ "$DB" == external ]]; then
+  STEP=database
+  # the console saved DATABASE_URL to SSM before this run (it never travels in the command); check the server can reach it
+  URL="$(aws ssm get-parameter --region "$REGION" --name "/apps/$PROJECT/DATABASE_URL" --with-decryption --query Parameter.Value --output text 2>/dev/null)"
+  [[ -n "$URL" && "$URL" != None ]] || fail "the external DATABASE_URL is missing from SSM"
+  CREATED+=(ssm)
+  if ! CHECK="$(printf '%s' "$URL" | python3 -I -c '
+import socket, sys, urllib.parse
+u = urllib.parse.urlsplit(sys.stdin.read().strip())
+default = {"postgres": 5432, "postgresql": 5432, "mysql": 3306, "mariadb": 3306}.get(u.scheme.split("+")[0], 0)
+host, port = u.hostname, u.port or default
+if not host or not port: print("the URL has no host or port"); sys.exit(1)
+try:
+    socket.create_connection((host, port), timeout=6).close()
+    print(f"{host}:{port}")
+except OSError as e:
+    print(f"{host}:{port} is not reachable from this server ({e.__class__.__name__}: {e})"); sys.exit(1)
+' 2>&1)"; then
+    fail "external database: $CHECK. For Amazon RDS, allow this server in the database's security group; for Supabase or Neon, use the host and port from their connection settings (the connection pooler is often easiest)"
+  fi
+  unset URL
+  log "external database reachable at $CHECK; DATABASE_URL is in SSM"
 fi
 
 # ------------------------------------------------------------------ settings in SSM
@@ -207,6 +268,14 @@ else
     *)       MIGRATEC="" ;;
   esac
 fi
+# pre-deploy backups: PostgreSQL always; MariaDB/SQLite only with a pipeline that knows them (servers prepared
+# before that skip them rather than fail a deploy); external databases are backed up by their provider
+DBNAME_CONF=""; DBENGINE_CONF=postgresql
+case "$DB" in
+  postgresql) DBNAME_CONF="$DBNAME" ;;
+  mariadb|sqlite) if grep -q 'DB_ENGINE' /opt/deploy/server/pipeline.sh 2>/dev/null; then DBNAME_CONF="$DBNAME"; DBENGINE_CONF="$DB"
+                  else log "⚠ this server's deploy pipeline predates $DB backups: deploys won't take a backup first until Prepare server runs again"; fi ;;
+esac
 CREATED+=(conf)
 cat > "$STATE_PROJ/$PROJECT.conf" <<CONF
 # Created by the Ops Console (OpsConsole-CreateApp) for $REPO; kept in the state dir so deploy.sh never removes it.
@@ -218,7 +287,9 @@ INSTALL_CMD="$INSTALL"
 BUILD_CMD="$BUILDC"
 MIGRATE_CMD="$MIGRATEC"
 RUNTIME="$RUNTIME"
-DB_NAME="$DBNAME"
+DB_NAME="$DBNAME_CONF"
+DB_ENGINE="$DBENGINE_CONF"
+DB_FILE="$DBFILE"
 HEALTH_URL="http://127.0.0.1:$PORT$HEALTH"
 DOMAIN="$DOMAIN"
 CONF
@@ -245,7 +316,7 @@ cat > "/etc/systemd/system/$PROJECT.service" <<UNIT
 Description=$PROJECT ($REPO)
 Wants=network-online.target
 Requires=app-secrets@$PROJECT.service
-After=network-online.target postgresql.service app-secrets@$PROJECT.service
+After=network-online.target postgresql.service mariadb.service app-secrets@$PROJECT.service
 
 [Service]
 Type=simple

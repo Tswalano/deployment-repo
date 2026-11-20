@@ -66,7 +66,7 @@ export type Runtime = 'node' | 'python';
 export type Framework = 'fastapi' | 'flask' | 'django';
 export interface PythonDetection {
     framework: Framework | null; module: string | null; version: string; migrate: 'alembic' | 'django' | null;
-    deps: 'requirements.txt' | 'pyproject.toml'; hasServer: boolean; warnings: string[];
+    deps: 'requirements.txt' | 'pyproject.toml'; hasServer: boolean; warnings: string[]; database: DbEngine | null;
 }
 export const PYTHON_VERSIONS = ['3.11', '3.12', '3.13'];
 export const MODULE_RE = /^[A-Za-z_][A-Za-z0-9_.]{0,80}:[A-Za-z_][A-Za-z0-9_]{0,60}(\(\))?$/;
@@ -74,7 +74,7 @@ export interface Detection {
     /** The runtime suggested for the repository; the other one, when present too, can still be chosen. */
     runtime: Runtime | null; python: PythonDetection | null;
     found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null;
-    healthPath: string; node: string | null; warnings: string[];
+    healthPath: string; node: string | null; warnings: string[]; database?: DbEngine | null;
     /** Builds static files only (Vite/CRA/…) with no server framework: nothing would answer the health check. */
     frontend: boolean;
 }
@@ -116,13 +116,13 @@ export async function detectPython(repo: string, branch: string, subdir = ''): P
         warnings.push(`The repository asks for Python ${version}; the server offers ${PYTHON_VERSIONS.join(', ')}.`);
         version = PYTHON_VERSIONS.find((v) => Number(v.split('.')[1]) >= Number(version.split('.')[1])) ?? '3.12';
     }
-    return { framework, module, version, migrate: alembic ? 'alembic' : framework === 'django' ? 'django' : null, deps: req ? 'requirements.txt' : 'pyproject.toml', hasServer, warnings };
+    return { framework, module, version, migrate: alembic ? 'alembic' : framework === 'django' ? 'django' : null, deps: req ? 'requirements.txt' : 'pyproject.toml', hasServer, warnings, database: dbHint(deps) };
 }
 
 export async function detect(repo: string, branch: string, subdir = ''): Promise<Detection> {
     if (!REPO_RE.test(repo) || !BRANCH_RE.test(branch) || (subdir && (!SUBDIR_RE.test(subdir) || subdir.includes('..')))) throw new DeployError('Invalid repository, branch or folder.');
     const [raw, python] = await Promise.all([repoFile(repo, `${subdir ? `${subdir.replace(/\/+$/, '')}/` : ''}package.json`, branch), detectPython(repo, branch, subdir)]);
-    if (!raw && python) return { runtime: 'python', python, found: true, name: null, scripts: [], start: null, build: false, migrate: python.migrate, healthPath: '/', node: null, frontend: false, warnings: python.warnings };
+    if (!raw && python) return { runtime: 'python', python, database: python.database, found: true, name: null, scripts: [], start: null, build: false, migrate: python.migrate, healthPath: '/', node: null, frontend: false, warnings: python.warnings };
     if (!raw) return { runtime: null, python: null, found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, frontend: false, warnings: [`No package.json, requirements.txt or pyproject.toml in ${subdir || 'the repository root'} on ${branch}. Node.js and Python apps are supported; if the app lives in a folder (e.g. backend), set the folder.`] };
     let pkg: { name?: string; scripts?: Record<string, string>; engines?: { node?: string }; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     try { pkg = JSON.parse(raw); } catch { throw new DeployError('package.json is not valid JSON.'); }
@@ -144,8 +144,10 @@ export async function detect(repo: string, branch: string, subdir = ''): Promise
     }
     // a front-end-only package.json next to a Python project (e.g. a Django app's asset tooling): the app is the Python one
     const runtime: Runtime = frontend && python ? 'python' : 'node';
-    if (runtime === 'python') return { runtime, python, found: true, name: pkg.name ?? null, scripts: [], start: null, build: false, migrate: python!.migrate, healthPath: '/', node: null, frontend: false, warnings: python!.warnings };
-    return { runtime, python, found: true, name: pkg.name ?? null, scripts, start, build: scripts.includes('build'), migrate: pick(['db:migrate', 'migrate:deploy', 'migrate', 'prisma:deploy']),
+    if (runtime === 'python') return { runtime, python, database: python!.database, found: true, name: pkg.name ?? null, scripts: [], start: null, build: false, migrate: python!.migrate, healthPath: '/', node: null, frontend: false, warnings: python!.warnings };
+    const nodeDb: DbEngine | null = ['mysql2', 'mysql', 'mariadb'].some((d) => d in deps) ? 'mariadb' : ['pg', 'postgres', '@prisma/client', 'pg-promise'].some((d) => d in deps) ? 'postgresql'
+        : ['better-sqlite3', 'sqlite3', '@libsql/client'].some((d) => d in deps) ? 'sqlite' : null;
+    return { runtime, python, database: nodeDb, found: true, name: pkg.name ?? null, scripts, start, build: scripts.includes('build'), migrate: pick(['db:migrate', 'migrate:deploy', 'migrate', 'prisma:deploy']),
         healthPath: '/', node, warnings, frontend };
 }
 
@@ -196,8 +198,32 @@ export async function check(inst: InstanceRow, project: string, subdomain: strin
 // ------------------------------------------------------------------ create
 export interface NewApp {
     project: string; repo: string; branch: string; subdir: string; start: string; build: boolean; migrate: string;
-    healthPath: string; subdomain: string; db: boolean; memoryMb: number; confirmLowMemory?: boolean; override?: string;
+    healthPath: string; subdomain: string; db: DbEngine | null; externalUrl: string; memoryMb: number; confirmLowMemory?: boolean; override?: string;
     runtime: Runtime; pythonVersion: string; framework: Framework | ''; appModule: string;
+}
+
+export type DbEngine = 'postgresql' | 'mariadb' | 'sqlite' | 'external';
+export const DB_ENGINES: DbEngine[] = ['postgresql', 'mariadb', 'sqlite', 'external'];
+export const DB_NAMES: Record<DbEngine, string> = { postgresql: 'PostgreSQL', mariadb: 'MySQL (MariaDB)', sqlite: 'SQLite', external: 'an external database' };
+/** An external database's URL: a database scheme (optionally with a driver, e.g. mysql+pymysql), a host that isn't this server. */
+export function externalDbProblem(url: string): string | null {
+    if (!url) return 'Paste the database connection URL.';
+    if (url.length > 1000 || /\s/.test(url)) return 'That doesn\'t look like a connection URL.';
+    const m = /^(postgres|postgresql|mysql|mariadb)(\+[a-z0-9]+)?:\/\//i.exec(url);
+    if (!m) return 'Use a PostgreSQL or MySQL URL, for example postgresql://user:password@host:5432/dbname or mysql://user:password@host:3306/dbname.';
+    let host = '';
+    try { host = new URL(url.replace(/^[^:]+:/, 'http:')).hostname; } catch { return 'That doesn\'t look like a connection URL.'; }
+    if (!host) return 'The URL has no host.';
+    if (/^(localhost|127\.|0\.0\.0\.0|\[?::1\]?$)/i.test(host)) return 'For a database on this server, choose PostgreSQL, MySQL or SQLite instead of External.';
+    return null;
+}
+/** Which database the app's dependencies suggest (preselected in the form; the person decides). */
+export function dbHint(deps: string): DbEngine | null {
+    const d = deps.toLowerCase();
+    if (/\b(pymysql|mysqlclient|aiomysql|asyncmy|mysql-connector|mysql2|mariadb)\b/.test(d)) return 'mariadb';
+    if (/\b(psycopg2?|psycopg2-binary|asyncpg|pg8000|"pg"|postgres|@prisma\/client)\b/.test(d)) return 'postgresql';
+    if (/\b(better-sqlite3|sqlite3|aiosqlite)\b/.test(d)) return 'sqlite';
+    return null;
 }
 
 export function validate(b: Record<string, unknown>): NewApp {
@@ -205,11 +231,16 @@ export function validate(b: Record<string, unknown>): NewApp {
     const v: NewApp = {
         project: s('project'), repo: s('repo'), branch: s('branch', 'main'), subdir: s('subdir').replace(/^\/+|\/+$/g, ''), start: s('start', 'start'),
         build: b.build === true, migrate: s('migrate'), healthPath: s('healthPath', '/') || '/', subdomain: s('subdomain').toLowerCase(),
-        db: b.db === true, memoryMb: Math.round(Number(b.memoryMb ?? 256)), confirmLowMemory: b.confirmLowMemory === true,
+        db: b.db === true ? 'postgresql' : DB_ENGINES.includes(b.db as DbEngine) ? b.db as DbEngine : null,
+        externalUrl: typeof b.externalUrl === 'string' ? b.externalUrl.trim() : '', memoryMb: Math.round(Number(b.memoryMb ?? 256)), confirmLowMemory: b.confirmLowMemory === true,
         override: typeof b.override === 'string' ? b.override.trim().slice(0, 300) : undefined,
         runtime: b.runtime === 'python' ? 'python' : 'node', pythonVersion: s('pythonVersion'), framework: (['fastapi', 'flask', 'django'].includes(s('framework')) ? s('framework') : '') as Framework | '',
         appModule: s('appModule'),
     };
+    if (v.db === 'external') {
+        const problem = externalDbProblem(v.externalUrl);
+        if (problem) throw new DeployError(problem);
+    } else v.externalUrl = '';
     if (v.runtime === 'python') {
         v.start = 'start';   // not used for Python: the start command is built from the framework and module
         if (!PYTHON_VERSIONS.includes(v.pythonVersion)) throw new DeployError(`Choose a Python version (${PYTHON_VERSIONS.join(', ')}).`);
@@ -244,9 +275,16 @@ export async function createApp(inst: InstanceRow, v: NewApp, user: Requester): 
     if (freeze && (!v.override || v.override.length < 10)) {
         throw new DeployError(`Deploys to ${inst.environment} are frozen (“${freeze.name}”). Give an override reason to create the app anyway.`, 409, 'frozen');
     }
-    if (v.runtime === 'python' && aws().documentParameters) {
+    if (aws().documentParameters) {
         const params = await aws().documentParameters!(inst.region, CREATE_DOCUMENT).catch(() => null);
-        if (params && !params.includes('runtime')) throw new DeployError('This AWS account needs a connection update before Python apps can be created (see the notice on the server page\'s Components card).', 409, 'connection_update_needed');
+        const missing = params && (v.runtime === 'python' && !params.includes('runtime') ? 'Python apps' : v.db && v.db !== 'postgresql' && !params.includes('database') ? `${DB_NAMES[v.db]} databases` : null);
+        if (missing) throw new DeployError(`This AWS account needs a connection update before ${missing} can be set up (see the notice on the server page's Components card).`, 409, 'connection_update_needed');
+    }
+    if (v.db === 'mariadb') {
+        const inv = (inst as InstanceRow & { components?: { components?: { id: string; installed: boolean; active: boolean | null }[] } | null }).components;
+        const m = inv?.components?.find((x) => x.id === 'mariadb');
+        if (m && !m.installed) throw new DeployError(`MariaDB isn't installed on ${inst.name}: install it from the server's Components card first.`, 409, 'mariadb_missing');
+        if (m && m.active === false) throw new DeployError(`MariaDB is installed on ${inst.name} but stopped: start it from the server's Components card.`, 409, 'mariadb_stopped');
     }
     await repoToken(v.repo);   // throws a clear error if the GitHub App can't see the repository
     // DNS first, and wait until Route 53 reports it live (capped so the request stays well under proxy timeouts)
@@ -268,28 +306,34 @@ export async function createApp(inst: InstanceRow, v: NewApp, user: Requester): 
         await db().query(
             `INSERT INTO app_creations (deployment_id, instance_id, project, repo, branch, domain, with_db, created_by, dns_created, dns_provider, dns_zone)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [row.id, inst.id, v.project, v.repo, v.branch, c.domain.name, v.db, user.username, dnsCreated, t.kind, t.zoneId]);
+            [row.id, inst.id, v.project, v.repo, v.branch, c.domain.name, !!v.db, user.username, dnsCreated, t.kind, t.zoneId]);
+        if (v.db) await db().query('UPDATE app_creations SET db_engine = $2 WHERE deployment_id = $1', [row.id, v.db]);
     } catch (err) {
         await dropToken(inst.region, token);
         await undoDns();
         if ((err as { code?: string }).code === '23505') throw new DeployError(`${v.project} is already being created.`, 409);
         throw err;
     }
+    const dropExternal = async () => { if (v.db === 'external') await aws().deleteParameter?.(inst.region, `/apps/${v.project}/DATABASE_URL`).catch(() => undefined); };
     try {
+        // an external database's URL goes straight to the app's settings in the AWS account: never into the command
+        if (v.db === 'external') await aws().putParameter!(inst.region, `/apps/${v.project}/DATABASE_URL`, v.externalUrl);
         const commandId = await aws().sendDocument(inst.region, inst.aws_instance_id, CREATE_DOCUMENT, {
             project: [v.project], repo: [v.repo], branch: [v.branch], appSubdir: [v.subdir], startScript: [v.start], build: [v.build ? 'yes' : 'no'],
             migrateScript: [v.migrate], healthPath: [v.healthPath], domain: [c.domain.name], db: [v.db ? 'yes' : 'no'], memoryMb: [String(v.memoryMb)],
+            ...(v.db && v.db !== 'postgresql' ? { database: [v.db] } : {}),
             actor: [actorFor(user.username)],
             runtime: [v.runtime], pythonVersion: [v.pythonVersion], framework: [v.framework], appModule: [v.appModule],
         });
         const { rows } = await db().query<DeploymentRow>('UPDATE deployments SET command_id = $2 WHERE id = $1 RETURNING *', [row.id, commandId]);
         await announce(`[NEW APP] ${user.username} is creating ${v.project} on ${inst.name}`,
-            `${v.repo}@${v.branch} (${v.runtime === 'python' ? `Python ${v.pythonVersion}, ${v.framework}` : 'Node.js'}) → https://${c.domain.name}${v.db ? ' with a Postgres database' : ''}${dryRun ? ' (dry run)' : ''}.`, 'new-app');
+            `${v.repo}@${v.branch} (${v.runtime === 'python' ? `Python ${v.pythonVersion}, ${v.framework}` : 'Node.js'}) → https://${c.domain.name}${v.db ? ` with ${v.db === 'external' ? 'an external database' : `a ${DB_NAMES[v.db]} database`}` : ''}${dryRun ? ' (dry run)' : ''}.`, 'new-app');
         return rows[0];
     } catch (err) {
         const msg = `Couldn't start via SSM: ${(err as Error).message.slice(0, 200)}`;
         await db().query(`UPDATE deployments SET status = 'failed', ssm_status = 'NotSent', output = $2, finished_at = now() WHERE id = $1`, [row.id, msg]);
         await db().query(`UPDATE app_creations SET status = 'failed', finished_at = now() WHERE deployment_id = $1`, [row.id]);
+        await dropExternal();
         await dropToken(inst.region, token);
         await undoDns();
         throw new DeployError(msg);
