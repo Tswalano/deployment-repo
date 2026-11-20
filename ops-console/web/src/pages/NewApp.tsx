@@ -217,7 +217,9 @@ export function NewApp() {
             {repo && (
               <div className="rounded-lg border border-ink-700 p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm font-medium text-slate-200">Detected from {runtime === 'python' ? (det?.python?.deps ?? 'the repository') : 'package.json'}</span>
+                  <span className="text-sm font-medium text-slate-200">
+                    {detecting || !det ? 'Checking the repository…' : !det.found ? 'Nothing detected' : `Detected from ${runtime === 'python' ? (det.python?.deps ?? 'the repository') : 'package.json'}`}
+                  </span>
                   <span className="flex items-center gap-2">
                     {det?.found && det.python && det.scripts.length > 0 && (
                       <span className="flex rounded-lg border border-ink-600 p-0.5 text-xs" role="radiogroup" aria-label="Runtime">
@@ -225,7 +227,7 @@ export function NewApp() {
                           className={`rounded-md px-2 py-0.5 ${runtime === r ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:text-slate-200'}`}>{r === 'node' ? 'Node.js' : 'Python'}</button>)}
                       </span>
                     )}
-                    {detecting ? <span className="text-xs text-slate-500">reading…</span> : det?.found ? <span className="pill-ok">{runtime === 'python' ? `Python${framework ? ` · ${{ fastapi: 'FastAPI', flask: 'Flask', django: 'Django' }[framework]}` : ''}` : det.name ?? 'Node.js app'}</span> : det ? <span className="pill-bad">not found</span> : null}
+                    {detecting ? null : det?.found ? <span className="pill-ok">{runtime === 'python' ? `Python${framework ? ` · ${{ fastapi: 'FastAPI', flask: 'Flask', django: 'Django' }[framework]}` : ''}` : det.name ?? 'Node.js app'}</span> : det ? <span className="pill-bad">not found</span> : null}
                   </span>
                 </div>
                 {det?.found && runtime === 'python' && (
