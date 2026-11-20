@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, AppRuntime, PyFramework, Deployment, Detection, GithubRepo, Instance, NewAppCheck, NewAppCreation } from '../api';
+import { api, ApiError, AppRuntime, DbEngine, PyFramework, Deployment, Detection, GithubRepo, Instance, NewAppCheck, NewAppCreation } from '../api';
 import { ago, Alert, DesktopOnly, PageHeader, Skeleton } from '../components/ui';
 import { GithubGap, GithubNeeded } from '../components/GithubNeeded';
 
@@ -26,6 +26,15 @@ function Stepper({ step }: { step: number }) {
     </ol>
   );
 }
+
+const DB_OPTIONS: { id: DbEngine | ''; label: string; hint: string }[] = [
+  { id: '', label: 'None', hint: 'The app needs no database' },
+  { id: 'postgresql', label: 'PostgreSQL', hint: 'On this server' },
+  { id: 'mariadb', label: 'MySQL (MariaDB)', hint: 'On this server; MySQL-compatible' },
+  { id: 'sqlite', label: 'SQLite', hint: 'A file on this server' },
+  { id: 'external', label: 'External', hint: 'Your own: RDS, Supabase, Neon…' },
+];
+const C = ({ children }: { children: React.ReactNode }) => <code className="rounded bg-ink-950 px-1 font-mono text-[0.9em] text-slate-300">{children}</code>;
 
 function Field({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
   return <div><span className="label">{label}</span>{children}{hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}</div>;
@@ -65,7 +74,9 @@ export function NewApp() {
   // step 2
   const [project, setProject] = useState(search.get('project') ?? '');
   const [subdomain, setSubdomain] = useState(search.get('subdomain') ?? '');
-  const [db, setDb] = useState(false);
+  const [db, setDb] = useState<DbEngine | ''>('');
+  const [externalUrl, setExternalUrl] = useState('');
+  const [mariadb, setMariadb] = useState<{ installed: boolean; active: boolean | null } | null | undefined>(undefined);   // undefined: not read yet
   const [memoryMb, setMemoryMb] = useState(256);
   const [chk, setChk] = useState<NewAppCheck | null>(null);
   const [confirmLow, setConfirmLow] = useState(false);
@@ -126,6 +137,7 @@ export function NewApp() {
         setRuntime(d.runtime === 'python' ? 'python' : 'node');
         if (d.python) { setFramework(d.python.framework ?? ''); setAppModule(d.python.module ?? ''); setPyVersion(d.python.version); }
         if (d.runtime === 'python') { setMigrate(d.python?.migrate ?? ''); setBuild(false); }
+        if (d.database && d.database !== 'external') setDb((cur) => cur || d.database!);
       }).catch((e) => setDet({ found: false, name: null, scripts: [], start: null, build: false, migrate: null, healthPath: '/', node: null, warnings: [err(e)] }))
         .finally(() => setDetecting(false));
     }, 400);
@@ -156,6 +168,12 @@ export function NewApp() {
   if (error && !inst) return <Alert>{error}</Alert>;
   if (!inst) return <Skeleton className="h-64" />;
 
+  useEffect(() => {
+    if (step !== 1 || mariadb !== undefined) return;
+    api.components(instanceId).then((v) => { const m = v.components?.find((c) => c.id === 'mariadb'); setMariadb(m ? { installed: m.installed, active: m.active } : null); }).catch(() => setMariadb(null));
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+  const EXTERNAL_RE = /^(postgres|postgresql|mysql|mariadb)(\+[a-z0-9]+)?:\/\/\S+$/i;
+  const dbOk = db !== 'external' ? !(db === 'mariadb' && mariadb && (!mariadb.installed || mariadb.active === false)) : EXTERNAL_RE.test(externalUrl.trim());
   const MODULE_RE = /^[A-Za-z_][A-Za-z0-9_.]{0,80}:[A-Za-z_][A-Za-z0-9_]{0,60}(\(\))?$/;
   const pyServer = framework === 'fastapi' ? 'uvicorn' : 'gunicorn';
   const step1Ok = !!repo && !!branch && !!det?.found && (runtime === 'python'
@@ -166,14 +184,15 @@ export function NewApp() {
     setRuntime(r);
     if (r === 'python') { setMigrate(det?.python?.migrate ?? ''); setBuild(false); } else { setMigrate(det?.migrate ?? ''); setBuild(!!det?.build); }
   };
-  const step2Ok = !!chk && chk.project.ok && (chk.domain.status === 'free' || chk.domain.status === 'ours' || chk.domain.status === 'external') && (chk.memoryMb == null || chk.memoryMb >= 120 || confirmLow);
+  const step2Ok = dbOk && !!chk && chk.project.ok && (chk.domain.status === 'free' || chk.domain.status === 'ours' || chk.domain.status === 'external') && (chk.memoryMb == null || chk.memoryMb >= 120 || confirmLow);
   const domain = chk?.domain.name ?? `${subdomain}.${chk?.appsDomain ?? '…'}`;
   const scripts = det?.scripts ?? [];
 
   async function create() {
     setBusy(true); setError(null);
     try {
-      const d = await api.createApp(instanceId, { project, repo, branch, subdir, start, build, migrate, healthPath, subdomain, db, memoryMb,
+      const d = await api.createApp(instanceId, { project, repo, branch, subdir, start, build, migrate, healthPath, subdomain, db: db || null, memoryMb,
+        ...(db === 'external' ? { externalUrl: externalUrl.trim() } : {}),
         confirmLowMemory: confirmLow, override: needOverride ? override : undefined,
         runtime, ...(runtime === 'python' ? { pythonVersion: pyVersion, framework, appModule } : {}) });
       started.current = Date.now(); setJob(d); setStep(3);
@@ -297,11 +316,32 @@ export function NewApp() {
               </Field>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-ink-700 p-4">
-                <input type="checkbox" className="mt-1 accent-indigo-400" checked={db} onChange={(e) => setDb(e.target.checked)} />
-                <span><span className="block text-sm font-medium text-slate-200">Create a Postgres database</span>
-                  <span className="block text-xs text-slate-500">Its own database and user on this instance; DATABASE_URL is added to the app's environment automatically. Included in nightly backups.</span></span>
-              </label>
+              <div className="md:col-span-2">
+                <span className="label">Database</span>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5" role="radiogroup" aria-label="Database">
+                  {DB_OPTIONS.map((o) => (
+                    <button key={o.id || 'none'} type="button" role="radio" aria-checked={db === o.id} onClick={() => setDb(o.id)}
+                            className={`rounded-lg border p-3 text-left ${db === o.id ? 'border-indigo-400 bg-indigo-500/10' : 'border-ink-700 hover:border-ink-500'}`}>
+                      <span className="block text-sm font-medium text-slate-200">{o.label}</span>
+                      <span className="mt-0.5 block text-2xs leading-4 text-slate-500">{o.hint}</span>
+                    </button>
+                  ))}
+                </div>
+                {db === 'postgresql' && <p className="mt-2 text-xs text-slate-500">Its own database and user on {inst.name}. <C>DATABASE_URL</C> is added to the app&rsquo;s settings. Included in backups.</p>}
+                {db === 'mariadb' && (mariadb && !mariadb.installed
+                  ? <p className="mt-2 text-xs text-amber-300">MariaDB isn&rsquo;t installed on {inst.name}. <Link className="underline" to={`/instances/${instanceId}`}>Install it from the server&rsquo;s Components card</Link>, then come back.</p>
+                  : mariadb && mariadb.active === false
+                  ? <p className="mt-2 text-xs text-amber-300">MariaDB is installed on {inst.name} but stopped: <Link className="underline" to={`/instances/${instanceId}`}>start it from the Components card</Link>.</p>
+                  : <p className="mt-2 text-xs text-slate-500">Its own MariaDB database and user (MySQL-compatible). The app gets <C>DATABASE_URL</C> (<C>mysql://…</C>; SQLAlchemy apps use <C>mysql+pymysql://</C> with the same details) and <C>DB_HOST</C>, <C>DB_PORT</C>, <C>DB_NAME</C>, <C>DB_USER</C>, <C>DB_PASSWORD</C>. Backed up before each deploy.</p>)}
+                {db === 'sqlite' && <p className="mt-2 text-xs text-slate-500">A database file at <C>/var/lib/apps/{project || 'app'}/</C> on {inst.name}; <C>DATABASE_URL</C> is <C>sqlite:///…</C>. Backed up before each deploy. Best for small apps on one server.</p>}
+                {db === 'external' && (
+                  <div className="mt-2 space-y-1.5">
+                    <input className={`input font-mono ${externalUrl && !EXTERNAL_RE.test(externalUrl.trim()) ? 'border-rose-500/60' : ''}`} type="password" autoComplete="off" spellCheck={false}
+                           placeholder="postgresql://user:password@host:5432/dbname  or  mysql://user:password@host:3306/dbname" value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} />
+                    <p className="text-xs text-slate-500">Saved as the app&rsquo;s <C>DATABASE_URL</C> in this workspace&rsquo;s AWS account, never shown again. {inst.name} must be able to reach it: for Amazon RDS, allow the server in the database&rsquo;s security group; for Supabase or Neon, copy the connection string from their settings (the connection pooler is often easiest). The console checks it can connect before finishing. Its provider takes care of backups.</p>
+                  </div>
+                )}
+              </div>
               <Field label="Memory limit" hint={chk?.memoryMb != null ? `${chk.memoryMb} MB free on ${inst.name} right now.` : undefined}>
                 <select className="input" value={memoryMb} onChange={(e) => setMemoryMb(Number(e.target.value))}>{[128, 192, 256, 384, 512].map((m) => <option key={m} value={m}>{m} MB</option>)}</select>
               </Field>
@@ -319,12 +359,12 @@ export function NewApp() {
             <table className="tbl"><tbody>
               {([['Repository', `${repo} · ${branch}${subdir ? ` · ${subdir}/` : ''}`],
                 ['Runs', runtime === 'python' ? `${pyServer} ${appModule} (Python ${pyVersion}, its own virtual environment)${build ? ' after collectstatic' : ''}` : `${start === 'start' ? 'npm start' : `npm run ${start}`}${build ? ' after npm run build' : ''}`],
-                ['Migrations', !migrate ? 'none' : runtime === 'python' ? `${migrate === 'alembic' ? 'alembic upgrade head' : 'manage.py migrate'} on every deploy` : `npm run ${migrate} on every deploy`], ['Address', `https://${domain}`], ['Database', db ? `Postgres database ${project.replace(/-/g, '_')}` : 'none'],
+                ['Migrations', !migrate ? 'none' : runtime === 'python' ? `${migrate === 'alembic' ? 'alembic upgrade head' : 'manage.py migrate'} on every deploy` : `npm run ${migrate} on every deploy`], ['Address', `https://${domain}`], ['Database', !db ? 'none' : db === 'external' ? 'external (DATABASE_URL as given)' : `${DB_OPTIONS.find((o) => o.id === db)!.label} database ${project.replace(/-/g, '_')}`],
                 ['Memory limit', `${memoryMb} MB`], ['Deploys', `automatically on every push to ${branch}`], ['Instance', `${inst.name} (${inst.region}, ${inst.environment})`]] as [string, string][]).map(([k, v]) => (
                 <tr key={k}><td className="w-[22%] text-slate-500">{k}</td><td className="text-slate-200" title={v}>{v}</td></tr>
               ))}
             </tbody></table>
-            <p className="text-sm text-slate-400">This clones the repository onto {inst.name}, creates the service, {db ? 'the database, ' : ''}the web address and its HTTPS certificate, then runs the first deploy. It takes a few minutes. If any step fails, everything it created is removed again.</p>
+            <p className="text-sm text-slate-400">This clones the repository onto {inst.name}, creates the service, {db && db !== 'external' ? 'the database, ' : ''}the web address and its HTTPS certificate, then runs the first deploy. It takes a few minutes. If any step fails, everything it created is removed again.</p>
             {needOverride && (
               <Field label="Deploys are frozen: reason for creating the app anyway (logged and announced)">
                 <input className="input" value={override} onChange={(e) => setOverride(e.target.value)} maxLength={300} />

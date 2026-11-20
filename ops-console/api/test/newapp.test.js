@@ -154,7 +154,7 @@ global.fetch = async (url, init = {}) => {
 };
 // Python repositories: FastAPI with Alembic, Django, and a Flask app factory
 const PY_FILES = {
-    'Tswalano/pyapi:requirements.txt': 'fastapi==0.115.0\nsqlalchemy>=2\nalembic\npsycopg2-binary\n',
+    'Tswalano/pyapi:requirements.txt': 'fastapi==0.115.0\nsqlalchemy>=2\nalembic\npymysql\n',
     'Tswalano/pyapi:alembic.ini': '[alembic]\nscript_location = migrations\n',
     'Tswalano/pyapi:.python-version': '3.11\n',
     'Tswalano/pyapi:app/main.py': 'from fastapi import FastAPI\n\napp = FastAPI(title="api")\n',
@@ -339,4 +339,63 @@ test('python: create validates the framework, module, version and migrations, an
         [['python'], ['3.11'], ['fastapi'], ['app.main:app'], ['alembic'], ['start'], ['no']]);
     finish(`cmd-${fake.sent.length}`, true, { database: 'pyapi', domain: 'pyapi.glenify.studio' });
     assert.equal((await a.get(`/api/deployments/${r.json.deployment.id}`)).json.deployment.status, 'success');
+});
+
+test('database per app: PostgreSQL, MySQL (MariaDB), SQLite or external; external URL goes to SSM, never into the command; checks before anything runs', async () => {
+    // its own admin: the earlier tests used up much of the first admin's new-app allowance (30 per 30 minutes)
+    await dist('db').db().query("INSERT INTO users (username, role, password_hash) VALUES ('admin2', 'admin', $1)", [await dist('password').hashPassword('admin2-password-1')]);
+    const a = await signedIn('admin2');
+    fake.memAvailable = 600 * 1048576;
+    await a.get(`/api/instances/${id}?refresh=1`);
+    // the FastAPI repo uses pymysql: MySQL is suggested
+    assert.equal((await a.get('/api/github/detect?repo=Tswalano/pyapi&branch=main')).json.database, 'mariadb');
+    assert.equal((await a.get('/api/github/detect?repo=Tswalano/shop&branch=main')).json.database, null, 'Prisma alone works with several databases: no guess');
+    const py = { repo: 'Tswalano/pyapi', branch: 'main', subdir: '', healthPath: '/health', memoryMb: 256, runtime: 'python', pythonVersion: '3.12', framework: 'fastapi', appModule: 'app.main:app', migrate: '' };
+    const post = (o) => a.post(`/api/instances/${id}/new-app`, { ...py, ...o });
+    const n = fake.sent.length;
+    // external: a real database URL that isn't this server
+    for (const bad of ['', 'not a url', 'redis://cache:6379', 'postgresql://u:p@localhost:5432/x', 'mysql://u:p@127.0.0.1/x']) {
+        assert.equal((await post({ project: 'ext1', subdomain: 'ext1', db: 'external', externalUrl: bad })).status, 400, bad);
+    }
+    // MariaDB not installed (from the server's last inventory): refused with the way forward
+    await dist('db').db().query(`UPDATE instances SET components = $2 WHERE id = $1`, [id, JSON.stringify({ components: [{ id: 'mariadb', installed: false, active: null }], host: {} })]);
+    const noMdb = await post({ project: 'mdb1', subdomain: 'mdb1', db: 'mariadb' });
+    assert.equal(noMdb.status, 409);
+    assert.match(noMdb.json.error, /install it from the server's Components card/);
+    assert.equal(fake.sent.length, n, 'nothing sent');
+
+    // MySQL (MariaDB) once installed: the choice travels as database=mariadb (db=yes keeps older servers' scripts happy)
+    await dist('db').db().query(`UPDATE instances SET components = $2 WHERE id = $1`, [id, JSON.stringify({ components: [{ id: 'mariadb', installed: true, active: true }], host: {} })]);
+    const m = await post({ project: 'mdb1', subdomain: 'mdb1', db: 'mariadb' });
+    assert.equal(m.status, 202, JSON.stringify(m.json));
+    let [, params] = fake.sent.at(-1);
+    assert.deepEqual([params.db, params.database], [['yes'], ['mariadb']]);
+    finish(`cmd-${fake.sent.length}`, true, { database: 'mdb1', domain: 'mdb1.glenify.studio' });
+    await a.get(`/api/deployments/${m.json.deployment.id}`);
+    const { rows: [row] } = await dist('db').db().query("SELECT db_engine FROM app_creations WHERE project = 'mdb1'");
+    assert.equal(row.db_engine, 'mariadb');
+
+    // external: the URL is stored as the app's DATABASE_URL in SSM before the command, and is nowhere in the command
+    const url = 'mysql+pymysql://app:S3cretPass@db.example-rds.amazonaws.com:3306/shop';
+    const e = await post({ project: 'ext1', subdomain: 'ext1', db: 'external', externalUrl: url });
+    assert.equal(e.status, 202, JSON.stringify(e.json));
+    [, params] = fake.sent.at(-1);
+    assert.deepEqual(params.database, ['external']);
+    assert.ok(!JSON.stringify(params).includes('S3cretPass'), 'the password never travels in the command');
+    assert.equal(fake.params['/apps/ext1/DATABASE_URL'].v, url);
+    finish(`cmd-${fake.sent.length}`, true, { database: null, domain: 'ext1.glenify.studio' });
+    await a.get(`/api/deployments/${e.json.deployment.id}`);
+
+    // PostgreSQL stays as before (db=yes, no extra parameter); SQLite needs nothing installed
+    const pg = await post({ project: 'pgapp', subdomain: 'pgapp', db: 'postgresql' });
+    assert.equal(pg.status, 202);
+    [, params] = fake.sent.at(-1);
+    assert.deepEqual([params.db, params.database], [['yes'], undefined]);
+    finish(`cmd-${fake.sent.length}`, true, { database: 'pgapp', domain: 'pgapp.glenify.studio' });
+    await a.get(`/api/deployments/${pg.json.deployment.id}`);
+    const sq = await post({ project: 'sqapp', subdomain: 'sqapp', db: 'sqlite' });
+    assert.equal(sq.status, 202);
+    assert.deepEqual(fake.sent.at(-1)[1].database, ['sqlite']);
+    finish(`cmd-${fake.sent.length}`, true, { database: 'sqapp', domain: 'sqapp.glenify.studio' });
+    await a.get(`/api/deployments/${sq.json.deployment.id}`);
 });

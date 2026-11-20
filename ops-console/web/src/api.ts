@@ -164,16 +164,17 @@ export interface AppAddresses {
 }
 export interface AppAddress { domain: string; kind: string | null; tls: boolean; expected: string | null; resolves: string[] }
 export type AppRuntime = 'node' | 'python';
+export type DbEngine = 'postgresql' | 'mariadb' | 'sqlite' | 'external';
 export type PyFramework = 'fastapi' | 'flask' | 'django';
 export interface PythonDetection { framework: PyFramework | null; module: string | null; version: string; migrate: 'alembic' | 'django' | null; deps: string; hasServer: boolean; warnings: string[] }
-export interface Detection { runtime?: AppRuntime | null; python?: PythonDetection | null; found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
+export interface Detection { database?: DbEngine | null; runtime?: AppRuntime | null; python?: PythonDetection | null; found: boolean; name: string | null; scripts: string[]; start: string | null; build: boolean; migrate: string | null; healthPath: string; node: string | null; warnings: string[]; frontend?: boolean }
 export interface NewAppCheck {
   project: { ok: boolean; reason?: string }; domain: { status: 'free' | 'ours' | 'taken' | 'invalid' | 'external'; name: string; reason?: string };
   memoryMb: number | null; memoryWarning: string | null; publicIp: string | null; appsDomain: string;
 }
 export interface NewAppBody {
   project: string; repo: string; branch: string; subdir: string; start: string; build: boolean; migrate: string; healthPath: string;
-  subdomain: string; db: boolean; memoryMb: number; confirmLowMemory?: boolean; override?: string;
+  subdomain: string; db: DbEngine | null; externalUrl?: string; memoryMb: number; confirmLowMemory?: boolean; override?: string;
   runtime?: AppRuntime; pythonVersion?: string; framework?: PyFramework | ''; appModule?: string;
 }
 export interface GithubRepo { fullName: string; private: boolean; defaultBranch: string; pushedAt: string | null; description: string | null }

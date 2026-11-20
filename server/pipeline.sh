@@ -51,7 +51,7 @@ load_project() {
   [[ -f "$conf" ]] || die "unknown project '$PROJECT' (no $conf). Known: $(list_projects | paste -sd' ')"
   # reset optional keys so values don't leak between projects in 'all' runs
   unset SERVICE SOURCE_DIR BRANCH APP_SUBDIR RUN_DIR INSTALL_CMD BUILD_CMD MIGRATE_CMD \
-        HEALTH_URL HEALTH_TIMEOUT DB_NAME DB_USER DOMAIN SYNC_EXCLUDES
+        HEALTH_URL HEALTH_TIMEOUT DB_NAME DB_USER DB_ENGINE DB_FILE DOMAIN SYNC_EXCLUDES
   # shellcheck source=/dev/null
   source "$conf"
   : "${SERVICE:?SERVICE missing in $conf}" "${SOURCE_DIR:?SOURCE_DIR missing in $conf}" \
@@ -65,6 +65,8 @@ load_project() {
   MIGRATE_CMD="${MIGRATE_CMD-}"
   HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
   DB_USER="${DB_USER:-postgres}"
+  DB_ENGINE="${DB_ENGINE:-postgresql}"   # postgresql | mariadb | sqlite (DB_FILE: the database file)
+  DB_FILE="${DB_FILE:-}"
   SYNC_EXCLUDES="${SYNC_EXCLUDES:-node_modules .env .env.* dist .git}"
   # "sync mode": code is built from a git checkout but runs from a separate dir
   SYNC_MODE=0; [[ "$(realpath -m "$RUN_DIR")" != "$(realpath -m "$BUILD_DIR")" ]] && SYNC_MODE=1
@@ -161,23 +163,35 @@ backup_db() {
   [[ -n "${DB_NAME:-}" ]] || { log "no DB_NAME configured — skipping DB backup"; return 0; }
   if [[ "${SKIP_DB_BACKUP:-0}" == 1 ]]; then warn "SKIP_DB_BACKUP=1 — no DB backup taken"; return 0; fi
   op_step backup
-  local out="$STATE_DIR/backups/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ)-$(current_sha | cut -c1-8).sql.gz"
-  log "backing up database '$DB_NAME' → $out"
-  # Credentials come from ~/.pgpass (see README → One-time server setup)
-  if (umask 077; pg_dump -h localhost -U "$DB_USER" -w --no-owner "$DB_NAME" | gzip > "$out"); then
+  local ext=sql; [[ "$DB_ENGINE" == sqlite ]] && ext=db
+  local out="$STATE_DIR/backups/${DB_NAME}-$(date -u +%Y%m%dT%H%M%SZ)-$(current_sha | cut -c1-8).$ext.gz"
+  log "backing up $DB_ENGINE database '$DB_NAME' → $out"
+  local dumped=1
+  case "$DB_ENGINE" in
+    # Credentials come from ~/.pgpass (see README → One-time server setup)
+    postgresql) (umask 077; set -o pipefail; pg_dump -h localhost -U "$DB_USER" -w --no-owner "$DB_NAME" | gzip > "$out") && dumped=0 ;;
+    # root logs in through MariaDB's socket; a consistent snapshot without locking InnoDB tables
+    mariadb)    (umask 077; set -o pipefail; sudo mysqldump --single-transaction --routines --triggers --databases "$DB_NAME" | gzip > "$out") && dumped=0 ;;
+    # SQLite's online backup copies a consistent file while the app keeps running
+    sqlite)     local tmp; tmp="$(mktemp "$STATE_DIR/backups/.sqlite-XXXXXX")"
+                if [[ -n "$DB_FILE" && -f "$DB_FILE" ]] && sqlite3 "$DB_FILE" ".backup '$tmp'" && (umask 077; gzip -c "$tmp" > "$out"); then dumped=0; fi
+                rm -f "$tmp" ;;
+    *)          warn "unknown DB_ENGINE '$DB_ENGINE'" ;;
+  esac
+  if (( dumped == 0 )); then
     ok "DB backup done ($(du -h "$out" | cut -f1))"
-    ls -1t "$STATE_DIR"/backups/*.sql.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
+    ls -1t "$STATE_DIR"/backups/*.sql.gz "$STATE_DIR"/backups/*.db.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f
   else
     rm -f "$out"
     [[ -n "$MIGRATE_CMD" ]] && die "DB backup failed and this project runs migrations — aborting. Set up ~/.pgpass or SKIP_DB_BACKUP=1."
-    warn "DB backup failed (no ~/.pgpass?) — continuing because no migrations are configured"
+    warn "DB backup failed — continuing because no migrations are configured"
   fi
 }
 
 # Refresh Postgres planner statistics (row estimates on the ops dashboard, query plans).
 # ANALYZE only reads tables and updates pg_statistic; it never modifies or deletes data. Best effort.
 analyze_db() {
-  [[ -n "${DB_NAME:-}" ]] || return 0
+  [[ -n "${DB_NAME:-}" && "$DB_ENGINE" == postgresql ]] || return 0
   op_step analyze
   (cd /tmp && psql -X -q -h localhost -U "$DB_USER" -w -d "$DB_NAME" -c 'ANALYZE' >/dev/null 2>&1) \
     && log "refreshed statistics (ANALYZE) on $DB_NAME" || warn "ANALYZE on $DB_NAME skipped"

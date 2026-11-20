@@ -88,6 +88,7 @@ CREATE_PARAMS='{
   "healthPath":    {"type": "String", "default": "/", "allowedPattern": "^/[A-Za-z0-9._~/-]{0,100}$"},
   "domain":         {"type": "String", "allowedPattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,24}$"},
   "db":             {"type": "String", "allowedValues": ["yes", "no"]},
+  "database":       {"type": "String", "default": "", "allowedValues": ["", "none", "postgresql", "mariadb", "sqlite", "external"]},
   "memoryMb":      {"type": "String", "default": "256", "allowedPattern": "^[0-9]{2,4}$"},
   "actor":          {"type": "String", "allowedPattern": "^[A-Za-z0-9._@:-]{1,64}$"},
   "runtime":        {"type": "String", "default": "node", "allowedValues": ["node", "python"]},
